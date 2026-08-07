@@ -1,6 +1,6 @@
 # ColorOS Pad Port Fixes
 
-> 联想小新 Pro GT（OPD2513 / SM8650Q / pineapple）ColorOS 16 移植系统的修复与调优集合
+> 联想小新 Pro GT（TB7100FU / SM8650Q / pineapple）ColorOS 16 (OPD2513) 移植系统的修复与调优集合
 > KernelSU 模块 + LSPosed Hook，统一版本 **1.0.0**，作者 **ACLaniakea**
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
@@ -38,10 +38,11 @@
 
 ## 兼容性
 
-- 联想小新 Pro GT（OPD2513）
+- 联想小新 Pro GT（TB710FU）
 - 高通 SM8650Q（pineapple）
-- ColorOS 16 移植版（Android 16）
+- ColorOS 16 移植版（Android 16/OPD2513）
 - Root 环境：KernelSU（推荐）+ LSPosed（Zygisk）
+- 前置模块：Rezygisk Lsposed
 
 > 模块的 `post-fs-data.sh` / `service.sh` 会先校验 `ro.soc.model`/`ro.board.platform`，非目标设备自动跳过，可安全共存。
 
@@ -156,8 +157,9 @@ python3 port-tuning/tools/build_tuning.py                   # 调优模块
 ## 已知问题
 
 - 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响）；
-- “无人不熄屏”为 `stay_on_while_plugged_in`（USB 保持唤醒）导致，与 AON 无关；
 - 小布说话开头偶发卡顿暂未稳定复现。
+- 手写笔还有一些连接问题尚待修复。
+- 设备查找尚待修复
 
 ## 致谢与免责
 
