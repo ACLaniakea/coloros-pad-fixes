@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <array name="xposed_scope">
+        <item>android</item>
+        <item>com.android.settings</item>
+        <item>com.coloros.phonemanager</item>
+        <item>com.coloros.ocrscanner</item>
+        <item>com.inkdye.lenovopentocoloros</item>
+        <item>com.aiunit.aon</item>
+        <item>com.heytap.speechassist</item>
+        <item>com.oplus.ovoicemanager.wakeup</item>
+        <item>com.oplus.battery</item>
+        <item>com.oplus.gesture</item>
+    </array>
+</resources>

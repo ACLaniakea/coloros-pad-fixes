@@ -1,0 +1,21 @@
+# 构建产物 / 密钥 / 日志
+releases/
+*.jks
+*.idsig
+__pycache__/
+*.pyc
+*.log
+daemon.pid
+
+# OEM 固件二进制与预编译产物（README 注明来源，不随源码分发）
+base-fix/module/payload/aon-libs/
+base-fix/module/payload/voice/
+base-fix/module/payload/libdl32.tango-cfi.so
+base-fix/module/zygisk/arm64-v8a.so
+base-fix/module/bin/card-protocol-patcher.jar
+pen-bridge/module/bin/pen-cps-gpio
+pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
+
+# OEM 原生库（odm 运行时与 hook APK 的 libpeninput.so），README 注明来源
+base-fix/module/odm/
+pen-bridge/hook/source/resources/lib/

@@ -1,0 +1,11 @@
+﻿# ColorOS' render-intent table is from the source phone.  The tablet's
+# Qualcomm/Oplus display manager uses 0 for its standard (sRGB) path and
+# 256/259 for its native-gamut path (the native color-manager translator
+# explicitly maps both 256 and 259 to hardware mode 4).  Keep the ColorOS
+# labels, but translate their backend values before ColorDisplayService is
+# initialized:
+#   生动   -> native gamut
+#   自然   -> standard/sRGB
+#   专业鲜艳 -> native gamut (the framework's 259 is already native)
+ro.oplus.display.colormode.vivid.renderintent=256
+ro.oplus.display.colormode.soft.renderintent=0

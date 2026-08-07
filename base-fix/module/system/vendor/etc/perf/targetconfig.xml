@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Qualcomm pineapple topology corrected for SM8650Q SoC ID 696.
+     Other pineapple and cliffs targets retain their stock definitions. -->
+<TargetConfig>
+    <Config1>
+         <TargetInfo
+             Target="pineapple"
+             NumClusters="4"
+             TotalNumCores="8"
+             SocIds="557,577,682"
+             SynCore="1"
+             CoreCtlCpu="4"
+             MinCoreOnline="0"
+             CpufreqGov="1"
+             TargetMaxArgsPerReq="64"
+        />
+
+         <ClustersInfo Id="0" NumCores="2" Type="little" />
+         <ClustersInfo Id="1" NumCores="3" Type="big" />
+         <ClustersInfo Id="2" NumCores="2" Type="titanium" />
+         <ClustersInfo Id="3" NumCores="1" Type="prime" />
+    </Config1>
+
+    <Config2>
+         <TargetInfo
+             Target="cliffs"
+             NumClusters="3"
+             TotalNumCores="8"
+             SocIds="614,632,642,643,700"
+             SynCore="1"
+             CoreCtlCpu="3"
+             MinCoreOnline="0"
+             CpufreqGov="1"
+             TargetMaxArgsPerReq="64"
+        />
+
+         <ClustersInfo Id="0" NumCores="3" Type="little" />
+         <ClustersInfo Id="1" NumCores="4" Type="big" />
+         <ClustersInfo Id="2" NumCores="1" Type="prime" />
+    </Config2>
+
+    <Config3>
+         <TargetInfo
+             Target="pineapple"
+             NumClusters="4"
+             TotalNumCores="6"
+             SocIds="696"
+             SynCore="1"
+             CoreCtlCpu="2"
+             MinCoreOnline="0"
+             CpufreqGov="1"
+             TargetMaxArgsPerReq="64"
+        />
+
+         <ClustersInfo Id="0" NumCores="1" Type="little" />
+         <ClustersInfo Id="1" NumCores="2" Type="big" />
+         <ClustersInfo Id="2" NumCores="2" Type="titanium" />
+         <ClustersInfo Id="3" NumCores="1" Type="prime" />
+    </Config3>
+</TargetConfig>

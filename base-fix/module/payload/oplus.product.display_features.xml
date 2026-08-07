@@ -1,0 +1,35 @@
+<oplus-config>
+    <!-- =================== DISPLAY FEATURES BEGIN ================================ -->
+    <!-- brightness feature -->
+    <oplus-feature name="oplus.software.display.screen_gloablehbm_support"/>
+    <oplus-feature name="oplus.software.display.autobrightctl_animation_support"/>
+    <oplus-feature name="oplus.software.display.multibits_dimming_support"/>
+    <oplus-feature name="oplus.software.display.brightness_mode_automatic"/>
+    <oplus-feature name="oplus.software.display.screen_heteromorphism"/>
+    <!-- colormode feature -->
+    <oplus-feature name="oplus.software.display.intelligent_color_temperature_support" />
+    <!-- Restored for the port: environment CCT drives the True Tone 2.0 curve. -->
+    <oplus-feature name="oplus.software.display.intelligent_color_temperature_2.0_support" />
+    <oplus-feature name="oplus.software.display.colormode_support"/>
+    <oplus-feature name="oplus.software.display.rgb_ball_support" />
+    <oplus-feature name="oplus.software.display.colorful_mode_support" />
+    <!-- Add for Eyeprotect -->
+    <oplus-feature name="oplus.software.display.smart_color_temperature_rhythm_health_support" />
+    <oplus-feature name="oplus.software.display.customize_comfortable_rhythm_support" />
+    <!-- Add for Eye Protection UI Upgrade -->
+    <oplus-feature name="oplus.software.display.eyeprotect_with_upgrade_ui"/>
+    <!-- Add for display EDR -->
+    <oplus-feature name="oplus.software.display.dolby_enhance_v1_support" />
+    <oplus-feature name="oplus.software.display.dolby_vision_support"/>
+    <oplus-feature name="oplus.software.display.hdr_vision_support"/>
+    <!-- Add for Game Color Enhance 1.0   -->
+    <oplus-feature name="oplus.software.display.game_color_enhance_1.0"/>
+    <!-- feature dsr -->
+    <oplus-feature name="oplus.software.display.dsr_support"/>
+    <!-- Add for read mode -->
+    <oplus-feature name="oplus.software.display.read_mode" />
+    <!-- Add for game dark eyeprotect -->
+    <oplus-feature name="oplus.software.display.game_dark_eyeprotect_support"/>
+    <!-- Add for read mode -->
+    <oplus-feature name="oplus.software.display.read_mode" />
+</oplus-config>

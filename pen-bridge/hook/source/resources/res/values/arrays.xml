@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <array name="xposed_scope">
+        <item>android</item>
+        <item>com.coloros.note</item>
+        <item>com.oplus.exsystemservice</item>
+        <item>com.oplus.healthservice</item>
+        <item>com.heytap.mydevices</item>
+        <item>com.oplus.ipemanager</item>
+        <item>com.oplus.wirelesssettings</item>
+        <item>com.oplus.screenshot</item>
+    </array>
+</resources>
