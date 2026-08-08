@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Pro GT 基础修复</string>
-    <string name="module_description">ColorOS 移植基础修复：AON 生命周期与环境光自适应、小布 BWV 语音唤醒与录音增益、144Hz 刷新率、Tango/序列号/性能 HAL 兼容。</string>
+    <string name="module_description">ColorOS 移植基础修复：AON 生命周期与环境光自适应、小布 BWV 语音唤醒与录音增益、144Hz 刷新率、Tango/序列号/性能 HAL 兼容、OPPO 查找设备软模拟（CryptoEng）。</string>
 </resources>

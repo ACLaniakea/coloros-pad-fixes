@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CryptoEng Probe</string>
+    <string name="module_description">查找设备 CryptoEng/HTTP 旁路抓包探针（纯记录，不改动数据）。</string>
+</resources>

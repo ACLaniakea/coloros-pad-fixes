@@ -179,4 +179,5 @@ else
 fi
 
 apply_serial_fix
+
 log_msg "post-fs-data end"
