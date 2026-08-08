@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the pen-bridge LSPosed Hook APK (ACLaniakea 1.0.0).
+"""Build the pen-bridge LSPosed Hook APK (ACLaniakea 1.0.1).
 
 The current behavior is the verified r50 dex (all accumulated smali patches).
 This script takes that APK/dex, renames the package com.codex -> com.aclaniakea
@@ -48,7 +48,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "PenBridge-Hook-v1.0.0.apk"
+OUT_APK = OUT_DIR / "PenBridge-Hook-v1.0.1.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -111,7 +111,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1000", "--version-name", "1.0.0"])
+             "--version-code", "1001", "--version-name", "1.0.1"])
         # assemble
         unsigned = tmp / "unsigned.apk"
         with zipfile.ZipFile(tmp / "base.apk", "r") as src, \

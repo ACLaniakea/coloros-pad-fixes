@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build PenHidCtl priv-app APK (com.aclaniakea.penhidctl, 1.0.0) from source."""
+"""Build PenHidCtl priv-app APK (com.aclaniakea.penhidctl, 1.0.1) from source."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "PenHidCtl-v1.0.0.apk"
+OUT_APK = OUT_DIR / "PenHidCtl-v1.0.1.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -66,7 +66,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1000", "--version-name", "1.0.0"])
+             "--version-code", "1001", "--version-name", "1.0.1"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
         run(["javac", "-source", "8", "-target", "8",

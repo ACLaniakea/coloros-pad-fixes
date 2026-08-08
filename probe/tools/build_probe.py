@@ -30,7 +30,7 @@ STUBS = Path(os.environ.get("XPOSED_STUBS", "/tmp/acdb/stubs"))
 KEYSTORE = Path(os.environ.get("ACL_KS", "/tmp/aclaniakea.jks"))
 KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
-OUT_APK = ROOT.parents[0] / "releases" / "CryptoEngProbe-v1.0.0.apk"
+OUT_APK = ROOT.parents[0] / "releases" / "CryptoEngProbe-v1.0.1.apk"
 
 
 def run(cmd):
@@ -62,7 +62,7 @@ def main():
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1", "--version-name", "1.0.0"])
+             "--version-code", "1001", "--version-name", "1.0.1"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
         run(["javac", "-source", "8", "-target", "8",
