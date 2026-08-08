@@ -1,7 +1,7 @@
 # ColorOS Pad Port Fixes
 
 > 联想小新 Pro GT（TB710FU / SM8650Q / pineapple）ColorOS 16 (OPD2513) 移植系统的修复与调优集合
-> KernelSU 模块 + LSPosed Hook，统一版本 **1.0.1**，作者 **ACLaniakea**
+> KernelSU 模块 + LSPosed Hook，作者 **ACLaniakea**
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
@@ -157,10 +157,10 @@ python3 port-tuning/tools/build_tuning.py                   # 调优模块
 
 ## 已知问题
 
-- 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响）；
-- 小布说话开头偶发卡顿暂未稳定复现。
+- 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响），待机耗电较高；
+- 小布说话开头偶发卡顿暂未稳定复现，待修复。
 - 手写笔还有一些连接问题尚待修复。
-- 查找设备为 CryptoEng 软模拟链路（RPMB/注册状态为软件模拟，与真机不同）。
+- 查找设备为 CryptoEng 软模拟链路（RPMB/注册状态为软件模拟，与真机不同），本机暂时无法注册，可以查看其他设备状态。
 
 ## 致谢与免责
 
