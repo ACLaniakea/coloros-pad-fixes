@@ -5,6 +5,7 @@ PATCHER="$MODDIR/bin/card-protocol-patcher.jar"
 DB=/data/user/0/com.oplus.pantanal.ums/databases/card_configs
 WAL="$DB-wal"
 CLASS=com.aclaniakea.oplusappsuggestionfix.CardProtocolPatcher
+APP_PROCESS=/system/bin/app_process64
 
 db_signature() {
     stat -c '%Y:%s' "$DB" 2>/dev/null
@@ -12,7 +13,7 @@ db_signature() {
 }
 
 apply_fix() {
-    output=$(CLASSPATH="$PATCHER" app_process /system/bin "$CLASS" 2>&1)
+    output=$(CLASSPATH="$PATCHER" "$APP_PROCESS" /system/bin "$CLASS" 2>&1)
     result=$?
     log_msg "app-suggestion patch rc=$result $output"
     if [ "$result" -eq 10 ]; then

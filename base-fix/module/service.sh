@@ -227,6 +227,14 @@ else
     echo $! >"$MODDIR/app-suggestion.pid"
 fi
 
+# OVoice 小核省电守护：熄屏待听时把唤醒线程限制在 little+中核 (0,3-4)，
+# 亮屏/唤醒后恢复全核 (0-5)；进程出现 60 秒内不强切，避免 FGS 超时崩溃。
+if [ -f "$MODDIR/bin/voice-power-guard.sh" ]; then
+    "$MODDIR/bin/voice-power-guard.sh" "$MODDIR" &
+    echo $! >"$MODDIR/voice-power-guard.pid"
+    log_msg "voice power guard started"
+fi
+
 log_msg "identity=$(getprop ro.product.brand)/$(getprop ro.product.name)/$(getprop ro.product.device)/$(getprop ro.product.model)"
 log_msg "zygote_tango=$(getprop init.svc.zygote_tango) horae=$(getprop init.svc.horae) gameopt=$(getprop init.svc.gameopt_hal_service-1-0)"
 log_msg "late service end"

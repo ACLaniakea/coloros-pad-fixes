@@ -766,11 +766,16 @@ monitor_real_bt_state() {
         [ "$current" = 1 ] || current=0
         if [ "$connected" != "$current" ] || [ "$connected" != "$last" ]; then
             settings put global lenovo_pen_link_connected "$connected" >/dev/null 2>&1
+            # OPlusRefreshRateService treats ipe_pencil_connect_state==1 as the
+            # IPE pencil connected (isIPEPencilConnected) and votes the OEM
+            # ipePencilRateId (120 Hz) while connected. The other mirror keys
+            # keep the legacy connected encoding for the pen settings UI.
             connect_state=0
             [ "$connected" = 1 ] && connect_state=2
-            for key in ipe_pencil_connect_state ipe_pencil_connection_state PENCIL_CONNECT_STATE pencil_connect_state; do
+            for key in ipe_pencil_connection_state PENCIL_CONNECT_STATE pencil_connect_state; do
                 settings put global "$key" "$connect_state" >/dev/null 2>&1
             done
+            settings put global ipe_pencil_connect_state "$connected" >/dev/null 2>&1
             settings put global settings_enable_oppo_pencil "$connected" >/dev/null 2>&1
             settings put global ipe_pencil_present "$connected" >/dev/null 2>&1
             docked=$(settings get global lenovo_pen_physical_docked 2>/dev/null | tr -d '\r')

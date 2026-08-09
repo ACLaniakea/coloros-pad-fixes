@@ -304,25 +304,41 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
                     byte[] pcm = (byte[]) hook.args[0];
                     if (pcm.length < 2) return;
                     int chunks = PCM_CHUNKS.incrementAndGet();
-                    long sum = 0; int peak = 0; int samples = pcm.length / 2;
-                    for (int i = 0; i + 1 < pcm.length; i += 2) {
+                    int samples = pcm.length / 2;
+                    long sum = 0; int peak = 0; int scanned = 0;
+                    // Fast estimate pass (stride 4): standby audio is mostly quiet,
+                    // so skip the per-sample gain/soft-limit rewrite unless needed.
+                    boolean needRewrite = BWV_PCM_GAIN != 1.0f;
+                    for (int i = 0; i + 1 < pcm.length; i += 8) {
                         short s = (short) (((pcm[i + 1] & 255) << 8) | (pcm[i] & 255));
-                        float v = s * BWV_PCM_GAIN;
-                        if (v > BWV_SOFT_LIMIT_START) {
-                            v = BWV_SOFT_LIMIT_START + (v - BWV_SOFT_LIMIT_START) * BWV_SOFT_LIMIT_RATIO;
-                        } else if (v < -BWV_SOFT_LIMIT_START) {
-                            v = -BWV_SOFT_LIMIT_START + (v + BWV_SOFT_LIMIT_START) * BWV_SOFT_LIMIT_RATIO;
-                        }
-                        long scaled = Math.round(v);
-                        if (scaled > 32767) scaled = 32767;
-                        if (scaled < -32768) scaled = -32768;
-                        pcm[i] = (byte) (scaled & 255);
-                        pcm[i + 1] = (byte) ((scaled >> 8) & 255);
-                        int abs = scaled < 0 ? (int) -scaled : (int) scaled;
+                        int abs = s < 0 ? -s : s;
                         if (abs > peak) peak = abs;
-                        sum += scaled * scaled;
+                        if (abs > BWV_SOFT_LIMIT_START) needRewrite = true;
+                        sum += (long) s * s;
+                        scanned++;
                     }
-                    if (chunks % 50 == 0) XposedBridge.log("ColorOSVoiceWakeupBridge: BWV PCM gain=" + BWV_PCM_GAIN + " chunks=" + chunks + " rms=" + (int) (samples == 0 ? 0 : Math.sqrt(sum / samples)) + " peak=" + peak);
+                    if (needRewrite) {
+                        sum = 0; peak = 0; scanned = 0;
+                        for (int i = 0; i + 1 < pcm.length; i += 2) {
+                            short s = (short) (((pcm[i + 1] & 255) << 8) | (pcm[i] & 255));
+                            float v = s * BWV_PCM_GAIN;
+                            if (v > BWV_SOFT_LIMIT_START) {
+                                v = BWV_SOFT_LIMIT_START + (v - BWV_SOFT_LIMIT_START) * BWV_SOFT_LIMIT_RATIO;
+                            } else if (v < -BWV_SOFT_LIMIT_START) {
+                                v = -BWV_SOFT_LIMIT_START + (v + BWV_SOFT_LIMIT_START) * BWV_SOFT_LIMIT_RATIO;
+                            }
+                            long scaled = Math.round(v);
+                            if (scaled > 32767) scaled = 32767;
+                            if (scaled < -32768) scaled = -32768;
+                            pcm[i] = (byte) (scaled & 255);
+                            pcm[i + 1] = (byte) ((scaled >> 8) & 255);
+                            int abs = scaled < 0 ? (int) -scaled : (int) scaled;
+                            if (abs > peak) peak = abs;
+                            sum += scaled * scaled;
+                            scanned++;
+                        }
+                    }
+                    if (chunks % 200 == 0) XposedBridge.log("ColorOSVoiceWakeupBridge: BWV PCM gain=" + BWV_PCM_GAIN + " chunks=" + chunks + " rms=" + (int) (scanned == 0 ? 0 : Math.sqrt(sum / scanned)) + " peak=" + peak);
                 }
             });
         } catch (Throwable t) { AUDIO_LEVEL_HOOKED.set(false); XposedBridge.log(t); }
