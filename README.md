@@ -134,7 +134,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 python3 port-tuning/tools/build_tuning.py                   # 调优模块
 ```
 
-> **OEM 二进制不随仓库分发**：`payload/aon-libs/`、`payload/voice/`、`odm/lib64/`、`zygisk/`、`libpeninput.so`、`pen-cps-gpio` 等为原厂固件/运行时，已通过 `.gitignore` 排除，可从设备已安装模块目录或原厂备份还原；`PenHidCtl.apk` 由源码构建生成。
+> **OEM 二进制不随仓库分发**：`payload/aon-libs/`、`payload/voice/`、`odm/lib64/`、`zygisk/`、`libpeninput.so`、`pen-cps-gpio` 等为原厂固件/运行时，已通过 `.gitignore` 排除，可从设备已安装模块目录或原厂备份还原；`PenHidCtl.apk` 与 `bin/card-protocol-patcher.jar` 均由仓库内源码构建生成（后者由 `base-fix/module/tools/smali/` 经 `tools/build_patcher.py` 自动重编译，需 smali.jar）。
 
 ## 目录结构
 
@@ -165,5 +165,5 @@ python3 port-tuning/tools/build_tuning.py                   # 调优模块
 ## 致谢与免责
 
 - 本项目仅供个人学习与调试，不构成对任何系统/固件的官方支持；
-- 不包含设备序列号、签名私钥、已编译 APK/JAR 或刷入包；
+- 不包含设备序列号、签名私钥或刷入包；已编译 APK/JAR 均为构建产物（源码在仓库内，构建脚本见上文）。
 - 安装前请保留系统备份，刷入风险自负。

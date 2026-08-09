@@ -12,6 +12,7 @@ ROOT=$PWD
 export ANDROID_SDK=${ANDROID_SDK:-/tmp/android-sdk}
 export XPOSED_STUBS=${XPOSED_STUBS:-/tmp/acdb/stubs}
 export PEN_SMALI_TOOLS_DIR=${PEN_SMALI_TOOLS_DIR:-/tmp/codex-dex-tools}
+export SMALI_JAR=${SMALI_JAR:-/tmp/codex-dex-tools/smali.jar}
 export ACL_KS=${ACL_KS:-/tmp/aclaniakea.jks}
 
 PEN_BASE_APK=${PEN_BASE_APK:-/run/media/ACLaniakea/IXUNICS/pad/workspace/lenovo-pen-bridge-hook/release/LenovoPenBridge-Hook-v1.0.68-r50-haptic-signed.apk}

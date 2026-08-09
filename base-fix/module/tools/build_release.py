@@ -2,7 +2,9 @@
 """Build the native/systemless repair module without the LSPosed APK."""
 
 from pathlib import Path
+import subprocess
 import stat
+import sys
 import zipfile
 
 
@@ -12,6 +14,9 @@ EXCLUDE: set[str] = set()
 
 
 def main() -> None:
+    # The patcher jar is a build product of tools/smali; always rebuild it so
+    # the module zip never depends on a stale or missing prebuilt jar.
+    subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "build_patcher.py")], check=True)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(OUT, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as dst:
         for path in sorted(p for p in ROOT.rglob("*") if p.is_file()):
