@@ -26,6 +26,123 @@ public final class Probe implements IXposedHookLoadPackage {
         }
         final ClassLoader cl = p.classLoader;
         try {
+            // FindSwitchConfigRequest.a(Context, brand, rpmbData, version)：打印 getConfig 实际参数
+            XposedHelpers.findAndHookMethod("t4.b", cl, "a", android.content.Context.class,
+                    String.class, String.class, String.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                XposedBridge.log(TAG + ": getConfig args brand=" + param.args[1]
+                                        + " version=" + param.args[3] + " rpmbData=" + param.args[2]);
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": getConfig args log failed " + t);
+                            }
+                        }
+                    });
+
+            XposedBridge.log(TAG + ": getConfig args hook installed");
+            try {
+                XposedHelpers.findAndHookMethod("okhttp3.internal.http.BridgeInterceptor", cl, "intercept",
+                        Class.forName("okhttp3.Interceptor$Chain", false, cl), new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) {
+                                try {
+                                    Object chain = param.args[0];
+                                    Object req = XposedHelpers.callMethod(chain, "request");
+                                    Object url = XposedHelpers.callMethod(req, "url");
+                                    String u = XposedHelpers.callMethod(url, "toString").toString();
+                                    if (u.contains("ifind.heytapmobi.com")) {
+                                        Object headers = XposedHelpers.callMethod(req, "headers");
+                                        XposedBridge.log(TAG + ": BRIDGE req " + u + " headers=" + headers);
+                                        try {
+                                            Object body = XposedHelpers.callMethod(req, "body");
+                                            if (body != null) {
+                                                Object len = XposedHelpers.callMethod(body, "contentLength");
+                                                XposedBridge.log(TAG + ": BRIDGE bodyLen=" + len + " url=" + u);
+                                            }
+                                        } catch (Throwable t2) {
+                                        }
+                                    }
+                                } catch (Throwable t) {
+                                    XposedBridge.log(TAG + ": bridge hook fail " + t);
+                                }
+                            }
+                        });
+    
+            XposedBridge.log(TAG + ": bridge hook installed");
+            try {
+                XposedHelpers.findAndHookMethod("okhttp3.internal.http.CallServerInterceptor", cl, "intercept",
+                        Class.forName("okhttp3.Interceptor$Chain", false, cl), new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) {
+                                try {
+                                    Object chain = param.args[0];
+                                    Object req = XposedHelpers.callMethod(chain, "request");
+                                    Object url = XposedHelpers.callMethod(req, "url");
+                                    String u = XposedHelpers.callMethod(url, "toString").toString();
+                                    if (u.contains("getConfig")) {
+                                        Object headers = XposedHelpers.callMethod(req, "headers");
+                                        XposedBridge.log(TAG + ": CALLSERVER getConfig headers=" + headers);
+                                        Object body = XposedHelpers.callMethod(req, "body");
+                                        if (body != null) {
+                                            Object len = XposedHelpers.callMethod(body, "contentLength");
+                                            XposedBridge.log(TAG + ": CALLSERVER getConfig bodyLen=" + len);
+                                            // 尝试读取 body
+                                            try {
+                                                Class<?> bufCls = XposedHelpers.findClass("np.e", cl);
+                                                Object buffer = bufCls.newInstance();
+                                                XposedHelpers.callMethod(body, "writeTo", buffer);
+                                                Object snap = XposedHelpers.callMethod(buffer, "M");
+                                                byte[] bytes = (byte[]) XposedHelpers.callMethod(snap, "h");
+                                                XposedBridge.log(TAG + ": CALLSERVER getConfig bodyHex=" + hex(bytes));
+                                            } catch (Throwable t3) {
+                                                XposedBridge.log(TAG + ": CALLSERVER body read fail " + t3);
+                                            }
+                                        }
+                                    }
+                                } catch (Throwable t) {
+                                    XposedBridge.log(TAG + ": callserver hook fail " + t);
+                                }
+                            }
+                        });
+    
+            XposedBridge.log(TAG + ": callserver hook installed");
+            try {
+                Class<?> rb = XposedHelpers.findClass("okhttp3.RequestBody", cl);
+                XposedBridge.hookAllMethods(rb, "writeTo", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        try {
+                            Object sink = param.args[0];
+                            if (sink != null) {
+                                Object b64 = XposedHelpers.callMethod(sink, "base64");
+                                XposedBridge.log(TAG + ": BODY writeTo base64=" + b64);
+                            }
+                        } catch (Throwable t) {
+                            try {
+                                XposedBridge.log(TAG + ": BODY writeTo str=" + param.args[0]);
+                            } catch (Throwable t2) {
+                            }
+                        }
+                    }
+                });
+                XposedBridge.log(TAG + ": body hook installed");
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": body hook fail " + t);
+            }
+
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": callserver hook fail2 " + t);
+            }
+
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": bridge hook fail2 " + t);
+            }
+
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": getConfig args hook failed " + t);
+        }
+        try {
             XposedHelpers.findAndHookMethod("w8.e$a", cl, "call", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
@@ -90,6 +207,16 @@ public final class Probe implements IXposedHookLoadPackage {
                                 try {
                                     Object body = XposedHelpers.callMethod(r, "body");
                                     sb.append(" bodyLen=").append(XposedHelpers.callMethod(body, "contentLength"));
+                                    try {
+                                        Class<?> bufCls = XposedHelpers.findClass("np.e", cl);
+                                        Object buffer = bufCls.newInstance();
+                                        XposedHelpers.callMethod(body, "writeTo", buffer);
+                                        Object snap = XposedHelpers.callMethod(buffer, "M");
+                                        byte[] bytes = (byte[]) XposedHelpers.callMethod(snap, "h");
+                                        sb.append(" bodyHex=").append(hex(bytes));
+                                    } catch (Throwable t2) {
+                                        sb.append(" bodyReadFail=").append(t2);
+                                    }
                                 } catch (Throwable ignored) {
                                 }
                                 sb.append(" headers=").append(XposedHelpers.callMethod(headers, "toString"));
@@ -117,7 +244,8 @@ public final class Probe implements IXposedHookLoadPackage {
                                     if (b != null && b.length() > 1500) {
                                         b = b.substring(0, 1500) + "...(truncated len=" + b.length() + ")";
                                     }
-                                    XposedBridge.log(TAG + ": http body=" + b);
+                                    byte[] rb = b.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+                                    XposedBridge.log(TAG + ": http body=" + b + " hex=" + hex(rb));
                                 } catch (Throwable t2) {
                                     XposedBridge.log(TAG + ": http body read failed " + t2);
                                 }

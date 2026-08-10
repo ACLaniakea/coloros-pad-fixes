@@ -27,7 +27,7 @@ echo "== 3/6 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py
 
 echo "== 4/6 refresh PenHidCtl inside pen-bridge module =="
-cp releases/PenHidCtl-v1.0.0.apk pen-bridge/module/system/priv-app/penhidctl/PenHidCtl.apk
+cp releases/PenHidCtl-v1.0.1.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
 echo "== 5/6 module zips =="
 python3 base-fix/module/tools/build_release.py

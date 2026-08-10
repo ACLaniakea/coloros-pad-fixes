@@ -65,7 +65,7 @@ def main():
              "--version-code", "1001", "--version-name", "1.0.1"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
-        run(["javac", "-source", "8", "-target", "8",
+        run(["javac", "--release", "17",
              "-classpath", f"{ANDROID_JAR}:{STUBS}:{tmp / 'gen'}",
              "-d", tmp / "classes"] +
             [str(p) for p in sorted(SOURCES.rglob("*.java"))])
