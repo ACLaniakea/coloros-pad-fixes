@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CryptoEng Relay</string>
+    <string name="module_description">真机 CryptoEng TA 执行器：接收平板转发的命令并返回密文（桥接注册用）。</string>
+</resources>

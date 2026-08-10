@@ -103,6 +103,14 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": service probe failed " + t);
         }
+        // 移植机开机时查找开关未开启，原厂 AndroidBootCompleteDispatcher 不会建立
+        // 位置定时上报任务。这里在 FindDaemonService 启动后按原厂 AutoReportLocationHelper
+        // 补上：立即上报一次 + 10 分钟 AlarmManager 循环上报。
+        installFindDaemonReportHook(p.classLoader);
+        if ("relay".equals(sysprop("persist.cryptoeng_mode"))) {
+            installRelayHook(p.classLoader);
+            return;
+        }
         if ("log".equals(sysprop("persist.cryptoeng_mode"))) {
             installPassthroughHooks(p.classLoader);
             return;
@@ -155,6 +163,189 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         ok += tryQueryHook(p.classLoader, queryHook, Uri.class, String[].class, Bundle.class, CancellationSignal.class, java.util.concurrent.Executor.class) ? 1 : 0;
         ok += tryQueryHook(p.classLoader, queryHook, Uri.class, String[].class, String.class, String[].class, String.class) ? 1 : 0;
         XposedBridge.log(TAG + ": installed hooks=" + ok);
+    }
+
+    /** 查找守护服务启动后按原厂逻辑补建位置上报（立即 + 10 分钟定时循环）。 */
+    private static void installFindDaemonReportHook(final ClassLoader cl) {
+        try {
+            XposedHelpers.findAndHookMethod("com.oplus.find.service.FindDaemonService", cl, "onCreate",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                Context ctx = (Context) param.thisObject;
+                                Class<?> nk = XposedHelpers.findClass("nk.a", cl);
+                                // nk.a.c(Context)：设置 AUTO_REPORT_LOCATION_IN_LOST 定时上报
+                                XposedHelpers.callStaticMethod(nk, "c", ctx);
+                                // nk.a.d(int, Context)：立即主动上报一次
+                                XposedHelpers.callStaticMethod(nk, "d", 5, ctx);
+                                XposedBridge.log(TAG + ": FindDaemonService auto-report location armed");
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": FindDaemonService report hook failed " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": FindDaemonService hook skipped " + t);
+        }
+    }
+
+    /** 真机 TA 桥接（relay）：把本机 CryptoEng 命令发给真机执行，返回真机 TA 密文。
+     *  注册/关闭指令由真机 RPMB 里的服务器公钥加密，应用侧流程保持原厂。 */
+    private static void installRelayHook(final ClassLoader cl) {
+        XC_MethodHook relayHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    Object cmdObj = XposedHelpers.getObjectField(param.thisObject, "a");
+                    if (!(cmdObj instanceof byte[])) {
+                        return;
+                    }
+                    byte[] cmd = (byte[]) cmdObj;
+                    int m = methodOf(cmd);
+                    // 注册指令（2002）转发真机前，先把指令里的账号/设备参数写入本地
+                    // RPMB 模拟存储。2003 解密+保存发生在真机 TA 侧（存进真机 RPMB），
+                    // 平板 store 拿不到，这里补齐，保证 2014/2016 返回真实身份。
+                    if (m == 2002) {
+                        try {
+                            List<int[]> ps = parseParams(cmd);
+                            for (int[] pp : ps) {
+                                byte[] val = java.util.Arrays.copyOfRange(cmd, pp[1], pp[1] + pp[2]);
+                                switch (pp[0]) {
+                                    case 4: // DEVICE_ID
+                                        set("device_id", strOf(val));
+                                        break;
+                                    case 11: // ACCOUNT_NAME
+                                        set("account_name", strOf(val));
+                                        break;
+                                    case 12: { // TOKEN -> JWT payload 里解出 ssoid
+                                        String sso = ssoidFromToken(strOf(val));
+                                        if (!sso.isEmpty()) {
+                                            set("ssoid", sso);
+                                        }
+                                        break;
+                                    }
+                                    default:
+                                        break;
+                                }
+                            }
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + ": 2002 param capture failed " + t);
+                        }
+                    }
+                    // 只把需要服务器公钥的加密/解密方法转发真机；RPMB 身份读取
+                    // （2014/2016 等）保持本地模拟，避免应用拿到真机身份。
+                    if (isRelayMethod(m)) {
+                        byte[] resp = relayCall(cmd);
+                        if (resp != null) {
+                            param.setResult(resp);
+                            XposedBridge.log(TAG + ": relayed method=" + m + " len=" + cmd.length
+                                    + " resp=" + hex(resp));
+                            return;
+                        }
+                        XposedBridge.log(TAG + ": relay failed method=" + m + " len=" + cmd.length
+                                + " hex=" + hex(cmd));
+                    }
+                    byte[] local = emulate(cmd);
+                    if (local != null) {
+                        param.setResult(local);
+                        XposedBridge.log(TAG + ": emulated method=" + m + " len=" + cmd.length
+                                + " resp=" + hex(local));
+                    } else {
+                        XposedBridge.log(TAG + ": unhandled method=" + m + " len=" + cmd.length
+                                + " hex=" + hex(cmd));
+                    }
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + ": relay error " + t);
+                }
+            }
+        };
+        try {
+            XposedHelpers.findAndHookMethod("w8.e$a", cl, "call", relayHook);
+            XposedBridge.log(TAG + ": relay hook installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": relay hook skipped " + t);
+        }
+    }
+
+    /** 从 "TOKEN_<jwt>" 的 JWT payload 中解析 ssoid（字段 id / ssoid）。 */
+    private static String ssoidFromToken(String token) {
+        try {
+            int i = token.indexOf('.');
+            int j = token.indexOf('.', i + 1);
+            if (i < 0 || j < 0) {
+                return "";
+            }
+            String payload = token.substring(i + 1, j);
+            byte[] raw = android.util.Base64.decode(payload, android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP);
+            org.json.JSONObject jo = new org.json.JSONObject(new String(raw, StandardCharsets.UTF_8));
+            if (jo.has("ssoid")) {
+                return jo.optString("ssoid");
+            }
+            if (jo.has("id")) {
+                return jo.optString("id");
+            }
+        } catch (Throwable t) {
+            // ignore
+        }
+        return "";
+    }
+
+    private static boolean isRelayMethod(int method) {
+        switch (method) {
+            case 2001: // ENCODE_BY_PUBLIC_KEY
+            case 2002: // GET_ALL_REGISTER_INFO（注册指令加密）
+            case 2003: // DECRYPT_REGISTER_RET_AND_SAVE_IMPORT_IOFO
+            case 2004: // ENCRYPT_BY_PUBLIC_KEY
+            case 2005: // DECRYPT_BY_AES_KEY
+            case 2006: // UNREGISTER_AND_CLEAR_DATA（关闭/注销）
+            case 2007: // DECODE_AND_CHECK_SIGN_INCTRUCTIO
+            case 2010: // GET_ENCRYPT_TMP_AES（getConfig 用公钥加密 tmpAes）
+            case 2011: // UPDATE_PUBLIC_KEY（解密服务器配置）
+            case 2017: // APPEND_TMP_AES_AND_ENCRYPT_BY_PUBLIC_KEY
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static byte[] relayCall(byte[] cmd) {
+        String ip = sysprop("persist.cryptoeng_relay_ip");
+        if (ip.isEmpty()) {
+            ip = "10.74.149.36"; // 真机热点网关（平板连 "OnePlus 13T 668C"）
+        }
+        int port = 30000;
+        try {
+            port = Integer.parseInt(sysprop("persist.cryptoeng_relay_port"));
+        } catch (Throwable t) {
+            port = 30000;
+        }
+        try {
+            java.net.Socket s = new java.net.Socket();
+            s.connect(new java.net.InetSocketAddress(ip, port), 800);
+            s.setSoTimeout(1500);
+            try {
+                java.io.DataOutputStream out = new java.io.DataOutputStream(s.getOutputStream());
+                out.writeInt(cmd.length);
+                out.write(cmd);
+                out.flush();
+                java.io.DataInputStream in = new java.io.DataInputStream(s.getInputStream());
+                int len = in.readInt();
+                if (len <= 0 || len > 65536) {
+                    return null;
+                }
+                byte[] resp = new byte[len];
+                in.readFully(resp);
+                return resp;
+            } finally {
+                try {
+                    s.close();
+                } catch (Throwable t) {
+                }
+            }
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** 旁路+记录模式：不动真实 cryptoeng/HTTP，只抓明文请求响应（用于真机抓注册数据流）。 */

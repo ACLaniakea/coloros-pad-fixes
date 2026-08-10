@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:versionCode="1001"
+    android:versionName="1.0.1"
+    android:compileSdkVersion="36"
+    android:compileSdkVersionCodename="16"
+    package="com.aclaniakea.cryptoengrelay"
+    platformBuildVersionCode="36"
+    platformBuildVersionName="16">
+    <uses-sdk
+        android:minSdkVersion="31"
+        android:targetSdkVersion="35"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <application
+        android:label="@string/app_name"
+        android:hasCode="true"
+        android:allowBackup="false"
+        android:supportsRtl="true">
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true"/>
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93"/>
+        <meta-data
+            android:name="xposeddescription"
+            android:value="@string/module_description"/>
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope"/>
+    </application>
+</manifest>

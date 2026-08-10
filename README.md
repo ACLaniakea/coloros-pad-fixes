@@ -28,7 +28,7 @@
 | 项目 | 类型 | 包名 / 模块 ID | 作用 |
 | --- | --- | --- | --- |
 | **base-fix 基础修复** | KernelSU 模块 | `coloros_port_base_fix` | AON QNN 生命周期、环境光自适应、小布 BWV 语音唤醒、录音增益、144Hz、显示色域、Tango/序列号/性能 HAL 兼容 |
-| **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护、查找设备 CryptoEng 软模拟等 |
+| **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护等 |
 | **port-tuning 调优** | KernelSU 模块 | `coloros_port_tuning` | 恢复 ROM 基线 swappiness 继承，消除唤醒/解锁 direct-reclaim 卡顿 |
 | **pen-bridge 手写笔桥接** | KernelSU 模块 | `lenovo_pen_bridge` | 原厂 CoreService BLE 连接/断开、CPS 上电、真实 ACL/GATT/Hall 状态同步、PenHidCtl HID 控制 |
 | **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，真实 GATT 断开 |
@@ -93,7 +93,6 @@ com.heytap.speechassist
 com.oplus.ovoicemanager.wakeup
 com.oplus.battery
 com.oplus.gesture
-com.coloros.findmyphone
 ```
 
 **pen-bridge（`com.aclaniakea.lenovopenbridge`）**，见 [scope.list](pen-bridge/hook/source/resources/META-INF/xposed/scope.list)：
@@ -160,7 +159,6 @@ python3 port-tuning/tools/build_tuning.py                   # 调优模块
 - 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响），待机耗电较高；
 - 小布说话开头偶发卡顿暂未稳定复现，待修复。
 - 手写笔还有一些连接问题尚待修复。
-- 查找设备为 CryptoEng 软模拟链路（RPMB/注册状态为软件模拟，与真机不同），本机暂时无法注册，可以查看其他设备状态。
 
 ## 致谢与免责
 
