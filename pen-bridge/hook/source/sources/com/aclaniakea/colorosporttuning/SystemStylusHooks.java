@@ -733,6 +733,7 @@ final class SystemStylusHooks {
         if (z2) {
             releaseLong(context);
             PenHapticGatt.disconnect();
+            setPenTouchpadEnabled(context, false);
             setRefreshActive(context, false);
             if (z) {
                 main.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda20
@@ -743,8 +744,10 @@ final class SystemStylusHooks {
                 }, 350L);
             }
         } else if (screenOn) {
+            setPenTouchpadEnabled(context, true);
             setRefreshActive(context, true);
         } else {
+            setPenTouchpadEnabled(context, true);
             setRefreshActive(context, false);
         }
         PenBridgeReceiver.publishPhysicalEdge(context, z2);
@@ -755,6 +758,48 @@ final class SystemStylusHooks {
             }
         }, 80L);
         HookUtils.log("Lenovo pen hall state=" + i + " (" + (z2 ? "docked" : "undocked") + ")");
+    }
+
+    /** 吸附时禁用 NVTCapacitivePen 触控板输入（防误触），取下时恢复。 */
+    private static void setPenTouchpadEnabled(Context context, boolean enabled) {
+        try {
+            InputManager inputManager = (InputManager) context.getSystemService("input");
+            if (inputManager == null) {
+                return;
+            }
+            Method m2 = null;
+            Method m3 = null;
+            try {
+                m2 = InputManager.class.getMethod("setInputDeviceEnabled", int.class, boolean.class);
+            } catch (Throwable t) {
+                // ignore
+            }
+            try {
+                m3 = InputManager.class.getMethod("setInputDeviceEnabled", int.class, int.class, boolean.class);
+            } catch (Throwable t) {
+                // ignore
+            }
+            if (m2 == null && m3 == null) {
+                HookUtils.log("NVT touchpad API missing");
+                return;
+            }
+            synchronized (SystemStylusHooks.class) {
+                for (Integer id : nvtDeviceIds) {
+                    try {
+                        if (m2 != null) {
+                            m2.invoke(inputManager, id, enabled);
+                        } else {
+                            m3.invoke(inputManager, id, 0, enabled);
+                        }
+                    } catch (Throwable t) {
+                        HookUtils.log("NVT touchpad device " + id + " set failed: " + t);
+                    }
+                }
+            }
+            HookUtils.log("NVT pen touchpad " + (enabled ? "enabled" : "disabled") + " devices=" + nvtDeviceIds.size());
+        } catch (Throwable t) {
+            HookUtils.log("NVT touchpad control failed: " + t);
+        }
     }
 
     /* JADX INFO: Access modifiers changed from: private */

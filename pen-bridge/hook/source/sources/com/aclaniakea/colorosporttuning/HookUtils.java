@@ -112,7 +112,7 @@ final class HookUtils {
         try {
             int iPhysicalDocked = physicalDocked(context);
             Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_physical_docked", z ? 1 : 0);
-            if (iPhysicalDocked != z) {
+            if (iPhysicalDocked != (z ? 1 : 0)) {
                 invalidateOemCharging(context);
                 Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_charging_state", 0);
                 setIpePreferenceInt(context, "pencil_sp_charging_state", 0);

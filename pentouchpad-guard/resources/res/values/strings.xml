@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pen Touchpad Guard</string>
+    <string name="module_description">笔吸附时禁用 NVTCapacitivePen 触控板输入并释放 144Hz 刷新率。</string>
+</resources>

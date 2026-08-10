@@ -1,5 +1,6 @@
 # 构建产物 / 密钥 / 日志
 releases/
+!experimental/find-device/releases/
 *.jks
 *.idsig
 __pycache__/
