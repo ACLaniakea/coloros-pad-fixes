@@ -36,67 +36,70 @@ final class LenovoConsumerGestureReader implements Runnable {
     }
 
     @Override // java.lang.Runnable
-    public void run() throws InterruptedException {
-        long j;
-        FileInputStream fileInputStream;
-        int iFd;
-        int iNativeGrab;
+    public void run() {
         while (running) {
             String strFindNode = findNode();
             if (strFindNode == null) {
-                j = 1500;
+                sleep(1500L);
             } else {
                 HookUtils.log("consumer gesture reader: " + strFindNode);
                 try {
-                    fileInputStream = new FileInputStream(strFindNode);
+                    FileInputStream fileInputStream = new FileInputStream(strFindNode);
                     try {
-                        iFd = fd(fileInputStream.getFD());
-                        iNativeGrab = nativeGrab(iFd, 1);
-                    } finally {
+                        int iFd = fd(fileInputStream.getFD());
+                        int iNativeGrab = nativeGrab(iFd, 1);
+                        if (iNativeGrab != 0) {
+                            throw new IllegalStateException("EVIOCGRAB=" + iNativeGrab);
+                        }
+                        HookUtils.log("consumer gesture EVIOCGRAB active");
+                        try {
+                            readEvents(fileInputStream);
+                        } finally {
+                            nativeGrab(iFd, 0);
+                        }
+                        fileInputStream.close();
+                    } catch (Throwable th) {
+                        try {
+                            fileInputStream.close();
+                        } catch (Throwable unused) {
+                            th.addSuppressed(unused);
+                        }
+                        throw th;
                     }
                 } catch (Throwable th) {
                     HookUtils.log("consumer gesture reader retry: " + th);
-                    j = 1000;
-                }
-                if (iNativeGrab != 0) {
-                    throw new IllegalStateException("EVIOCGRAB=" + iNativeGrab);
-                }
-                HookUtils.log("consumer gesture EVIOCGRAB active");
-                try {
-                    readEvents(fileInputStream);
-                    fileInputStream.close();
-                } finally {
-                    nativeGrab(iFd, 0);
+                    sleep(1000L);
                 }
             }
-            sleep(j);
         }
     }
 
     private void readEvents(FileInputStream fileInputStream) throws Exception {
         byte[] bArr = new byte[24];
+        outer:
         while (true) {
-            int i = 0;
+            int iValue = 0;
             while (running) {
-                int i2 = 0;
-                while (i2 < 24) {
-                    int i3 = fileInputStream.read(bArr, i2, 24 - i2);
-                    if (i3 < 0) {
+                int i = 0;
+                while (i < 24) {
+                    int iRead = fileInputStream.read(bArr, i, 24 - i);
+                    if (iRead < 0) {
                         throw new EOFException();
                     }
-                    i2 += i3;
+                    i += iRead;
                 }
                 ByteBuffer byteBufferOrder = ByteBuffer.wrap(bArr).order(ByteOrder.nativeOrder());
-                int i4 = byteBufferOrder.getShort(16) & 65535;
-                int i5 = 65535 & byteBufferOrder.getShort(18);
-                int i6 = byteBufferOrder.getInt(20);
-                if (i4 == 4 && i5 == 4) {
-                    i = i6;
-                } else if (i4 != 1 || i5 != 240 || i6 != 0 || i == 0) {
+                int iType = byteBufferOrder.getShort(16) & 65535;
+                int iCode = 65535 & byteBufferOrder.getShort(18);
+                int iData = byteBufferOrder.getInt(20);
+                if (iType == 4 && iCode == 4) {
+                    iValue = iData;
+                } else if (iType == 1 && iCode == 240 && iData == 0 && iValue != 0) {
+                    SystemStylusHooks.onConsumerGesture(this.context, iValue);
+                    continue outer;
                 }
             }
             return;
-            SystemStylusHooks.onConsumerGesture(this.context, i);
         }
     }
 
@@ -153,7 +156,7 @@ final class LenovoConsumerGestureReader implements Runnable {
         throw new NoSuchFieldException("FileDescriptor fd");
     }
 
-    private static void sleep(long j) throws InterruptedException {
+    private static void sleep(long j) {
         try {
             Thread.sleep(j);
         } catch (InterruptedException unused) {

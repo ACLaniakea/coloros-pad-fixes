@@ -238,3 +238,27 @@ fi
 log_msg "identity=$(getprop ro.product.brand)/$(getprop ro.product.name)/$(getprop ro.product.device)/$(getprop ro.product.model)"
 log_msg "zygote_tango=$(getprop init.svc.zygote_tango) horae=$(getprop init.svc.horae) gameopt=$(getprop init.svc.gameopt_hal_service-1-0)"
 log_msg "late service end"
+
+# ============================================================================
+# 环境光自适应自愈：完整重启时 LSPosed 注入 system_server 偶发 I/O error，
+# 导致 AmbientColorSensorBridge 未加载（环境光/色温失效）。检测不到就软
+# 重启 zygote 重试，最多 4 次。
+# ============================================================================
+ambient_ready() {
+    latest=$(ls -t /data/adb/lspd/log/verbose_*.log 2>/dev/null | head -1)
+    [ -n "$latest" ] || return 1
+    grep -q "AmbientColorSensorBridge: installed" "$latest" 2>/dev/null
+}
+
+ambient_tries=0
+while [ "$ambient_tries" -lt 4 ]; do
+    sleep 15
+    if ambient_ready; then
+        log_msg "ambient light bridge loaded"
+        break
+    fi
+    ambient_tries=$((ambient_tries + 1))
+    log_msg "ambient light bridge missing, soft restarting zygote (try $ambient_tries)"
+    setprop ctl.restart zygote
+    sleep 10
+done

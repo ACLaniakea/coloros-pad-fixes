@@ -259,7 +259,7 @@ final class PenHapticGatt {
     }
 
     /* renamed from: com.aclaniakea.colorosporttuning.PenHapticGatt$1, reason: invalid class name */
-    class AnonymousClass1 extends BluetoothGattCallback {
+    static class AnonymousClass1 extends BluetoothGattCallback {
         AnonymousClass1() {
         }
 

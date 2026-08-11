@@ -7,6 +7,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.hardware.input.InputManager;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.InputDevice;
 
@@ -239,12 +240,66 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
         Code decompiled incorrectly, please refer to instructions dump.
         To view partially-correct add '--show-bad-code' argument
     */
-    static void broadcastColorOs(android.content.Context r26, com.aclaniakea.colorosporttuning.PenState r27, java.lang.String r28, boolean r29) {
-        /*
-            Method dump skipped, instructions count: 384
-            To view this dump add '--comments-level debug' option
-        */
-        throw new UnsupportedOperationException("Method not decompiled: com.aclaniakea.colorosporttuning.PenBridgeReceiver.broadcastColorOs(android.content.Context, com.aclaniakea.colorosporttuning.PenState, java.lang.String, boolean):void");
+    static void broadcastColorOs(Context context, PenState penState, String str, boolean z) {
+        String strMacNoColon = penState.macNoColon();
+        int iPhysicalDocked = HookUtils.physicalDocked(context);
+        boolean zPresent = iPhysicalDocked == 1 && penState.charging != 0;
+        int iPhysicalDocked2 = HookUtils.physicalDocked(context);
+        boolean zHardwareBattery = penState.battery >= 0 && z;
+        Intent intent = new Intent("com.oplus.ipemanager.action.PENCIL_STATUS_CHANGE");
+        intent.putExtra("connect_state", penState.connectState());
+        intent.putExtra("battery_level", penState.battery);
+        intent.putExtra("mac_addr", penState.address);
+        intent.putExtra("present", zPresent ? "1" : "0");
+        intent.putExtra("macAddr", strMacNoColon);
+        intent.putExtra("pencilId", "Ivy");
+        intent.putExtra("chargingState", penState.charging);
+        intent.putExtra("charging", penState.charging);
+        intent.putExtra("charging_state", penState.charging);
+        intent.putExtra("connected", penState.connected ? 1 : 0);
+        intent.putExtra("physicalDocked", iPhysicalDocked2);
+        intent.putExtra("source", str);
+        intent.putExtra("hardware_battery", zHardwareBattery);
+        if (penState.connected && !HookUtils.disconnectRequested(context) && zHardwareBattery) {
+            long jUptimeMillis = SystemClock.uptimeMillis();
+            if (!strMacNoColon.equalsIgnoreCase(lastBondedMac) || jUptimeMillis - lastBondedAt > 3000L) {
+                lastBondedMac = strMacNoColon;
+                lastBondedAt = jUptimeMillis;
+                try {
+                    Intent intent2 = new Intent("com.oplus.ipemanager.action.PENCIL_BONDED_WHEN_BOOT");
+                    intent2.putExtra("macAddr", strMacNoColon);
+                    intent2.putExtra("pencilId", "Ivy");
+                    startColorOsService(context, intent2);
+                } catch (Throwable unused) {
+                }
+            }
+        }
+        if (penState.connected || penState.address.length() > 0) {
+            Intent intent3 = new Intent("com.oplus.ipemanager.action.BATTERY_NOTIFY");
+            intent3.putExtra("macAddr", strMacNoColon);
+            intent3.putExtra("mac_addr", penState.address);
+            intent3.putExtra("batteryLevel", penState.battery);
+            intent3.putExtra("battery_level", penState.battery);
+            intent3.putExtra("chargingState", penState.charging);
+            intent3.putExtra("charging", penState.charging);
+            intent3.putExtra("charging_state", penState.charging);
+            intent3.putExtra("present", penState.connected ? "1" : "0");
+            intent3.putExtra("connected", penState.connected ? 1 : 0);
+            intent3.putExtra("physicalDocked", iPhysicalDocked2);
+            intent3.putExtra("source", str);
+            intent3.putExtra("hardware_battery", zHardwareBattery);
+            intent3.putExtra("hardware_identity_known", penState.address != null && penState.address.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}"));
+            try {
+                context.sendBroadcast(new Intent(intent3).setPackage("com.oplus.ipemanager"));
+            } catch (Throwable unused2) {
+            }
+        }
+        try {
+            Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_charging_state", penState.charging);
+        } catch (Throwable unused3) {
+        }
+        HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", penState.charging);
+        HookUtils.setIpePreferenceInt(context, "pencil_sp_battery_level", penState.battery);
     }
 
     private static void startColorOsService(Context context, Intent intent) {

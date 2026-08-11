@@ -249,8 +249,109 @@ final class IpeManagerHooks {
         installRiskGuard(loadPackageParam);
         installGestureTextBridge(loadPackageParam);
         installWritingHapticPreference(loadPackageParam);
+        installPencilPanelControlBridge(loadPackageParam);
+        installMyDevicesCardBatteryBridge(loadPackageParam);
         installMyDevicesStateBridge(loadPackageParam);
         HookUtils.log("IPeManager hooks installed");
+    }
+
+    private static void installPencilPanelControlBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.f0", "connect", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.44
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                Context context = HookUtils.context(methodHookParam.thisObject);
+                String strMac = IpeManagerHooks.stringArg(methodHookParam.args);
+                if (context == null || strMac == null || strMac.length() == 0) {
+                    return;
+                }
+                context.startService(new Intent("com.oplus.ipemanager.action.CONNECT_PENCIL").putExtra("device_mac_info", strMac).setClassName("com.oplus.ipemanager", "com.oplus.ipemanager.btadsorb.CoreService"));
+                HookUtils.log("IPe PencilPanel connect routed to stock CONNECT_PENCIL mac=" + strMac);
+            }
+        });
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.f0", "disconnect", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.45
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                Context context = HookUtils.context(methodHookParam.thisObject);
+                String strMac = IpeManagerHooks.stringArg(methodHookParam.args);
+                if (context == null || strMac == null || strMac.length() == 0) {
+                    return;
+                }
+                context.startService(new Intent("com.oplus.ipemanager.action.DISCONNECT_PENCIL").putExtra("device_mac_info", strMac).setClassName("com.oplus.ipemanager", "com.oplus.ipemanager.btadsorb.CoreService"));
+                HookUtils.log("IPe PencilPanel disconnect routed to stock DISCONNECT_PENCIL mac=" + strMac);
+            }
+        });
+        HookUtils.log("IPe PencilPanel control bridge installed");
+    }
+
+    private static void installMyDevicesCardBatteryBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        XC_MethodHook xC_MethodHook = new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.46
+            protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                Object obj = methodHookParam.thisObject;
+                if (obj == null) {
+                    return;
+                }
+                Object objType = HookUtils.call(obj, "getBatteryType");
+                if (objType == null) {
+                    return;
+                }
+                String strType = objType.getClass().getSimpleName();
+                HookUtils.log("IPe card battery getCharge type=" + strType);
+                if (!"SINGLE".equals(strType)) {
+                    return;
+                }
+                Application application;
+                try {
+                    application = (Application) Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null);
+                } catch (Throwable unused7) {
+                    application = null;
+                }
+                if (application == null) {
+                    return;
+                }
+                int iCharging = Settings.Global.getInt(application.getContentResolver(), "ipe_pencil_charging_state", 0);
+                methodHookParam.setResult(Boolean.valueOf(iCharging != 0));
+                HookUtils.log("IPe DeviceSpace card charging overridden");
+            }
+        };
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.domain.entities.device.BatteryInfo", "getCharge", xC_MethodHook);
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.pencilPanel.fragment.k1", "b", xC_MethodHook);
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.heytap.mydevices.core.bluetooth.b", "f", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.47
+            protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                if (methodHookParam.args == null || methodHookParam.args.length < 2) {
+                    return;
+                }
+                Object objFirst = methodHookParam.args[0];
+                Object objSecond = methodHookParam.args[1];
+                if (!(objFirst instanceof Integer) || ((Integer) objFirst).intValue() != 2000 || objSecond == null || !"[I".equals(objSecond.getClass().getName())) {
+                    return;
+                }
+                int[] iArr = (int[]) objSecond;
+                if (iArr.length < 4) {
+                    return;
+                }
+                Application application;
+                try {
+                    application = (Application) Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null);
+                } catch (Throwable unused8) {
+                    application = null;
+                }
+                if (application == null || Settings.Global.getInt(application.getContentResolver(), "ipe_pencil_charging_state", 0) != 0) {
+                    return;
+                }
+                iArr[3] = 0;
+                HookUtils.log("IPe card battery charge cleared");
+            }
+        });
+        XC_MethodHook xC_MethodHook2 = new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.49
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                HookUtils.log("IPe card battery path hit");
+                if (methodHookParam.args == null || methodHookParam.args.length == 0 || methodHookParam.args[0] == null) {
+                    return;
+                }
+                HookUtils.call(methodHookParam.args[0], "getValue");
+                HookUtils.log("IPe card battery value=");
+            }
+        };
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.quickapp.homecard.view.BatteryLottieView", "setBatteryInfo", xC_MethodHook2);
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.domain.entities.cards.QuickCardDeviceData", "getBatteryMain", xC_MethodHook2);
     }
 
     private static void installHardwareGattHooks(XC_LoadPackage.LoadPackageParam loadPackageParam) {
@@ -585,7 +686,7 @@ final class IpeManagerHooks {
     }
 
     private static Object settingsCallbackOf(Object obj) {
-        Object obj2;
+        Object obj2 = null;
         if (obj == null) {
             return null;
         }
@@ -658,12 +759,81 @@ final class IpeManagerHooks {
         Code decompiled incorrectly, please refer to instructions dump.
         To view partially-correct add '--show-bad-code' argument
     */
-    public static void notifySettingsPage(android.content.Context r14, android.content.Intent r15) {
-        /*
-            Method dump skipped, instructions count: 406
-            To view this dump add '--comments-level debug' option
-        */
-        throw new UnsupportedOperationException("Method not decompiled: com.aclaniakea.colorosporttuning.IpeManagerHooks.notifySettingsPage(android.content.Context, android.content.Intent):void");
+    public static void notifySettingsPage(Context context, Intent intent) {
+        try {
+            if (intent != null && intent.hasExtra("physicalDocked")) {
+                int iDocked = intent.getIntExtra("physicalDocked", -1);
+                if (iDocked == 0 || iDocked == 1) {
+                    HookUtils.setPhysicalDocked(context, iDocked == 1);
+                }
+            }
+            PenState penState = HookUtils.state(context);
+            boolean zHardware = isHardwareBatteryIntent(intent);
+            int iBattery = HookUtils.hardwareBattery(context);
+            boolean zDisconnected = intent != null && intent.hasExtra("connected") && intent.getIntExtra("connected", 1) == 0;
+            if (iBattery < 0 && (HookUtils.disconnectRequested(context) || zDisconnected)) {
+                iBattery = HookUtils.lastValidBattery(context);
+            }
+            if (zHardware && intent != null) {
+                if (intent.hasExtra("batteryLevel")) {
+                    iBattery = intent.getIntExtra("batteryLevel", -1);
+                } else if (intent.hasExtra("battery_level")) {
+                    iBattery = intent.getIntExtra("battery_level", -1);
+                }
+            }
+            if (iBattery < 0 || iBattery > 100) {
+                iBattery = -1;
+            }
+            int iCharging = chargingExtra(intent, penState.charging);
+            int iOemCharging = HookUtils.oemCharging(context);
+            if (iOemCharging >= 0) {
+                iCharging = iOemCharging;
+            }
+            if (HookUtils.physicalDocked(context) == 0 && HookUtils.oemCharging(context) < 0) {
+                iCharging = 0;
+            }
+            if (iBattery >= 0) {
+                HookUtils.setIpePreferenceInt(context, "pencil_sp_battery_level", iBattery);
+            }
+            HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", iCharging);
+            Object objCallback = settingsCallback;
+            Object objCallback2 = settingsCallbackOf(settingsActivity);
+            if (objCallback2 != null) {
+                settingsCallback = objCallback2;
+                objCallback = objCallback2;
+            }
+            boolean zDirect = false;
+            if (objCallback != null) {
+                if (iBattery >= 0) {
+                    invoke(objCallback, "notifyBatteryLevel", Integer.valueOf(iBattery));
+                }
+                boolean zChargingNotify = invoke(objCallback, "notifyChargingState", Boolean.valueOf(iCharging != 0));
+                zDirect = !zChargingNotify;
+            }
+            if (zDirect) {
+                HookUtils.log("IPe settings direct callback updated: battery=" + iBattery + " charging=" + iCharging);
+            }
+            Object objFragment = settingsFragment;
+            if (objFragment != null && invoke(objFragment, "h")) {
+                HookUtils.log("IPe settings fragment refreshed: battery=" + iBattery + " charging=" + iCharging);
+                zDirect = true;
+            }
+            refreshWritingHapticPreference();
+            Object objBle = fieldAny(coreService, "f1865b", "b");
+            if (objBle == null) {
+                objBle = fieldByTypeName(coreService, "com.oplus.ipemanager.btadsorb.ble.s0");
+            }
+            if (objBle == null) {
+                objBle = coreBleManager;
+            }
+            if (notifyStockHardwareCallbacks(objBle, iBattery, iCharging)) {
+                HookUtils.log("IPe OEM UI callbacks updated: battery=" + iBattery + " charging=" + iCharging);
+            } else if (!zDirect) {
+                HookUtils.log("IPe settings callback unavailable: battery=" + iBattery + " charging=" + iCharging);
+            }
+        } catch (Throwable th) {
+            HookUtils.log("IPe settings Binder update: " + th);
+        }
     }
 
     private static boolean notifyStockHardwareCallbacks(Object obj, int i, int i2) {
@@ -781,7 +951,7 @@ final class IpeManagerHooks {
 
     /* JADX INFO: Access modifiers changed from: private */
     public static Object fieldByTypeName(Object obj, String str) {
-        Object obj2;
+        Object obj2 = null;
         if (obj != null && str != null) {
             for (Class<?> superclass = obj.getClass(); superclass != null; superclass = superclass.getSuperclass()) {
                 for (Field field : superclass.getDeclaredFields()) {
@@ -800,7 +970,7 @@ final class IpeManagerHooks {
     }
 
     private static BluetoothDevice managerDevice(Object obj) {
-        Object obj2;
+        Object obj2 = null;
         if (obj == null) {
             return null;
         }
@@ -1007,7 +1177,7 @@ final class IpeManagerHooks {
 
     /* JADX INFO: Access modifiers changed from: private */
     public static Object objectFieldOfType(Object obj, String str) {
-        Object obj2;
+        Object obj2 = null;
         if (obj != null && str != null) {
             for (Class<?> superclass = obj.getClass(); superclass != null; superclass = superclass.getSuperclass()) {
                 for (Field field : superclass.getDeclaredFields()) {
@@ -1033,31 +1203,42 @@ final class IpeManagerHooks {
     /* JADX WARN: Type inference failed for: r8v5 */
     /* JADX WARN: Type inference failed for: r8v6 */
     public static int chargingExtra(Intent intent, int i) {
-        String[] strArr = {"chargingState", "charging", "charge_state"};
-        int i2 = 0;
-        Intent IntValue = intent;
-        while (i2 < 3) {
-            String str = strArr[i2];
-            if (IntValue.hasExtra(str)) {
+        if (intent == null) {
+            return i;
+        }
+        String[] strArrNumeric = {"chargingState", "charging", "charge_state"};
+        for (String strKey : strArrNumeric) {
+            if (intent.hasExtra(strKey)) {
                 try {
-                    Object obj = IntValue.getExtras() == null ? null : IntValue.getExtras().get(str);
+                    Object obj = intent.getExtras() == null ? null : intent.getExtras().get(strKey);
                     if (obj instanceof Number) {
-                        IntValue = ((Number) obj).intValue();
-                        return IntValue;
+                        return ((Number) obj).intValue();
                     }
-                    String lowerCase = String.valueOf(obj).trim().toLowerCase();
-                    if (!"charging".equals(lowerCase) && !"charge".equals(lowerCase) && !"wireless charging".equals(lowerCase) && !"wireless_charging".equals(lowerCase) && !"1".equals(lowerCase)) {
-                        if ("full".equals(lowerCase) || "not charging".equals(lowerCase) || "not_charging".equals(lowerCase) || "discharging".equals(lowerCase) || "idle".equals(lowerCase) || "none".equals(lowerCase) || "0".equals(lowerCase)) {
-                            return 0;
-                        }
+                    if (obj instanceof Boolean) {
+                        return ((Boolean) obj).booleanValue() ? 1 : 0;
                     }
-                    return 1;
+                    if (obj instanceof String) {
+                        return Integer.parseInt(((String) obj).trim());
+                    }
                 } catch (Throwable unused) {
-                    continue;
                 }
             }
-            i2++;
-            IntValue = IntValue;
+        }
+        String[] strArrString = {"charging_state", "CHARGING_STATE"};
+        for (String strKey2 : strArrString) {
+            if (intent.hasExtra(strKey2)) {
+                try {
+                    Object obj2 = intent.getExtras() == null ? null : intent.getExtras().get(strKey2);
+                    String lowerCase = obj2 == null ? "" : String.valueOf(obj2).trim().toLowerCase();
+                    if ("charging".equals(lowerCase) || "charge".equals(lowerCase) || "wireless charging".equals(lowerCase) || "wireless_charging".equals(lowerCase) || "1".equals(lowerCase)) {
+                        return 1;
+                    }
+                    if ("full".equals(lowerCase) || "not charging".equals(lowerCase) || "not_charging".equals(lowerCase) || "discharging".equals(lowerCase) || "idle".equals(lowerCase) || "none".equals(lowerCase) || "0".equals(lowerCase)) {
+                        return 0;
+                    }
+                } catch (Throwable unused2) {
+                }
+            }
         }
         return i;
     }
@@ -1305,7 +1486,7 @@ final class IpeManagerHooks {
                 Class<?> cls2 = Class.forName("androidx.preference.Preference$OnPreferenceChangeListener", false, classLoader);
                 cls.getMethod("setOnPreferenceChangeListener", cls2).invoke(objInvoke3, Proxy.newProxyInstance(classLoader, new Class[]{cls2}, new InvocationHandler() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks$$ExternalSyntheticLambda0
                     @Override // java.lang.reflect.InvocationHandler
-                    public final Object invoke(Object obj2, Method method2, Object[] objArr) {
+                    public final Object invoke(Object obj2, Method method2, Object[] objArr) throws Throwable {
                         return IpeManagerHooks.lambda$configureWritingHapticPreference$0(context, obj2, method2, objArr);
                     }
                 }));
@@ -1647,7 +1828,7 @@ final class IpeManagerHooks {
                 Code decompiled incorrectly, please refer to instructions dump.
                 To view partially-correct add '--show-bad-code' argument
             */
-            protected void beforeHookedMethod(de.robv.android.xposed.XC_MethodHook.MethodHookParam r9) {
+            protected void beforeHookedMethod(de.robv.android.xposed.XC_MethodHook.MethodHookParam methodHookParam) {
                 /*
                     r8 = this;
                     java.lang.Object r8 = r9.thisObject
@@ -1754,7 +1935,71 @@ final class IpeManagerHooks {
                 Le3:
                     return
                 */
-                throw new UnsupportedOperationException("Method not decompiled: com.aclaniakea.colorosporttuning.IpeManagerHooks.AnonymousClass40.beforeHookedMethod(de.robv.android.xposed.XC_MethodHook$MethodHookParam):void");
+                Context context2 = HookUtils.context(methodHookParam.thisObject);
+                Intent intent2 = IpeManagerHooks.intentArg(methodHookParam.args);
+                if (context2 == null || intent2 == null) {
+                    return;
+                }
+                int iState = intent2.getIntExtra("android.bluetooth.profile.extra.STATE", Integer.MIN_VALUE);
+                if (iState != 0 && iState != 2) {
+                    return;
+                }
+                BluetoothDevice bluetoothDevice2 = null;
+                try {
+                    android.os.Parcelable parcelable = intent2.getParcelableExtra("android.bluetooth.device.extra.DEVICE");
+                    if (parcelable instanceof BluetoothDevice) {
+                        bluetoothDevice2 = (BluetoothDevice) parcelable;
+                    }
+                } catch (Throwable unused4) {
+                }
+                String strAddress = "";
+                if (bluetoothDevice2 != null) {
+                    try {
+                        String strAddress2 = bluetoothDevice2.getAddress();
+                        if (strAddress2 != null) {
+                            strAddress = bluetoothDevice2.getAddress();
+                        }
+                    } catch (Throwable unused5) {
+                    }
+                }
+                PenState penState2 = HookUtils.state(context2);
+                if (strAddress.length() == 0) {
+                    strAddress = penState2.address;
+                }
+                String strName = "";
+                if (bluetoothDevice2 != null) {
+                    try {
+                        String strName2 = bluetoothDevice2.getName();
+                        if (strName2 != null) {
+                            strName = bluetoothDevice2.getName();
+                        }
+                    } catch (Throwable unused6) {
+                    }
+                }
+                if (strAddress.length() == 0 || (!IpeManagerHooks.isKnown(context2, strAddress) && !IpeManagerHooks.isLenovoName(strName))) {
+                    return;
+                }
+                if (iState == 2) {
+                    if (HookUtils.disconnectRequested(context2)) {
+                        HookUtils.setLinkConnected(context2, false);
+                        HookUtils.log("IPe stock s0.V ignored late CONNECTED mac=" + strAddress + " while disconnect requested");
+                        methodHookParam.setResult(null);
+                        return;
+                    }
+                    HookUtils.setLinkConnected(context2, true);
+                    IpeManagerHooks.lastStockProfileMac = strAddress;
+                    IpeManagerHooks.lastStockProfileConnectedAt = SystemClock.elapsedRealtime();
+                    HookUtils.log("IPe stock s0.V profile CONNECTED mac=" + strAddress);
+                    return;
+                }
+                HookUtils.setLinkConnected(context2, false);
+                if (IpeManagerHooks.samePenAddress(IpeManagerHooks.lastStockProfileMac, strAddress)) {
+                    IpeManagerHooks.lastStockProfileMac = "";
+                    IpeManagerHooks.lastStockProfileConnectedAt = 0L;
+                }
+                HookUtils.invalidateHardwareBattery(context2);
+                HookUtils.invalidateOemCharging(context2);
+                HookUtils.log("IPe stock s0.V profile DISCONNECTED mac=" + strAddress);
             }
 
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws SecurityException {
@@ -1861,7 +2106,7 @@ final class IpeManagerHooks {
             return false;
         }
         if (context == null) {
-            context = com.oplus.ipemanager.btadsorb.ota.i.i();
+            context = HookUtils.context(null);
         }
         PenState penStateState = HookUtils.state(context);
         return samePenAddress(penStateState.address, str)

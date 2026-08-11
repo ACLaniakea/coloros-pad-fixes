@@ -32,6 +32,83 @@ final class MyDevicesHooks {
         };
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.domain.entities.device.DeviceInfo", "getDeviceModelId", xC_MethodHook);
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.domain.entities.device.DeviceInfo", "getDeviceIconId", xC_MethodHook);
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.heytap.mydevices.core.bluetooth.OplusBluetoothAdapterWrapper", "o", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.MyDevicesHooks.6
+            protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                Object result = methodHookParam.getResult();
+                if (!(result instanceof int[]) || methodHookParam.args == null || methodHookParam.args.length <= 0 || methodHookParam.args[0] == null) {
+                    return;
+                }
+                int[] iArr = (int[]) result;
+                if (iArr.length < 4) {
+                    return;
+                }
+                String strMac = String.valueOf(methodHookParam.args[0]).replace(":", "").toLowerCase();
+                PenState penState = HookUtils.state(HookUtils.context(methodHookParam.thisObject));
+                if (penState == null || penState.address == null || !penState.address.replace(":", "").toLowerCase().equals(strMac)) {
+                    return;
+                }
+                if (penState.battery < 0) {
+                    iArr[0] = penState.battery;
+                }
+                iArr[3] = penState.charging;
+                methodHookParam.setResult(iArr);
+                HookUtils.log("MyDevices battery override level=" + iArr);
+            }
+        });
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.heytap.mydevices.core.bluetooth.OplusBluetoothAdapterWrapper", "P", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.MyDevicesHooks.7
+            protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                if (methodHookParam.args == null || methodHookParam.args.length <= 0 || methodHookParam.args[0] == null) {
+                    return;
+                }
+                String strMac = String.valueOf(methodHookParam.args[0]).replace(":", "").toLowerCase();
+                PenState penState = HookUtils.state(HookUtils.context(methodHookParam.thisObject));
+                if (penState == null || penState.address == null || !penState.address.replace(":", "").toLowerCase().equals(strMac)) {
+                    return;
+                }
+                methodHookParam.setResult(Boolean.valueOf(penState.connected));
+                HookUtils.log("MyDevices isConnected overridden for pen");
+            }
+        });
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.heytap.mydevices.core.device.BlueToothScannerImpl", "onBatteryLevelChanged", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.MyDevicesHooks.8
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                if (methodHookParam.args == null || methodHookParam.args.length < 2) {
+                    return;
+                }
+                Object objDevice = methodHookParam.args[0];
+                Object objArr = methodHookParam.args[1];
+                if (!(objArr instanceof int[])) {
+                    return;
+                }
+                int[] iArr = (int[]) objArr;
+                if (iArr.length < 4 || objDevice == null) {
+                    return;
+                }
+                String strMac;
+                try {
+                    strMac = ((android.bluetooth.BluetoothDevice) objDevice).getAddress().replace(":", "").toLowerCase();
+                } catch (Throwable unused) {
+                    return;
+                }
+                PenState penState = HookUtils.state(HookUtils.context(methodHookParam.thisObject));
+                if (penState == null || penState.address == null || !penState.address.replace(":", "").toLowerCase().equals(strMac)) {
+                    return;
+                }
+                if (penState.battery < 0) {
+                    iArr[0] = penState.battery;
+                }
+                iArr[3] = penState.charging;
+                HookUtils.log("MyDevices card battery/charging patched");
+            }
+        });
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.quickapp.homecard.view.BatteryLottieView", "setBatteryInfo", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.MyDevicesHooks.10
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                if (methodHookParam.args == null || methodHookParam.args.length <= 0) {
+                    return;
+                }
+                HookUtils.log("MyDevices setBatteryInfo called battery=" + methodHookParam.args[0]);
+            }
+        });
+        CardBatteryHooks.install(loadPackageParam);
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.bluetooth.BlueToothDetailActivity", "H0", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.MyDevicesHooks.3
             protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
                 if (methodHookParam.thisObject instanceof Activity) {

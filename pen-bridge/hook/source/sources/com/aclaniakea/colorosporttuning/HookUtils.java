@@ -32,7 +32,7 @@ final class HookUtils {
     }
 
     static Context context(Object obj) {
-        Object obj2;
+        Object obj2 = null;
         if (obj instanceof Context) {
             return (Context) obj;
         }

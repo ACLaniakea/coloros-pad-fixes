@@ -49,12 +49,73 @@ final class LenovoPenUEventBridge extends UEventObserver {
         Code decompiled incorrectly, please refer to instructions dump.
         To view partially-correct add '--show-bad-code' argument
     */
-    public void onUEvent(android.os.UEventObserver.UEvent r19) {
-        /*
-            Method dump skipped, instructions count: 465
-            To view this dump add '--comments-level debug' option
-        */
-        throw new UnsupportedOperationException("Method not decompiled: com.aclaniakea.colorosporttuning.LenovoPenUEventBridge.onUEvent(android.os.UEventObserver$UEvent):void");
+    public void onUEvent(UEventObserver.UEvent uEvent) {
+        if (uEvent == null || !"PEN_FRAMEWORK".equals(uEvent.get("UEVENT_TO", ""))) {
+            return;
+        }
+        String strInfo = clean(uEvent.get("INFO", ""));
+        String strMac = clean(uEvent.get("MAC", ""));
+        int iTouch = parseInt(uEvent.get("TOUCH_INFORMATION", ""), -1);
+        int iInfoBattery = -1;
+        if (!strInfo.isEmpty()) {
+            String[] strSplit = strInfo.split(";");
+            if (strSplit.length > 1) {
+                iInfoBattery = parseInt(strSplit[1], -1);
+            }
+        }
+        int iLevel = parseInt(uEvent.get("LEVEL", ""), -1);
+        String strRawCharging = clean(uEvent.get("CHARGING_STATE", ""));
+        int iCharging = HookUtils.effectiveCharging(this.context, parseChargingState(strRawCharging));
+        String strAttached = clean(uEvent.get("ATTACHED", ""));
+        boolean zMacValid = strMac.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}") && !"00:00:00:00:00:00".equals(strMac);
+        int iBattery = -1;
+        if (zMacValid) {
+            iBattery = validBattery(iLevel) ? iLevel : iInfoBattery;
+        }
+        boolean zConnected = false;
+        if (zMacValid) {
+            zConnected = HookUtils.linkConnected(this.context) > 0 || HookUtils.bluetoothConnected(this.context, strMac);
+        }
+        int iPhysicalDocked = HookUtils.physicalDocked(this.context);
+        HookUtils.log("PEN_FRAMEWORK uevent touch=" + iTouch + " battery=" + iBattery + " level=" + iLevel + " charging=" + iCharging + " rawCharging=" + strRawCharging + " attached=" + strAttached + " physicalDocked=" + iPhysicalDocked + " mac=" + (zMacValid ? strMac : "unknown") + " info=" + strInfo);
+        if (!zMacValid) {
+            HookUtils.log("PEN_FRAMEWORK placeholder ignored: no hardware MAC");
+            return;
+        }
+        Intent intent = new Intent("lenovo.intent.action.PEN_BT_CHANGED");
+        intent.setPackage("com.aclaniakea.lenovopenbridge");
+        intent.putExtra("connected", zConnected ? 1 : 0);
+        intent.putExtra("connectState", zConnected ? 2 : 0);
+        intent.putExtra("name", "Lenovo Tab Pen Pro");
+        intent.putExtra("hardware_identity_known", true);
+        intent.putExtra("source", "kernel_pen_framework");
+        intent.putExtra("macAddr", strMac);
+        if (iPhysicalDocked >= 0) {
+            intent.putExtra("physicalDocked", iPhysicalDocked);
+        }
+        addChargingExtras(intent, iCharging, strRawCharging, strAttached);
+        send(intent);
+        if (validBattery(iBattery) || iCharging >= 0) {
+            Intent intent2 = new Intent("lenovo.intent.action.PEN_BATTERY_CHANGED");
+            intent2.setPackage("com.aclaniakea.lenovopenbridge");
+            intent2.putExtra("name", "Lenovo Tab Pen Pro");
+            intent2.putExtra("connected", zConnected ? 1 : 0);
+            intent2.putExtra("hardware_identity_known", true);
+            intent2.putExtra("source", "kernel_pen_framework");
+            if (validBattery(iBattery)) {
+                intent2.putExtra("batteryLevel", iBattery);
+                intent2.putExtra("hardware_battery", true);
+            }
+            intent2.putExtra("macAddr", strMac);
+            if (iPhysicalDocked >= 0) {
+                intent2.putExtra("physicalDocked", iPhysicalDocked);
+            }
+            addChargingExtras(intent2, iCharging, strRawCharging, strAttached);
+            send(intent2);
+        }
+        if (zMacValid) {
+            SystemStylusHooks.onKernelPenAvailable(this.context);
+        }
     }
 
     private void send(Intent intent) {

@@ -1478,10 +1478,10 @@
   <enableAwlaysOriginal package="android.view.surfacecontrol.cts" />
   
   <!--inputMethodLowRate 为true输入法降帧，默认为false
-      ipePencilRateId 平板手写笔锁帧120hz，默认无配置
+      ipePencilRateId 平板手写笔场景刷新率（4=144Hz，3=锁120Hz）
       enableFodHighRate true表示可以支持指纹高刷新请求，默认false，部分项目指纹闪屏需要配置
       maxrefreshsettings 默认高刷状态,设置状态会被截断
       voiceSceneLowRate 为ture微信发语音降帧，默认为false；voiceSceneLowRateDelay 为微信发语音降帧延时，500表示500ms后进行降帧，默认为1.5s -->
-  <config ipePencilRateId="3" maxrefreshsettings="4" inputMethodLowRate="false" enableFodHighRate="true" voiceSceneLowRate="true" voiceSceneLowRateDelay="500" enableAppSwitchBoost="true" appSwitchBoostType="0" appSwitchBoostMaxTemperature="52" defaultMaxRate="144" defaultRateId="4-1-2-4"/>
+  <config ipePencilRateId="4" maxrefreshsettings="4" inputMethodLowRate="false" enableFodHighRate="true" voiceSceneLowRate="true" voiceSceneLowRateDelay="500" enableAppSwitchBoost="true" appSwitchBoostType="0" appSwitchBoostMaxTemperature="52" defaultMaxRate="144" defaultRateId="4-1-2-4"/>
 </refresh_rate_config>
 

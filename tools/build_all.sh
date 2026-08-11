@@ -13,15 +13,13 @@ export ANDROID_SDK=${ANDROID_SDK:-/tmp/android-sdk}
 export XPOSED_STUBS=${XPOSED_STUBS:-/tmp/acdb/stubs}
 export PEN_SMALI_TOOLS_DIR=${PEN_SMALI_TOOLS_DIR:-/tmp/codex-dex-tools}
 export SMALI_JAR=${SMALI_JAR:-/tmp/codex-dex-tools/smali.jar}
-export ACL_KS=${ACL_KS:-/tmp/aclaniakea.jks}
-
-PEN_BASE_APK=${PEN_BASE_APK:-/run/media/ACLaniakea/IXUNICS/pad/workspace/lenovo-pen-bridge-hook/release/LenovoPenBridge-Hook-v1.0.68-r50-haptic-signed.apk}
+export ACL_KS=${ACL_KS:-/run/media/ACLaniakea/IXUNICS/pad/keys/aclaniakea.jks}
 
 echo "== 1/6 base-fix hook APK =="
 python3 base-fix/hook/tools/build_integrated_hook.py
 
-echo "== 2/6 pen-bridge hook APK (from r50 dex) =="
-python3 pen-bridge/hook/tools/build_hook_v1.py "$PEN_BASE_APK"
+echo "== 2/6 pen-bridge hook APK (from Java source) =="
+python3 pen-bridge/hook/tools/build_hook_source.py
 
 echo "== 3/6 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py

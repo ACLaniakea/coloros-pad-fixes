@@ -564,7 +564,7 @@ final class OemGattProtocolHooks {
     /* JADX INFO: Access modifiers changed from: private */
     /* JADX WARN: Multi-variable type inference failed */
     public static void drain(final Session session) {
-        String strWriteCharacteristic = "Lenovo OEM GATT start ";
+        boolean zWriteSuccess = false;
         if (session == null) {
             return;
         }
@@ -575,18 +575,18 @@ final class OemGattProtocolHooks {
                     if (operationPeekFirst.kind == 0) {
                         session.gatt.setCharacteristicNotification(operationPeekFirst.characteristic, true);
                         operationPeekFirst.descriptor.setValue(operationPeekFirst.descriptorValue);
-                        strWriteCharacteristic = session.gatt.writeDescriptor(operationPeekFirst.descriptor);
+                        zWriteSuccess = session.gatt.writeDescriptor(operationPeekFirst.descriptor);
                     } else if (operationPeekFirst.kind == 1) {
-                        strWriteCharacteristic = session.gatt.readCharacteristic(operationPeekFirst.characteristic);
+                        zWriteSuccess = session.gatt.readCharacteristic(operationPeekFirst.characteristic);
                     } else {
                         operationPeekFirst.characteristic.setValue(operationPeekFirst.value);
-                        strWriteCharacteristic = session.gatt.writeCharacteristic(operationPeekFirst.characteristic);
+                        zWriteSuccess = session.gatt.writeCharacteristic(operationPeekFirst.characteristic);
                     }
                 } catch (Throwable th) {
-                    HookUtils.log(strWriteCharacteristic + operationPeekFirst.describe() + ": " + th);
-                    strWriteCharacteristic = null;
+                    HookUtils.log("Lenovo OEM GATT start " + operationPeekFirst.describe() + ": " + th);
+                    zWriteSuccess = false;
                 }
-                if (strWriteCharacteristic != null) {
+                if (zWriteSuccess) {
                     session.busy = true;
                     session.active = operationPeekFirst;
                     HookUtils.log("Lenovo OEM GATT started " + operationPeekFirst.describe());

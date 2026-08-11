@@ -558,16 +558,53 @@ final class SystemStylusHooks {
             if (!bluetoothAdapter.getProfileProxy(context, new BluetoothProfile.ServiceListener() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks.4
                 /* JADX WARN: Removed duplicated region for block: B:19:0x004e  */
                 @Override // android.bluetooth.BluetoothProfile.ServiceListener
-                /*
-                    Code decompiled incorrectly, please refer to instructions dump.
-                    To view partially-correct add '--show-bad-code' argument
-                */
-                public void onServiceConnected(int r10, android.bluetooth.BluetoothProfile r11) {
-                    /*
-                        Method dump skipped, instructions count: 379
-                        To view this dump add '--comments-level debug' option
-                    */
-                    throw new UnsupportedOperationException("Method not decompiled: com.aclaniakea.colorosporttuning.SystemStylusHooks.AnonymousClass4.onServiceConnected(int, android.bluetooth.BluetoothProfile):void");
+                public void onServiceConnected(int i2, BluetoothProfile bluetoothProfile) {
+                    int iState = 0;
+                    try {
+                        Method methodGetState = null;
+                        for (Method method : bluetoothProfile.getClass().getMethods()) {
+                            if ("getConnectionState".equals(method.getName()) && method.getParameterTypes().length == 1 && method.getParameterTypes()[0] == BluetoothDevice.class) {
+                                methodGetState = method;
+                                break;
+                            }
+                        }
+                        if (methodGetState != null) {
+                            methodGetState.setAccessible(true);
+                            Object objState = methodGetState.invoke(bluetoothProfile, bluetoothDevice);
+                            if (objState instanceof Number) {
+                                iState = ((Number) objState).intValue();
+                            }
+                        }
+                        if (iState == 2) {
+                            HookUtils.log("boot pen HID Host already connected");
+                        } else if (iState == 1) {
+                            HookUtils.log("boot pen HID Host still connecting attempt=" + i);
+                        } else {
+                            Method methodConnect = null;
+                            for (Method method2 : bluetoothProfile.getClass().getMethods()) {
+                                if ("connect".equals(method2.getName()) && method2.getParameterTypes().length == 1 && method2.getParameterTypes()[0] == BluetoothDevice.class) {
+                                    methodConnect = method2;
+                                    break;
+                                }
+                            }
+                            if (methodConnect == null) {
+                                throw new NoSuchMethodException("BluetoothHidHost.connect");
+                            }
+                            methodConnect.setAccessible(true);
+                            Object objResult = methodConnect.invoke(bluetoothProfile, bluetoothDevice);
+                            HookUtils.log("boot pen HID Host connect requested attempt=" + i + " result=" + objResult);
+                        }
+                    } catch (Throwable th) {
+                        HookUtils.log("boot pen HID Host connect failed: " + th);
+                    }
+                    try {
+                        bluetoothAdapter.closeProfileProxy(HID_HOST_PROFILE, bluetoothProfile);
+                    } catch (Throwable unused) {
+                    }
+                    synchronized (SystemStylusHooks.class) {
+                        SystemStylusHooks.main.removeCallbacks(SystemStylusHooks.HID_CONNECT_TIMEOUT);
+                        boolean unused2 = SystemStylusHooks.hidConnectPending = false;
+                    }
                 }
 
                 @Override // android.bluetooth.BluetoothProfile.ServiceListener
@@ -590,7 +627,7 @@ final class SystemStylusHooks {
     }
 
     private static synchronized void registerMagneticAttachListener(Context context) {
-        final InputManager inputManager;
+        InputManager inputManager;
         if (magneticListenerReady) {
             return;
         }
@@ -598,6 +635,7 @@ final class SystemStylusHooks {
             inputManager = (InputManager) context.getSystemService("input");
         } catch (Throwable th) {
             HookUtils.log("NVT magnetic listener: " + th);
+            return;
         }
         if (inputManager == null) {
             return;
@@ -643,7 +681,6 @@ final class SystemStylusHooks {
     /* JADX INFO: Access modifiers changed from: private */
     public static void pollPenHall(Context context) {
         int i;
-        int i2;
         int i3 = readInt(PEN1_HALL, -1);
         int i4 = readInt(PEN2_HALL, -1);
         if (i3 < 0 && i4 < 0) {
@@ -658,12 +695,12 @@ final class SystemStylusHooks {
         int oemWirelessPenPresent = readOemWirelessPenPresent();
         if (oemWirelessPenPresent == 0 || oemWirelessPenPresent == 1) {
             i = oemWirelessPenPresent == 1 ? 0 : 1;
+        } else if (i3 == 0 && i4 == 1) {
+            i = 1;
+        } else if (i3 == 1 && i4 == 1) {
+            i = 0;
         } else {
-            if (i3 != 0 || i4 != 1) {
-                if (i3 != 1 || i4 != 1) {
-                    return;
-                }
-            }
+            return;
         }
         if (i != hallCandidate) {
             hallCandidate = i;
@@ -675,7 +712,8 @@ final class SystemStylusHooks {
         if (i5 < 3) {
             hallCandidateSamples = i5 + 1;
         }
-        if (hallCandidateSamples < 3 || i == (i2 = lastPenHall)) {
+        int i2 = lastPenHall;
+        if (hallCandidateSamples < 3 || i == i2) {
             return;
         }
         boolean z = i2 >= 0;
@@ -831,27 +869,23 @@ final class SystemStylusHooks {
     /* JADX WARN: Type inference failed for: r7v5 */
     public static synchronized void setRefreshActive(Context context, boolean z) {
         refreshContext = context;
-        int r7 = z ? 1 : 0;
-        if (z) {
-            r7 = z;
-            if (HookUtils.disconnectRequested(context)) {
-                r7 = 0;
-            }
+        if (z && HookUtils.disconnectRequested(context)) {
+            z = false;
         }
-        if (refreshActive == r7 && Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_refresh_active", -1) == r7) {
+        if (refreshActive == z && Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_refresh_active", -1) == (z ? 1 : 0)) {
             return;
         }
-        refreshActive = r7;
+        refreshActive = z;
         try {
-            Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_refresh_active", r7);
-            HookUtils.log("adaptive pencil 120 Hz ".concat(r7 != 0 ? "enabled" : "released"));
+            Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_refresh_active", z ? 1 : 0);
+            HookUtils.log("adaptive pencil 120 Hz ".concat(z ? "enabled" : "released"));
         } catch (Throwable th) {
             HookUtils.log("adaptive pencil refresh: " + th);
         }
     }
 
     /* renamed from: com.aclaniakea.colorosporttuning.SystemStylusHooks$6, reason: invalid class name */
-    class AnonymousClass6 extends BroadcastReceiver {
+    static class AnonymousClass6 extends BroadcastReceiver {
         final /* synthetic */ Context val$c;
 
         AnonymousClass6(Context context) {
@@ -860,9 +894,6 @@ final class SystemStylusHooks {
 
         @Override // android.content.BroadcastReceiver
         public void onReceive(Context context, Intent intent) {
-            Handler handler;
-            Runnable runnable;
-            long j;
             String action = intent == null ? null : intent.getAction();
             if ("android.intent.action.USER_UNLOCKED".equals(action)) {
                 SystemStylusHooks.enableKernelPenWake();
@@ -887,8 +918,7 @@ final class SystemStylusHooks {
                 SystemStylusHooks.main.removeCallbacks(SystemStylusHooks.SCREEN_ON_REPLAY);
                 SystemStylusHooks.main.postDelayed(SystemStylusHooks.SCREEN_ON_REPLAY, 1200L);
                 HookUtils.log("screen-on pen state replay delayed until panel settles");
-            } else {
-                if ("com.aclaniakea.lenovopenbridge.action.RECONNECT_PEN".equals(action)) {
+            } else if ("com.aclaniakea.lenovopenbridge.action.RECONNECT_PEN".equals(action)) {
                     try {
                         Settings.Global.putInt(this.val$c.getContentResolver(), "lenovo_pen_disconnect_requested", 0);
                         Settings.Global.putInt(this.val$c.getContentResolver(), "lenovo_pen_user_disconnect_requested", 0);
@@ -896,45 +926,41 @@ final class SystemStylusHooks {
                     }
                     SystemStylusHooks.enableKernelPenWake();
                     HookUtils.log("root pen reconnect requested");
-                    handler = SystemStylusHooks.main;
+                    Handler handler3 = SystemStylusHooks.main;
                     final Context context3 = this.val$c;
-                    runnable = new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda1
+                    handler3.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda1
                         @Override // java.lang.Runnable
                         public final void run() {
                             SystemStylusHooks.restorePenAfterBoot(context3, 0);
                         }
-                    };
-                    j = 250;
-                } else if ("android.bluetooth.adapter.action.STATE_CHANGED".equals(action)) {
-                    SystemStylusHooks.releaseLong(this.val$c);
-                    if (intent.getIntExtra("android.bluetooth.adapter.extra.STATE", Integer.MIN_VALUE) == 12) {
-                        SystemStylusHooks.enableKernelPenWake();
-                        Handler handler3 = SystemStylusHooks.main;
-                        final Context context4 = this.val$c;
-                        handler3.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda2
+                    }, 250L);
+            } else if ("android.bluetooth.adapter.action.STATE_CHANGED".equals(action)) {
+                SystemStylusHooks.releaseLong(this.val$c);
+                if (intent.getIntExtra("android.bluetooth.adapter.extra.STATE", Integer.MIN_VALUE) == 12) {
+                    SystemStylusHooks.enableKernelPenWake();
+                    Handler handler4 = SystemStylusHooks.main;
+                    final Context context4 = this.val$c;
+                    handler4.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda2
                             @Override // java.lang.Runnable
                             public final void run() {
                                 LenovoPenUEventBridge.wakeOemForCurrentPen(context4);
                             }
                         }, 500L);
-                        handler = SystemStylusHooks.main;
-                        final Context context5 = this.val$c;
-                        runnable = new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda3
+                    Handler handler5 = SystemStylusHooks.main;
+                    final Context context5 = this.val$c;
+                    handler5.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda3
                             @Override // java.lang.Runnable
                             public final void run() {
                                 SystemStylusHooks.restorePenAfterBoot(context5, 0);
                             }
-                        };
-                        j = 1200;
-                    }
-                } else if ("android.bluetooth.device.action.ACL_DISCONNECTED".equals(action)) {
-                    SystemStylusHooks.releaseLong(this.val$c);
+                        }, 1200L);
                 }
-                handler.postDelayed(runnable, j);
+            } else if ("android.bluetooth.device.action.ACL_DISCONNECTED".equals(action)) {
+                SystemStylusHooks.releaseLong(this.val$c);
             }
-            Handler handler4 = SystemStylusHooks.main;
+            Handler handler6 = SystemStylusHooks.main;
             final Context context6 = this.val$c;
-            handler4.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda4
+            handler6.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda4
                 @Override // java.lang.Runnable
                 public final void run() {
                     SystemStylusHooks.syncColorOsPenState(context6);
@@ -1054,13 +1080,14 @@ final class SystemStylusHooks {
                 }
                 return zTransact;
             }
+            return false;
+        } catch (Throwable th) {
+            HookUtils.log("touchscreen binder: " + th);
+            return false;
         } finally {
-            try {
-                return false;
-            } finally {
-            }
+            parcelObtain.recycle();
+            parcelObtain2.recycle();
         }
-        return false;
     }
 
     static synchronized boolean ensureTouchscreenHaptics() {
@@ -1086,7 +1113,7 @@ final class SystemStylusHooks {
             Class<?> cls3 = Class.forName("android.view.BatchedInputEventReceiver$SimpleBatchedInputEventReceiver$InputEventListener");
             inputReceiver = cls.getConstructor(cls2, Looper.class, Choreographer.class, cls3).newInstance(objInvoke2, Looper.getMainLooper(), Choreographer.getInstance(), Proxy.newProxyInstance(cls3.getClassLoader(), new Class[]{cls3}, new InvocationHandler() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda3
                 @Override // java.lang.reflect.InvocationHandler
-                public final Object invoke(Object obj, Method method, Object[] objArr) {
+                public final Object invoke(Object obj, Method method, Object[] objArr) throws Throwable {
                     return SystemStylusHooks.lambda$registerMonitor$18(context, obj, method, objArr);
                 }
             }));
@@ -1226,28 +1253,28 @@ final class SystemStylusHooks {
     }
 
     private static boolean inject(Context context, InputEvent inputEvent) {
-        Object systemService;
         try {
-            systemService = context.getSystemService("input");
+            Object systemService = context.getSystemService("input");
+            if (systemService == null) {
+                return false;
+            }
+            for (Method method : systemService.getClass().getMethods()) {
+                if ("injectInputEvent".equals(method.getName()) && method.getParameterTypes().length == 2) {
+                    method.setAccessible(true);
+                    Object objInvoke = method.invoke(systemService, inputEvent, 0);
+                    if (objInvoke instanceof Boolean) {
+                        if (!((Boolean) objInvoke).booleanValue()) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+            return false;
         } catch (Throwable th) {
             HookUtils.log("native pen key injection: " + th);
-        }
-        if (systemService == null) {
             return false;
         }
-        for (Method method : systemService.getClass().getMethods()) {
-            if ("injectInputEvent".equals(method.getName()) && method.getParameterTypes().length == 2) {
-                method.setAccessible(true);
-                Object objInvoke = method.invoke(systemService, inputEvent, 0);
-                if (objInvoke instanceof Boolean) {
-                    if (!((Boolean) objInvoke).booleanValue()) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-        }
-        return false;
     }
 
     /* JADX INFO: Access modifiers changed from: private */
