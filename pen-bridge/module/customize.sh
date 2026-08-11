@@ -13,6 +13,7 @@ ui_print "- 支持切换到其他已绑定蓝牙地址的手写笔"
 ui_print "- 设备空间手写笔存在状态仅跟随真实蓝牙连接"
 ui_print "- Root 仅在开机一次性写入 pen_wakeup 节点，避免 system_server 权限失败"
 ui_print "- 连接状态只接受真实 ACL/GATT/Hall/CPS 事件，拒绝强制已连接回放"
+ui_print "- 刷新率策略统一绑定：笔场景锁 120Hz，其余场景最高 144Hz"
 ui_print "- LSPosed Hook APK 独立安装，不再由 Root 模块携带或同步"
 ui_print "- 仅适用于 SM8650Q / pineapple 平台"
 

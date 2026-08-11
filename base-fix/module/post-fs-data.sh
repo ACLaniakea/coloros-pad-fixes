@@ -147,21 +147,6 @@ else
     log_msg "ERROR: ambient color capability target or payload missing"
 fi
 
-# The active port policy advertises only 60/90/120 even though the TB710FU
-# panel and display HAL expose a genuine 144 Hz mode. Provide a higher-version
-# policy so the ColorOS updater selects it over /data/system cloud config.
-REFRESH_TARGET=/my_product/etc/refresh_rate_config.xml
-REFRESH_PAYLOAD="$MODDIR/payload/refresh_rate_config.tb710fu.xml"
-if [ -f "$REFRESH_TARGET" ] && [ -f "$REFRESH_PAYLOAD" ]; then
-    chown 0:0 "$REFRESH_PAYLOAD"
-    chmod 0644 "$REFRESH_PAYLOAD"
-    chcon u:object_r:system_file:s0 "$REFRESH_PAYLOAD" 2>/dev/null
-    mount --bind "$REFRESH_PAYLOAD" "$REFRESH_TARGET" &&
-        log_msg "TB710FU 144 Hz ColorOS policy mounted"
-else
-    log_msg "ERROR: refresh-rate policy target or payload missing"
-fi
-
 # The source ROM capture path is tuned for the source phone's mics.  Pin the
 # TB710FU capture gains (speaker-mic TX_DEC 96 / ADC 16) at HAL level so every
 # recording session natively applies them; this must not depend on the

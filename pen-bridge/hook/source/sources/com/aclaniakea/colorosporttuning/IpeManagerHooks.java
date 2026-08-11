@@ -211,8 +211,8 @@ final class IpeManagerHooks {
         hookGetter(loadPackageParam, "com.oplus.ipemanager.btadsorb.ota.common.PencilInfo", "getPencilType", 5);
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.d", "getIpeDeviceType", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.12
             protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
-                Object objAdapt;
-                if (!IpeManagerHooks.isKnown(HookUtils.context(methodHookParam.thisObject), IpeManagerHooks.stringArg(methodHookParam.args)) || (objAdapt = HookUtils.adapt(((Method) methodHookParam.method).getReturnType(), "PENCIL")) == null) {
+                Object objAdapt = HookUtils.adapt(((Method) methodHookParam.method).getReturnType(), "PENCIL");
+                if (objAdapt == null) {
                     return;
                 }
                 methodHookParam.setResult(objAdapt);
@@ -221,13 +221,11 @@ final class IpeManagerHooks {
         });
         HookUtils.hookAll(loadPackageParam.classLoader, "k3.a", "getIpeDeviceType", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.13
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                Object result = methodHookParam.getResult();
                 Object objAdapt;
-                if (IpeManagerHooks.isKnown(HookUtils.context(methodHookParam.thisObject), IpeManagerHooks.stringArg(methodHookParam.args))) {
-                    Object result = methodHookParam.getResult();
-                    if ((result == null || "OTHER".equalsIgnoreCase(String.valueOf(result))) && (objAdapt = HookUtils.adapt(((Method) methodHookParam.method).getReturnType(), "PENCIL")) != null) {
-                        methodHookParam.setResult(objAdapt);
-                        HookUtils.log("IPe device-card AIDL proxy: Lenovo pen -> PENCIL");
-                    }
+                if ((result == null || "OTHER".equalsIgnoreCase(String.valueOf(result))) && (objAdapt = HookUtils.adapt(((Method) methodHookParam.method).getReturnType(), "PENCIL")) != null) {
+                    methodHookParam.setResult(objAdapt);
+                    HookUtils.log("IPe device-card AIDL proxy: Lenovo pen -> PENCIL");
                 }
             }
         });

@@ -130,7 +130,7 @@ final class CardBatteryHooks {
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.deviceui.devicecard.DeviceCardHomeActivity", "onResume", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.CardBatteryHooks.4
             @Override
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws Throwable {
-                if (!(methodHookParam.thisObject instanceof Activity)) {
+                if (methodHookParam.thisObject instanceof Activity) {
                     CardBatteryHooks.topActivity = (Activity) methodHookParam.thisObject;
                 }
             }

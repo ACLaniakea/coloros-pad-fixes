@@ -805,8 +805,20 @@ final class SystemStylusHooks {
             if (inputManager == null) {
                 return;
             }
+            Method mEnable = null;
+            Method mDisable = null;
             Method m2 = null;
             Method m3 = null;
+            try {
+                mEnable = InputManager.class.getMethod("enableInputDevice", int.class);
+            } catch (Throwable t) {
+                // ignore
+            }
+            try {
+                mDisable = InputManager.class.getMethod("disableInputDevice", int.class);
+            } catch (Throwable t) {
+                // ignore
+            }
             try {
                 m2 = InputManager.class.getMethod("setInputDeviceEnabled", int.class, boolean.class);
             } catch (Throwable t) {
@@ -817,17 +829,27 @@ final class SystemStylusHooks {
             } catch (Throwable t) {
                 // ignore
             }
-            if (m2 == null && m3 == null) {
+            if (mEnable == null && mDisable == null && m2 == null && m3 == null) {
                 HookUtils.log("NVT touchpad API missing");
                 return;
             }
             synchronized (SystemStylusHooks.class) {
                 for (Integer id : nvtDeviceIds) {
                     try {
-                        if (m2 != null) {
-                            m2.invoke(inputManager, id, enabled);
+                        if (enabled) {
+                            if (mEnable != null) {
+                                mEnable.invoke(inputManager, id);
+                            } else if (m2 != null) {
+                                m2.invoke(inputManager, id, true);
+                            } else {
+                                m3.invoke(inputManager, id, 0, true);
+                            }
+                        } else if (mDisable != null) {
+                            mDisable.invoke(inputManager, id);
+                        } else if (m2 != null) {
+                            m2.invoke(inputManager, id, false);
                         } else {
-                            m3.invoke(inputManager, id, 0, enabled);
+                            m3.invoke(inputManager, id, 0, false);
                         }
                     } catch (Throwable t) {
                         HookUtils.log("NVT touchpad device " + id + " set failed: " + t);
