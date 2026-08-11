@@ -30,6 +30,7 @@ SDK = Path(os.environ.get("ANDROID_SDK", "/tmp/android-sdk"))
 BT = SDK / "build-tools" / "android-15"
 AAPT2 = BT / "aapt2"
 D8 = BT / "d8"
+R8_JAR = Path(os.environ.get("ACL_R8_JAR", "/run/media/ACLaniakea/IXUNICS/pad/tools/dex/r8.jar"))
 ZIPALIGN = BT / "zipalign"
 APKSIGNER = BT / "apksigner"
 def _android_jar(sdk: Path) -> Path:
@@ -89,7 +90,9 @@ def main() -> None:
              "-d", tmp / "classes"] +
             [str(p) for p in sorted(SOURCES.rglob("*.java"))])
         # 3. dex
-        run([D8, "--lib", ANDROID_JAR, "--min-api", "31", "--output", tmp / "dex"] +
+        d8_cmd = ([D8] if not R8_JAR.is_file()
+                  else ["java", "-cp", R8_JAR, "com.android.tools.r8.D8"])
+        run(d8_cmd + ["--lib", ANDROID_JAR, "--min-api", "31", "--output", tmp / "dex"] +
             [str(p) for p in sorted((tmp / "classes").rglob("*.class"))])
         dex = tmp / "dex" / "classes.dex"
         # 4. assemble
