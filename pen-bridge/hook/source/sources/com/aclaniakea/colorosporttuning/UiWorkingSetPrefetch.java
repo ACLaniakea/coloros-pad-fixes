@@ -25,6 +25,9 @@ public final class UiWorkingSetPrefetch implements IXposedHookLoadPackage {
             case "com.oplus.wirelesssettings":
                 WirelessSettingsHooks.install(loadPackageParam);
                 break;
+            case "com.android.systemui":
+                SystemUiDeviceCardHooks.install(loadPackageParam);
+                break;
             case "com.coloros.note":
             case "com.oplus.screenshot":
                 NoteToolkitHooks.install(loadPackageParam);
