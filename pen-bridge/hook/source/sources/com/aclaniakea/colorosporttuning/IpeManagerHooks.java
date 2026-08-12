@@ -336,6 +336,27 @@ final class IpeManagerHooks {
         }
     }
 
+    private static void refreshDeviceCardData(Context context) {
+        try {
+            String strMac = Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr");
+            if (strMac == null || strMac.length() == 0) {
+                return;
+            }
+            BluetoothDevice device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(strMac);
+            Class<?> clsB = Class.forName("x2.b", false, ipeClassLoader);
+            Object deviceInfo = clsB.getMethod("d", Context.class, BluetoothDevice.class, Boolean.TYPE).invoke(null, context, device, Boolean.TRUE);
+            if (deviceInfo == null) {
+                return;
+            }
+            Class<?> clsMgr = Class.forName("com.oplus.mydevices.sdk.DeviceInfoManager", false, ipeClassLoader);
+            Object manager = clsMgr.getField("INSTANCE").get(null);
+            manager.getClass().getMethod("add", deviceInfo.getClass()).invoke(manager, deviceInfo);
+            HookUtils.log("device card data refreshed with battery");
+        } catch (Throwable th) {
+            HookUtils.log("device card refresh failed: " + th);
+        }
+    }
+
     private static void installPencilPanelControlBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.f0", "connect", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.44
             protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
@@ -877,6 +898,7 @@ final class IpeManagerHooks {
                 HookUtils.setIpePreferenceInt(context, "pencil_sp_battery_level", iBattery);
             }
             HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", iCharging);
+            refreshDeviceCardData(context);
             Object objCallback = settingsCallback;
             Object objCallback2 = settingsCallbackOf(settingsActivity);
             if (objCallback2 != null) {
