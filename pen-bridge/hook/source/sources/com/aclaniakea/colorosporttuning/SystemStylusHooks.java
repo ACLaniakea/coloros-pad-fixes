@@ -113,6 +113,8 @@ final class SystemStylusHooks {
     };
     private static int lastOemPresent = -1;
     private static int lastLoggedOemPresent = -2;
+    private static boolean lastPenInUseState;
+    private static int lastLinkedState = -1;
 
     static /* synthetic */ void lambda$static$0() {
         synchronized (SystemStylusHooks.class) {
@@ -809,8 +811,32 @@ final class SystemStylusHooks {
             // A docked pen is not in use, so only report "in use" when the pen
             // is connected and off the magnetic dock.
             Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", zPenInUse ? 1 : 0);
+            if (zPenInUse != lastPenInUseState) {
+                lastPenInUseState = zPenInUse;
+                forceRefreshReevaluate();
+            }
+            if (iLinked != lastLinkedState) {
+                lastLinkedState = iLinked;
+                setPenInputEnabled(context, iLinked == 1);
+            }
         } catch (Throwable th) {
             HookUtils.log("pen refresh state update: " + th);
+        }
+    }
+
+    /** OPlusDisplayModeService.requestUpadate() posts a WMS traversal that re-applies the pencil mode immediately. */
+    private static void forceRefreshReevaluate() {
+        try {
+            Class<?> cls = Class.forName("com.android.server.wm.OplusDisplayModeService");
+            Object service = cls.getMethod("getInstance", new Class[0]).invoke(null, new Object[0]);
+            if (service != null) {
+                Method method = service.getClass().getDeclaredMethod("requestUpadate", new Class[0]);
+                method.setAccessible(true);
+                method.invoke(service, new Object[0]);
+                HookUtils.log("pen refresh re-evaluation triggered");
+            }
+        } catch (Throwable th) {
+            HookUtils.log("pen refresh re-evaluation failed: " + th);
         }
     }
 
@@ -875,6 +901,55 @@ final class SystemStylusHooks {
             HookUtils.log("NVT pen touchpad " + (enabled ? "enabled" : "disabled") + " devices=" + nvtDeviceIds.size());
         } catch (Throwable t) {
             HookUtils.log("NVT touchpad control failed: " + t);
+        }
+    }
+
+    /** 断开时禁用笔输入设备（NVTCapacitivePen / Lenovo 笔 HID），重连时恢复。 */
+    static void setPenInputEnabled(Context context, boolean enabled) {
+        try {
+            InputManager inputManager = (InputManager) context.getSystemService("input");
+            if (inputManager == null) {
+                return;
+            }
+            Method mEnable = null;
+            Method mDisable = null;
+            try {
+                mEnable = InputManager.class.getMethod("enableInputDevice", int.class);
+            } catch (Throwable t) {
+                // ignore
+            }
+            try {
+                mDisable = InputManager.class.getMethod("disableInputDevice", int.class);
+            } catch (Throwable t) {
+                // ignore
+            }
+            if (mEnable == null || mDisable == null) {
+                return;
+            }
+            int iCount = 0;
+            for (int iDeviceId : inputManager.getInputDeviceIds()) {
+                InputDevice inputDevice = inputManager.getInputDevice(iDeviceId);
+                if (inputDevice == null || inputDevice.getName() == null) {
+                    continue;
+                }
+                String strName = inputDevice.getName().toLowerCase();
+                boolean zPenDevice = "nvtcapacitivepen".equals(strName)
+                        || (strName.contains("lenovo tab pen") && (inputDevice.getSources() & 16642) != 0);
+                if (!zPenDevice) {
+                    continue;
+                }
+                if (enabled) {
+                    mEnable.invoke(inputManager, Integer.valueOf(iDeviceId));
+                } else {
+                    mDisable.invoke(inputManager, Integer.valueOf(iDeviceId));
+                }
+                iCount++;
+            }
+            if (iCount > 0) {
+                HookUtils.log("pen input devices " + (enabled ? "enabled" : "disabled") + " count=" + iCount);
+            }
+        } catch (Throwable th) {
+            HookUtils.log("pen input control failed: " + th);
         }
     }
 
