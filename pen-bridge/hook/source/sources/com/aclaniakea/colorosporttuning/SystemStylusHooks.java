@@ -797,12 +797,11 @@ final class SystemStylusHooks {
         HookUtils.log("Lenovo pen hall state=" + i + " (" + (z2 ? "docked" : "undocked") + ")");
     }
 
-    /** 笔不在磁吸位且蓝牙已连接 → 锁 120Hz；其余情况允许 144Hz。 */
+    /** 笔不在磁吸位 → 锁 120Hz；磁吸回 → 释放 144Hz。蓝牙连接状态会跳动，不作为判定条件。 */
     private static void updateRefreshFromState(Context context) {
         try {
             int iDocked = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_physical_docked", 0);
-            String strMac = Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr");
-            setRefreshActive(context, iDocked == 0 && HookUtils.bluetoothConnected(context, strMac));
+            setRefreshActive(context, iDocked == 0);
         } catch (Throwable th) {
             HookUtils.log("pen refresh state update: " + th);
         }
