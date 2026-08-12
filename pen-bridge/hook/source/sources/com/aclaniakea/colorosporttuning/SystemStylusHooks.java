@@ -117,6 +117,7 @@ final class SystemStylusHooks {
     private static int lastLinkedState = -1;
     private static Object oplusDisplayModeService;
     private static Method oplusRequestUpdate;
+    private static long bootSettleUntilMs;
 
     static /* synthetic */ void lambda$static$0() {
         synchronized (SystemStylusHooks.class) {
@@ -137,6 +138,9 @@ final class SystemStylusHooks {
     }
 
     static void install(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        if (bootSettleUntilMs == 0L) {
+            bootSettleUntilMs = SystemClock.elapsedRealtime() + 20000L;
+        }
         try {
             HookUtils.hookAll(loadPackageParam.classLoader, "com.android.server.wm.OplusDisplayModeService", "getInstance", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks.0
                 @Override
@@ -825,7 +829,11 @@ final class SystemStylusHooks {
             Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", zPenInUse ? 1 : 0);
             if (zPenInUse != lastPenInUseState) {
                 lastPenInUseState = zPenInUse;
-                forceRefreshReevaluate();
+                if (SystemClock.elapsedRealtime() >= bootSettleUntilMs) {
+                    forceRefreshReevaluate();
+                } else {
+                    HookUtils.log("pen refresh re-evaluation deferred until boot settles");
+                }
             }
             if (iLinked != lastLinkedState) {
                 lastLinkedState = iLinked;

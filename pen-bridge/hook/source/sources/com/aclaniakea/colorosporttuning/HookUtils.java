@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.net.Uri;
 import android.provider.Settings;
@@ -242,7 +243,9 @@ final class HookUtils {
             return;
         }
         try {
-            context.getContentResolver().insert(Uri.parse("content://com.oplus.ipemanager.provider/integer/local_config/" + str + "/" + i), null);
+            ContentValues contentValues = new ContentValues();
+            contentValues.put(str, Integer.valueOf(i));
+            context.getContentResolver().insert(Uri.parse("content://com.oplus.ipemanager.provider/integer/local_config/" + str + "/" + i), contentValues);
         } catch (Throwable unused) {
         }
     }
