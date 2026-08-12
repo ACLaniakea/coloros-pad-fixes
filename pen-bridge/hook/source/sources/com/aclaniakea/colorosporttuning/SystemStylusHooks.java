@@ -115,6 +115,8 @@ final class SystemStylusHooks {
     private static int lastLoggedOemPresent = -2;
     private static boolean lastPenInUseState;
     private static int lastLinkedState = -1;
+    private static Object oplusDisplayModeService;
+    private static Method oplusRequestUpdate;
 
     static /* synthetic */ void lambda$static$0() {
         synchronized (SystemStylusHooks.class) {
@@ -135,6 +137,16 @@ final class SystemStylusHooks {
     }
 
     static void install(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        try {
+            HookUtils.hookAll(loadPackageParam.classLoader, "com.android.server.wm.OplusDisplayModeService", "getInstance", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks.0
+                @Override
+                protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws Throwable {
+                    SystemStylusHooks.oplusDisplayModeService = methodHookParam.getResult();
+                }
+            });
+        } catch (Throwable th) {
+            HookUtils.log("OplusDisplayModeService getInstance hook failed: " + th);
+        }
         HookUtils.hookAll(loadPackageParam.classLoader, "com.android.server.policy.PhoneWindowManager", "interceptKeyBeforeQueueing", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks.2
             protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
                 KeyEvent keyEvent;
@@ -827,13 +839,22 @@ final class SystemStylusHooks {
     /** OPlusDisplayModeService.requestUpadate() posts a WMS traversal that re-applies the pencil mode immediately. */
     private static void forceRefreshReevaluate() {
         try {
-            Class<?> cls = Class.forName("com.android.server.wm.OplusDisplayModeService");
-            Object service = cls.getMethod("getInstance", new Class[0]).invoke(null, new Object[0]);
-            if (service != null) {
-                Method method = service.getClass().getDeclaredMethod("requestUpadate", new Class[0]);
-                method.setAccessible(true);
-                method.invoke(service, new Object[0]);
-                HookUtils.log("pen refresh re-evaluation triggered");
+            if (oplusDisplayModeService != null) {
+                if (oplusRequestUpdate == null) {
+                    for (Method method : oplusDisplayModeService.getClass().getDeclaredMethods()) {
+                        if ("requestUpadate".equals(method.getName()) && method.getParameterCount() == 0) {
+                            method.setAccessible(true);
+                            oplusRequestUpdate = method;
+                            break;
+                        }
+                    }
+                }
+                if (oplusRequestUpdate != null) {
+                    oplusRequestUpdate.invoke(oplusDisplayModeService, new Object[0]);
+                    HookUtils.log("pen refresh re-evaluation triggered");
+                }
+            } else {
+                HookUtils.log("pen refresh re-evaluation deferred: OplusDisplayModeService not ready");
             }
         } catch (Throwable th) {
             HookUtils.log("pen refresh re-evaluation failed: " + th);
