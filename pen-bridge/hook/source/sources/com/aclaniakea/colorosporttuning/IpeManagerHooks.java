@@ -258,6 +258,42 @@ final class IpeManagerHooks {
     }
 
     private static void installDeviceCardBatteryListBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.mydevices.sdk.device.DeviceInfo", "getBatteryList", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.49
+            @Override
+            protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws Throwable {
+                try {
+                    Object deviceInfo = methodHookParam.thisObject;
+                    if (deviceInfo == null) {
+                        return;
+                    }
+                    String strName = String.valueOf(HookUtils.call(deviceInfo, "getName")).toLowerCase();
+                    if (!strName.contains("lenovo") || !strName.contains("pen")) {
+                        return;
+                    }
+                    Context context = HookUtils.context(deviceInfo);
+                    if (context == null) {
+                        context = HookUtils.context(null);
+                    }
+                    if (context == null) {
+                        return;
+                    }
+                    PenState penState = HookUtils.state(context);
+                    if (penState == null || penState.battery < 0) {
+                        return;
+                    }
+                    Object objBattery = buildSdkBatteryInfo(penState.battery, penState.charging != 0, loadPackageParam.classLoader);
+                    if (objBattery == null) {
+                        return;
+                    }
+                    List<Object> list = new ArrayList<>();
+                    list.add(objBattery);
+                    methodHookParam.setResult(list);
+                    HookUtils.log("device card DeviceInfo battery bridged level=" + penState.battery);
+                } catch (Throwable th) {
+                    HookUtils.log("device card DeviceInfo battery bridge: " + th);
+                }
+            }
+        });
         HookUtils.hookAll(loadPackageParam.classLoader, "x2.b", "f", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.50
             @Override
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws Throwable {
