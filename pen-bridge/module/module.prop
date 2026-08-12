@@ -1,6 +1,6 @@
 id=lenovo_pen_bridge
 name=联想手写笔桥接服务
 author=ACLaniakea
-version=1.0.1
-versionCode=1001
+version=1.0.2
+versionCode=1002
 description=SM8650Q/pineapple ColorOS 移植手写笔桥接 Root 部分：原厂 CoreService BLE 连接/断开、CPS 开机上电、真实 ACL/GATT/Hall 状态同步、笔场景刷新率锁 120Hz 策略与 PenHidCtl HID 辅助。LSPosed Hook APK 独立安装。

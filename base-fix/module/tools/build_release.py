@@ -9,7 +9,7 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT.parents[1] / "releases" / "BaseFix-Module-v1.0.1.zip"
+OUT = ROOT.parents[1] / "releases" / "BaseFix-Module-v1.0.2.zip"
 EXCLUDE: set[str] = set()
 
 

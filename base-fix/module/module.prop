@@ -1,6 +1,6 @@
 id=coloros_port_base_fix
 name=联想平板 Pro GT - ColorOS 基础修复
 author=ACLaniakea
-version=1.0.1
-versionCode=1001
+version=1.0.2
+versionCode=1002
 description=SM8650Q/pineapple ColorOS 移植基础修复：修正 AON QNN 生命周期与环境光自适应、恢复小布 BWV 语音唤醒链路与录音增益、绑定混音器策略、修复 Tango/序列号/性能 HAL 兼容性。LSPosed Hook APK 独立安装。
