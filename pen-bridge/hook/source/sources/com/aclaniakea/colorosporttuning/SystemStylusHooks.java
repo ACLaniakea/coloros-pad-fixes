@@ -10,6 +10,7 @@ import android.content.IntentFilter;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Parcel;
@@ -68,6 +69,8 @@ final class SystemStylusHooks {
     private static boolean touchscreenHapticsReady;
     private static boolean writing;
     private static final Handler main = new Handler(Looper.getMainLooper());
+    private static final HandlerThread pollThread = new HandlerThread("LenovoPenHall");
+    private static Handler pollHandler;
     private static boolean screenOn = true;
     private static int lastPenHall = -1;
     private static int hallCandidate = -1;
@@ -98,7 +101,7 @@ final class SystemStylusHooks {
                 SystemStylusHooks.pollPenHall(context);
                 SystemStylusHooks.updateRefreshFromState(context);
             }
-            SystemStylusHooks.main.postDelayed(this, 250L);
+            SystemStylusHooks.pollHandler.postDelayed(this, 250L);
         }
     };
     private static final Runnable SCREEN_ON_REPLAY = new Runnable() {
@@ -394,7 +397,13 @@ final class SystemStylusHooks {
             registerStateSync(context);
             registerMagneticAttachListener(context);
             LenovoConsumerGestureReader.start(context);
-            Handler handler = main;
+            if (!pollThread.isAlive()) {
+                pollThread.start();
+            }
+            if (pollHandler == null) {
+                pollHandler = new Handler(pollThread.getLooper());
+            }
+            Handler handler = pollHandler;
             Runnable runnable = POLL_PEN_HALL;
             handler.removeCallbacks(runnable);
             handler.post(runnable);

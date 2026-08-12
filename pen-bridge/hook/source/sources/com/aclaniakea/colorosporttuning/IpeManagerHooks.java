@@ -17,6 +17,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
+import java.io.BufferedReader;
+import java.io.FileReader;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import java.lang.reflect.Field;
@@ -254,7 +256,56 @@ final class IpeManagerHooks {
         installMyDevicesCardBatteryBridge(loadPackageParam);
         installMyDevicesStateBridge(loadPackageParam);
         installDeviceCardBatteryListBridge(loadPackageParam);
+        installOemPresentBridge(loadPackageParam);
         HookUtils.log("IPeManager hooks installed");
+    }
+
+    /** 让原厂 OplusBatteryManager.getWirelessPenPresent() 返回联想笔真实磁吸值，驱动 s0 原生状态机。 */
+    private static void installOemPresentBridge(final XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        HookUtils.hookAll(loadPackageParam.classLoader, "android.os.OplusBatteryManager", "getWirelessPenPresent", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.40
+            @Override
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                int iPresent = readHallPresent();
+                if (iPresent >= 0) {
+                    methodHookParam.setResult(Integer.valueOf(iPresent));
+                }
+            }
+        });
+        HookUtils.log("IPe OEM wireless pen present bridge installed");
+    }
+
+    private static int readHallPresent() {
+        int i1 = readNode("/sys/devices/virtual/factory/interface/hw_info/pen1_hall");
+        int i2 = readNode("/sys/devices/virtual/factory/interface/hw_info/pen2_hall");
+        if (i1 < 0 && i2 < 0) {
+            return -1;
+        }
+        if (i1 == 1 && i2 == 1) {
+            return 1;
+        }
+        if (i1 == 0 && i2 == 1) {
+            return 0;
+        }
+        return -1;
+    }
+
+    private static int readNode(String str) {
+        try {
+            BufferedReader bufferedReader = new BufferedReader(new FileReader(str));
+            try {
+                String line = bufferedReader.readLine();
+                int i = line == null ? -1 : Integer.parseInt(line.trim());
+                bufferedReader.close();
+                return i;
+            } finally {
+                try {
+                    bufferedReader.close();
+                } catch (Throwable unused) {
+                }
+            }
+        } catch (Throwable unused2) {
+            return -1;
+        }
     }
 
     private static void installDeviceCardBatteryListBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
