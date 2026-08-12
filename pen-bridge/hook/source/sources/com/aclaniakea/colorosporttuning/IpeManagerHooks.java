@@ -94,21 +94,11 @@ final class IpeManagerHooks {
                             Settings.Global.putString(context.getContentResolver(), "ipe_pencil_mac_addr", requestedMac);
                             HookUtils.log("stock CONNECT_PENCIL selected pen MAC=" + requestedMac);
                         }
-                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 0);
-                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 0);
-                        HookUtils.log("stock CONNECT_PENCIL cleared settings disconnect latch");
                     } else if ("com.oplus.ipemanager.action.DISCONNECT_PENCIL".equals(intentIntentArg.getAction())) {
                         String requestedMac2 = intentIntentArg.getStringExtra("device_mac_info");
                         if (isMac(requestedMac2)) {
                             Settings.Global.putString(context.getContentResolver(), "ipe_pencil_mac_addr", requestedMac2);
                         }
-                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 1);
-                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 1);
-                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_refresh_active", 0);
-                        Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", 0);
-                        Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 0);
-                        IpeManagerHooks.invokeOriginalGattDisconnect(context, intentIntentArg.getStringExtra("device_mac_info"));
-                        HookUtils.log("stock DISCONNECT_PENCIL armed disconnect latch");
                     }
                 } catch (Throwable unused) {
                 }
@@ -1121,45 +1111,6 @@ final class IpeManagerHooks {
         }
     }
 
-    private static void invokeOriginalGattDisconnect(Context context, String str) {
-        if (context == null) {
-            return;
-        }
-        // A disconnect followed quickly by CONNECT_PENCIL must not be
-        // suppressed by the connect de-duplication window.
-        lastStockGattConnectMac = "";
-        lastStockGattConnectAt = 0L;
-        Object objFieldAny = coreBleManager;
-        if (objFieldAny == null || !"com.oplus.ipemanager.btadsorb.ble.s0".equals(objFieldAny.getClass().getName())) {
-            objFieldAny = fieldAny(coreService, "f1865b", "b");
-            if (objFieldAny == null) {
-                objFieldAny = fieldByTypeName(coreService, "com.oplus.ipemanager.btadsorb.ble.s0");
-            }
-            if (objFieldAny != null) {
-                coreBleManager = objFieldAny;
-            }
-        }
-        try {
-            if (objFieldAny != null) {
-                Method method = method(objFieldAny, "a");
-                if (method != null) {
-                    method.setAccessible(true);
-                    method.invoke(objFieldAny);
-                    HookUtils.log("IPe original BleManager.a GATT disconnect requested mac=" + (str == null ? "" : str));
-                } else {
-                    HookUtils.log("IPe original GATT disconnect entry not found");
-                }
-            } else {
-                HookUtils.log("IPe stock GATT disconnect deferred: s0 not ready");
-            }
-        } catch (Throwable th) {
-            HookUtils.log("IPe original GATT disconnect failed: " + th);
-        }
-        // This is the bridge's optional haptic GATT, separate from the OEM
-        // manager. Close it as well so no second link survives the UI action.
-        PenHapticGatt.disconnect();
-    }
-
     private static Method method(Object obj, String str, Class<?>... clsArr) {
         if (obj == null) {
             return null;
@@ -1978,12 +1929,6 @@ final class IpeManagerHooks {
                     return;
                 }
                 if (iState == 2) {
-                    if (HookUtils.disconnectRequested(context2)) {
-                        HookUtils.setLinkConnected(context2, false);
-                        HookUtils.log("IPe stock s0.V ignored late CONNECTED mac=" + strAddress + " while disconnect requested");
-                        methodHookParam.setResult(null);
-                        return;
-                    }
                     HookUtils.setLinkConnected(context2, true);
                     IpeManagerHooks.lastStockProfileMac = strAddress;
                     IpeManagerHooks.lastStockProfileConnectedAt = SystemClock.elapsedRealtime();
@@ -2012,20 +1957,11 @@ final class IpeManagerHooks {
     }
 
     private static void installRiskGuard(XC_LoadPackage.LoadPackageParam loadPackageParam) {
-        installDisconnectGattGuard(loadPackageParam);
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.g", "z", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.41
-            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
-                Context context = HookUtils.context(methodHookParam.thisObject);
-                String strStringArg = IpeManagerHooks.stringArg(methodHookParam.args);
-                if (context != null && strStringArg.length() > 0 && HookUtils.disconnectRequested(context) && IpeManagerHooks.isKnown(context, strStringArg)) {
-                    IpeManagerHooks.invokeOriginalGattDisconnect(context, strStringArg);
-                }
-            }
-
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
                 Context context = HookUtils.context(methodHookParam.thisObject);
                 String strStringArg = IpeManagerHooks.stringArg(methodHookParam.args);
-                if (context == null || strStringArg.length() == 0 || !HookUtils.disconnectRequested(context)) {
+                if (context == null || strStringArg.length() == 0) {
                     return;
                 }
                 PenState penStateState = HookUtils.state(context);
@@ -2033,19 +1969,6 @@ final class IpeManagerHooks {
                     return;
                 }
                 PenBridgeReceiver.publishDisconnected(context, strStringArg);
-            }
-        });
-    }
-
-    private static void installDisconnectGattGuard(XC_LoadPackage.LoadPackageParam loadPackageParam) {
-        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.g", "b", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.42
-            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
-                Context context = HookUtils.context(methodHookParam.thisObject);
-                String strStringArg = IpeManagerHooks.stringArg(methodHookParam.args);
-                if (context != null && HookUtils.disconnectRequested(context) && IpeManagerHooks.isKnown(context, strStringArg)) {
-                    methodHookParam.setResult((Object) null);
-                    HookUtils.log("IPe stock g.b connect blocked by Settings disconnect latch mac=" + strStringArg);
-                }
             }
         });
         // This ROM has no TouchNode DFX node 32. OEM s0.r0() force-unwraps

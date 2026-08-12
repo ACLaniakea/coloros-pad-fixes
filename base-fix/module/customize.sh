@@ -11,6 +11,12 @@ ui_print "- LSPosed Hook APK 独立安装，本模块不包含 APK"
 ui_print "- Hook APK 推荐作用域：android、com.aiunit.aon、com.heytap.speechassist、com.oplus.ovoicemanager.wakeup 等（scope.list）"
 ui_print "- 作用域请用户在 LSPosed 管理器手动勾选"
 
+# 预编译 Hook APK：system_server 是开机最早拉起的进程，若 dex 尚未优化，
+# LSPosed 注入时偶发 I/O error，环境光/色温 bridge 不加载。安装时先编译，
+# 保证下次完整重启的首次注入即成功，无需软重启 zygote。
+cmd package compile -m speed -f com.aclaniakea.colorosostatsguard >/dev/null 2>&1
+ui_print "- Hook APK dex 已预编译（com.aclaniakea.colorosostatsguard）"
+
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755

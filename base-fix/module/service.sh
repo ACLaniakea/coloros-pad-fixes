@@ -240,25 +240,18 @@ log_msg "zygote_tango=$(getprop init.svc.zygote_tango) horae=$(getprop init.svc.
 log_msg "late service end"
 
 # ============================================================================
-# 环境光自适应自愈：完整重启时 LSPosed 注入 system_server 偶发 I/O error，
-# 导致 AmbientColorSensorBridge 未加载（环境光/色温失效）。检测不到就软
-# 重启 zygote 重试，最多 4 次。
+# 环境光自适应：根治注入时序，不再软重启 zygote。
+# system_server 开机最早拉起，完整重启后偶发撞上 LSPosed 注入时 Hook APK
+# dex 尚未优化的 I/O 竞态。开机后再触发一次 dexopt，保证下一次完整重启的
+# 首次注入即成功（安装时 customize.sh 已预编译过一遍）。
 # ============================================================================
-ambient_ready() {
-    latest=$(ls -t /data/adb/lspd/log/verbose_*.log 2>/dev/null | head -1)
-    [ -n "$latest" ] || return 1
-    grep -q "AmbientColorSensorBridge: installed" "$latest" 2>/dev/null
-}
+cmd package compile -m speed -f com.aclaniakea.colorosostatsguard >/dev/null 2>&1
+log_msg "hook apk dexopt refreshed for next boot"
 
-ambient_tries=0
-while [ "$ambient_tries" -lt 4 ]; do
-    sleep 15
-    if ambient_ready; then
-        log_msg "ambient light bridge loaded"
-        break
-    fi
-    ambient_tries=$((ambient_tries + 1))
-    log_msg "ambient light bridge missing, soft restarting zygote (try $ambient_tries)"
-    setprop ctl.restart zygote
-    sleep 10
-done
+sleep 5
+latest_verbose=$(ls -t /data/adb/lspd/log/verbose_*.log 2>/dev/null | head -1)
+if [ -n "$latest_verbose" ] && grep -q "AmbientColorSensorBridge: installed" "$latest_verbose"; then
+    log_msg "ambient light bridge loaded"
+else
+    log_msg "ambient light bridge not loaded this boot; dex precompiled, next full reboot will load it"
+fi
