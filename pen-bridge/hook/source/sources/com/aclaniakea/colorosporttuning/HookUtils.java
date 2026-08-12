@@ -86,13 +86,6 @@ final class HookUtils {
         if (context == null) {
             return 0;
         }
-        try {
-            int i = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_link_connected", Integer.MIN_VALUE);
-            if (i == 0 || i == 1) {
-                return i;
-            }
-        } catch (Throwable unused) {
-        }
         return bluetoothConnected(context, Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr")) ? 1 : 0;
     }
 
@@ -268,12 +261,6 @@ final class HookUtils {
         }
         String string = penAddress(context);
         boolean z = linkConnected(context) > 0;
-        // Two-way sync: the real Bluetooth profile state is the source of
-        // truth for Device Space. A stale settings-page disconnect latch must
-        // not hide a live link; if the stack reconnected, the UI follows it.
-        if (!z && bluetoothConnected(context, string)) {
-            z = true;
-        }
         boolean z2 = z;
         String string2 = Settings.Global.getString(context.getContentResolver(), "lenovo_pen_serial");
         if (string2 == null || string2.length() == 0) {
