@@ -96,6 +96,7 @@ final class SystemStylusHooks {
             Context context = SystemStylusHooks.refreshContext;
             if (context != null) {
                 SystemStylusHooks.pollPenHall(context);
+                SystemStylusHooks.updateRefreshFromState(context);
             }
             SystemStylusHooks.main.postDelayed(this, 250L);
         }
@@ -772,7 +773,6 @@ final class SystemStylusHooks {
             releaseLong(context);
             PenHapticGatt.disconnect();
             setPenTouchpadEnabled(context, false);
-            setRefreshActive(context, false);
             if (z) {
                 main.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda20
                     @Override // java.lang.Runnable
@@ -783,12 +783,11 @@ final class SystemStylusHooks {
             }
         } else if (screenOn) {
             setPenTouchpadEnabled(context, true);
-            setRefreshActive(context, true);
         } else {
             setPenTouchpadEnabled(context, true);
-            setRefreshActive(context, false);
         }
         PenBridgeReceiver.publishPhysicalEdge(context, z2);
+        updateRefreshFromState(context);
         main.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda21
             @Override // java.lang.Runnable
             public final void run() {
@@ -796,6 +795,17 @@ final class SystemStylusHooks {
             }
         }, 80L);
         HookUtils.log("Lenovo pen hall state=" + i + " (" + (z2 ? "docked" : "undocked") + ")");
+    }
+
+    /** 笔不在磁吸位且蓝牙已连接 → 锁 120Hz；其余情况允许 144Hz。 */
+    private static void updateRefreshFromState(Context context) {
+        try {
+            int iDocked = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_physical_docked", 0);
+            String strMac = Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr");
+            setRefreshActive(context, iDocked == 0 && HookUtils.bluetoothConnected(context, strMac));
+        } catch (Throwable th) {
+            HookUtils.log("pen refresh state update: " + th);
+        }
     }
 
     /** 吸附时禁用 NVTCapacitivePen 触控板输入（防误触），取下时恢复。 */
