@@ -97,6 +97,7 @@ final class PenStateStore {
             Settings.Global.putString(context.getContentResolver(), "lenovo_pen_type", penState.type);
             Settings.Global.putString(context.getContentResolver(), "lenovo_pen_firmware", penState.firmware);
             Settings.Global.putString(context.getContentResolver(), "ipe_pencil_fw", penState.firmware);
+            HookUtils.setIpePreferenceString(context, "pencil_sp_fw_version", penState.firmware);
             Settings.Global.putString(context.getContentResolver(), "lenovo_pen_hardware", penState.hardware);
             Settings.Global.putString(context.getContentResolver(), "lenovo_pen_serial", penState.serial);
             int iDocked = HookUtils.physicalDocked(context);

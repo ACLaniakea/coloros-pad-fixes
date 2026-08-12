@@ -250,6 +250,18 @@ final class HookUtils {
         }
     }
 
+    static void setIpePreferenceString(Context context, String str, String strValue) {
+        if (context == null || str == null || str.length() == 0 || strValue == null) {
+            return;
+        }
+        try {
+            ContentValues contentValues = new ContentValues();
+            contentValues.put(str, strValue);
+            context.getContentResolver().insert(Uri.parse("content://com.oplus.ipemanager.provider/string/local_config/" + str + "/" + strValue), contentValues);
+        } catch (Throwable unused) {
+        }
+    }
+
     static PenState state(Context context) {
         if (context == null) {
             return new PenState(false, "", "", -1, 0, "SECOND_GENERATION_PENCIL_LITE", "1.0.0", "Lenovo Tab Pen", "LENOVO-PEN", "fallback", 0L);
