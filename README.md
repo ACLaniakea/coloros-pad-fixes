@@ -6,7 +6,7 @@
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
 ![Version](https://img.shields.io/badge/version-1.0.2-orange)
-![License](https://img.shields.io/badge/license-个人使用-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -165,3 +165,7 @@ python3 port-tuning/tools/build_tuning.py                   # 调优模块
 - 本项目仅供个人学习与调试，不构成对任何系统/固件的官方支持；
 - 不包含设备序列号、签名私钥或刷入包；已编译 APK/JAR 均为构建产物（源码在仓库内，构建脚本见上文）。
 - 安装前请保留系统备份，刷入风险自负。
+
+## 开源协议
+
+本项目采用 [MIT License](LICENSE)。仅供个人学习与设备移植研究使用；请自行评估风险，作者不对使用后果负责。
