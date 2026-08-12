@@ -60,10 +60,6 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
             PenHapticGatt.disconnect();
             HookUtils.invalidateHardwareBattery(context);
             try {
-                Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 1);
-                Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_refresh_active", 0);
-                Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", 0);
-                Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 0);
                 HookUtils.setLinkConnected(context, false);
             } catch (Throwable unused) {
             }
