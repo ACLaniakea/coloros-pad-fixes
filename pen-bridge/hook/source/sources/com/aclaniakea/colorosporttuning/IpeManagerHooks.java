@@ -670,10 +670,18 @@ final class IpeManagerHooks {
                             }
                             return;
                         }
+                        if ("com.aclaniakea.lenovopenbridge.action.DISMISS_PENCIL_CAPSULE".equals(intent.getAction())) {
+                            if (zEquals) {
+                                IpeManagerHooks.dismissMagneticCapsule();
+                            }
+                            return;
+                        }
                         if ("com.oplus.ipemanager.action.BATTERY_NOTIFY".equals(intent.getAction())) {
                             IpeManagerHooks.notifySettingsPage(context, intent);
                         } else if ("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL".equals(intent.getAction())) {
-                            OemGattProtocolHooks.handleControl(context, intent);
+                            if (zEquals) {
+                                OemGattProtocolHooks.handleControl(context, intent);
+                            }
                         }
                     }
                 }
@@ -681,6 +689,7 @@ final class IpeManagerHooks {
             IntentFilter intentFilter = new IntentFilter();
             intentFilter.addAction("com.aclaniakea.lenovopenbridge.action.COLOROS_PEN_STATE");
             intentFilter.addAction("com.aclaniakea.lenovopenbridge.action.SHOW_PENCIL_CAPSULE");
+            intentFilter.addAction("com.aclaniakea.lenovopenbridge.action.DISMISS_PENCIL_CAPSULE");
             intentFilter.addAction("com.oplus.ipemanager.action.BATTERY_NOTIFY");
             intentFilter.addAction("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL");
             if (Build.VERSION.SDK_INT >= 33) {
@@ -1363,10 +1372,7 @@ final class IpeManagerHooks {
                         declaredMethod.setAccessible(true);
                         Object unused4 = IpeManagerHooks.capsuleControl = declaredMethod.invoke(null, iBinder);
                         if (i3 < 0) {
-                            i3 = HookUtils.state(context).battery;
-                        }
-                        if (i4 < 0) {
-                            i4 = HookUtils.state(context).charging;
+                            return;
                         }
                         if (IpeManagerHooks.capsuleControl != null) {
                             IpeManagerHooks.invokeBatteryCapsule(IpeManagerHooks.capsuleControl, i3, i4);
@@ -2096,6 +2102,38 @@ final class IpeManagerHooks {
                 HookUtils.log("IPe stock s0.r0 DFX write skipped: TouchNode 32 is unavailable");
             }
         });
+    }
+
+    /** 原厂 dismissCapsule(getShowingCapsule())，走 CapsuleImpl.removeCapsule 的关闭动画。 */
+    public static void dismissMagneticCapsule() {
+        Object obj = capsuleControl;
+        if (obj == null) {
+            return;
+        }
+        try {
+            String strShowing = "";
+            for (Method method : obj.getClass().getMethods()) {
+                if ("getShowingCapsule".equals(method.getName()) && method.getParameterCount() == 0) {
+                    Object result = method.invoke(obj);
+                    if (result instanceof String) {
+                        strShowing = (String) result;
+                    }
+                    break;
+                }
+            }
+            if (strShowing == null || strShowing.isEmpty()) {
+                return;
+            }
+            for (Method method : obj.getClass().getMethods()) {
+                if ("dismissCapsule".equals(method.getName()) && method.getParameterCount() == 1 && method.getParameterTypes()[0] == String.class) {
+                    method.invoke(obj, strShowing);
+                    HookUtils.log("stock magnetic capsule dismissed: " + strShowing);
+                    return;
+                }
+            }
+        } catch (Throwable th) {
+            HookUtils.log("IPe stock dismissBatteryCapsule: " + th);
+        }
     }
 
     private static void installDisconnectGattGuard(XC_LoadPackage.LoadPackageParam loadPackageParam) {

@@ -115,6 +115,7 @@ final class SystemStylusHooks {
     private static int lastLoggedOemPresent = -2;
     private static boolean lastPenInUseState;
     private static int lastLinkedState = -1;
+    private static int lastDockedState = -1;
     private static Object oplusDisplayModeService;
     private static Method oplusRequestUpdate;
     private static long bootSettleUntilMs;
@@ -799,10 +800,9 @@ final class SystemStylusHooks {
                     }
                 }, 350L);
             }
-        } else if (screenOn) {
-            setPenTouchpadEnabled(context, true);
         } else {
             setPenTouchpadEnabled(context, true);
+            sendAll(context, new Intent("com.aclaniakea.lenovopenbridge.action.DISMISS_PENCIL_CAPSULE").setPackage("com.oplus.ipemanager"), null);
         }
         PenBridgeReceiver.publishPhysicalEdge(context, z2);
         updateRefreshFromState(context);
@@ -835,9 +835,9 @@ final class SystemStylusHooks {
                     HookUtils.log("pen refresh re-evaluation deferred until boot settles");
                 }
             }
-            if (iLinked != lastLinkedState) {
-                lastLinkedState = iLinked;
-                setPenInputEnabled(context, iLinked == 1);
+            if (iDocked != lastDockedState) {
+                lastDockedState = iDocked;
+                setPenInputEnabled(context, iDocked == 0);
             }
         } catch (Throwable th) {
             HookUtils.log("pen refresh state update: " + th);

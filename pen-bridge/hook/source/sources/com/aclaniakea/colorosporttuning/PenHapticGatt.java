@@ -370,7 +370,10 @@ final class PenHapticGatt {
                 if (Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0) != 1) {
                     return false;
                 }
-                Intent intentPutExtra = new Intent("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL").setPackage("com.oplus.ipemanager").putExtra("op", str2);
+                Intent intentPutExtra = new Intent("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL")
+                        .setPackage("com.oplus.ipemanager")
+                        .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                        .putExtra("op", str2);
                 if (str == null) {
                     str = "";
                 }
