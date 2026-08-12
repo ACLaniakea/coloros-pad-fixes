@@ -604,7 +604,11 @@ publish_hall_state() {
     # treats the next two keys as the existence of a connected pen. Do not
     # hide a real Bluetooth device merely because it is magnetically docked.
     settings put global lenovo_pen_refresh_active "$refresh_active" >/dev/null 2>&1
-    settings put global settings_enable_oppo_pencil "$connected" >/dev/null 2>&1
+    # OPlusRefreshRatePolicyImpl reads settings_enable_oppo_pencil as
+    # isIPEPencilConnected and votes ipePencilRateId (120 Hz) while it is 1.
+    # A docked pen is not being written with, so report "pen in use" only
+    # when the pen is both connected and off the magnetic dock.
+    settings put global settings_enable_oppo_pencil "$refresh_active" >/dev/null 2>&1
     settings put global ipe_pencil_present "$connected" >/dev/null 2>&1
 
     battery_args=""
@@ -776,10 +780,12 @@ monitor_real_bt_state() {
                 settings put global "$key" "$connect_state" >/dev/null 2>&1
             done
             settings put global ipe_pencil_connect_state "$connected" >/dev/null 2>&1
-            settings put global settings_enable_oppo_pencil "$connected" >/dev/null 2>&1
-            settings put global ipe_pencil_present "$connected" >/dev/null 2>&1
             docked=$(settings get global lenovo_pen_physical_docked 2>/dev/null | tr -d '\r')
             [ "$docked" = 1 ] || docked=0
+            pen_in_use=0
+            [ "$connected" = 1 ] && [ "$docked" != 1 ] && pen_in_use=1
+            settings put global settings_enable_oppo_pencil "$pen_in_use" >/dev/null 2>&1
+            settings put global ipe_pencil_present "$connected" >/dev/null 2>&1
             apply_refresh_policy "$connected" "$docked"
             if [ "$connected" = 1 ]; then
                 user_requested=$(settings get global lenovo_pen_user_disconnect_requested 2>/dev/null | tr -d '\r')

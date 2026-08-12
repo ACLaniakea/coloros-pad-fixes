@@ -801,7 +801,14 @@ final class SystemStylusHooks {
     private static void updateRefreshFromState(Context context) {
         try {
             int iDocked = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_physical_docked", 0);
-            setRefreshActive(context, iDocked == 0);
+            int iLinked = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_link_connected", 0);
+            boolean zPenInUse = iDocked == 0 && iLinked == 1;
+            setRefreshActive(context, zPenInUse);
+            // OPlusRefreshRatePolicyImpl reads settings_enable_oppo_pencil as
+            // isIPEPencilConnected and votes ipePencilRateId (120 Hz) while 1.
+            // A docked pen is not in use, so only report "in use" when the pen
+            // is connected and off the magnetic dock.
+            Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", zPenInUse ? 1 : 0);
         } catch (Throwable th) {
             HookUtils.log("pen refresh state update: " + th);
         }
