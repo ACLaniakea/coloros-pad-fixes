@@ -94,11 +94,23 @@ final class IpeManagerHooks {
                             Settings.Global.putString(context.getContentResolver(), "ipe_pencil_mac_addr", requestedMac);
                             HookUtils.log("stock CONNECT_PENCIL selected pen MAC=" + requestedMac);
                         }
+                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", 1);
+                        Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 1);
+                        HookUtils.log("stock CONNECT_PENCIL cleared disconnect latch");
                     } else if ("com.oplus.ipemanager.action.DISCONNECT_PENCIL".equals(intentIntentArg.getAction())) {
                         String requestedMac2 = intentIntentArg.getStringExtra("device_mac_info");
                         if (isMac(requestedMac2)) {
                             Settings.Global.putString(context.getContentResolver(), "ipe_pencil_mac_addr", requestedMac2);
                         }
+                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 1);
+                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 1);
+                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_refresh_active", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 0);
+                        IpeManagerHooks.invokeOriginalGattDisconnect(context, intentIntentArg.getStringExtra("device_mac_info"));
+                        HookUtils.log("stock DISCONNECT_PENCIL armed disconnect latch");
                     }
                 } catch (Throwable unused) {
                 }
@@ -1957,6 +1969,7 @@ final class IpeManagerHooks {
     }
 
     private static void installRiskGuard(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        installDisconnectGattGuard(loadPackageParam);
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.g", "z", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.41
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
                 Context context = HookUtils.context(methodHookParam.thisObject);
@@ -1980,6 +1993,68 @@ final class IpeManagerHooks {
                 HookUtils.log("IPe stock s0.r0 DFX write skipped: TouchNode 32 is unavailable");
             }
         });
+    }
+
+    private static void installDisconnectGattGuard(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        // The stock s0 auto-reconnects immediately after a Settings-page
+        // disconnect, so the disconnect would never stick. While the explicit
+        // user disconnect latch is armed, block the stock GATT connect entry.
+        // A user reconnect always sends CONNECT_PENCIL first, which clears the
+        // latch in onStartCommand, so this guard never blocks a user retry.
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.g", "b", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.42
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                Context context = HookUtils.context(methodHookParam.thisObject);
+                String strStringArg = IpeManagerHooks.stringArg(methodHookParam.args);
+                if (context != null && HookUtils.disconnectRequested(context) && IpeManagerHooks.isKnown(context, strStringArg)) {
+                    methodHookParam.setResult((Object) null);
+                    HookUtils.log("IPe stock g.b connect blocked by Settings disconnect latch mac=" + strStringArg);
+                }
+            }
+        });
+        // This ROM has no TouchNode DFX node 32. OEM s0.r0() force-unwraps
+        // its null result and kills the entire :ble process. It is only a DFX
+        // marker write, so skipping it cannot affect GATT or HID state.
+        HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.ble.s0", "r0", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.43
+            protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
+                methodHookParam.setResult((Object) null);
+                HookUtils.log("IPe stock s0.r0 DFX write skipped: TouchNode 32 is unavailable");
+            }
+        });
+    }
+
+    private static void invokeOriginalGattDisconnect(Context context, String str) {
+        if (context == null) {
+            return;
+        }
+        lastStockGattConnectMac = "";
+        lastStockGattConnectAt = 0L;
+        Object objFieldAny = coreBleManager;
+        if (objFieldAny == null || !"com.oplus.ipemanager.btadsorb.ble.s0".equals(objFieldAny.getClass().getName())) {
+            objFieldAny = fieldAny(coreService, "f1865b", "b");
+            if (objFieldAny == null) {
+                objFieldAny = fieldByTypeName(coreService, "com.oplus.ipemanager.btadsorb.ble.s0");
+            }
+            if (objFieldAny != null) {
+                coreBleManager = objFieldAny;
+            }
+        }
+        try {
+            if (objFieldAny != null) {
+                Method method = method(objFieldAny, "a");
+                if (method != null) {
+                    method.setAccessible(true);
+                    method.invoke(objFieldAny);
+                    HookUtils.log("IPe original BleManager.a GATT disconnect requested mac=" + (str == null ? "" : str));
+                } else {
+                    HookUtils.log("IPe original GATT disconnect entry not found");
+                }
+            } else {
+                HookUtils.log("IPe stock GATT disconnect deferred: s0 not ready");
+            }
+        } catch (Throwable th) {
+            HookUtils.log("IPe original GATT disconnect failed: " + th);
+        }
+        PenHapticGatt.disconnect();
     }
 
     /* JADX INFO: Access modifiers changed from: private */
