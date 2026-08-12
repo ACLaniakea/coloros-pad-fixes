@@ -23,6 +23,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -252,7 +253,51 @@ final class IpeManagerHooks {
         installPencilPanelControlBridge(loadPackageParam);
         installMyDevicesCardBatteryBridge(loadPackageParam);
         installMyDevicesStateBridge(loadPackageParam);
+        installDeviceCardBatteryListBridge(loadPackageParam);
         HookUtils.log("IPeManager hooks installed");
+    }
+
+    private static void installDeviceCardBatteryListBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        HookUtils.hookAll(loadPackageParam.classLoader, "x2.b", "f", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.50
+            @Override
+            protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws Throwable {
+                try {
+                    Context context = HookUtils.context(methodHookParam.thisObject);
+                    if (context == null) {
+                        context = HookUtils.context(null);
+                    }
+                    if (context == null) {
+                        return;
+                    }
+                    PenState penState = HookUtils.state(context);
+                    if (penState == null || penState.battery < 0) {
+                        return;
+                    }
+                    Object objBattery = buildSdkBatteryInfo(penState.battery, penState.charging != 0, loadPackageParam.classLoader);
+                    if (objBattery == null) {
+                        return;
+                    }
+                    List<Object> list = new ArrayList<>();
+                    list.add(objBattery);
+                    methodHookParam.setResult(list);
+                    HookUtils.log("device card battery list bridged level=" + penState.battery + " charging=" + penState.charging);
+                } catch (Throwable th) {
+                    HookUtils.log("device card battery list bridge: " + th);
+                }
+            }
+        });
+    }
+
+    private static Object buildSdkBatteryInfo(int i, boolean z, ClassLoader classLoader) {
+        try {
+            Class<?> clsInfo = Class.forName("com.oplus.mydevices.sdk.device.BatteryInfo", false, classLoader);
+            Class<?> clsType = Class.forName("com.oplus.mydevices.sdk.device.BatteryType", false, classLoader);
+            Object single = Enum.valueOf(clsType.asSubclass(Enum.class), "SINGLE");
+            Constructor<?> constructor = clsInfo.getConstructor(clsType, Integer.TYPE, Boolean.TYPE);
+            return constructor.newInstance(single, Integer.valueOf(i), Boolean.valueOf(z));
+        } catch (Throwable unused) {
+            return null;
+        }
     }
 
     private static void installPencilPanelControlBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {

@@ -366,6 +366,14 @@ final class OemGattProtocolHooks {
             HookUtils.log("OEM control dropped: no active s0 session op=" + stringExtra + " address=" + stringExtra2);
             return false;
         }
+        if (sessionFindSession.gatt == null) {
+            try {
+                Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0);
+            } catch (Throwable unused) {
+            }
+            HookUtils.log("OEM control transport unusable; fall back to direct GATT op=" + stringExtra + " address=" + stringExtra2);
+            return false;
+        }
         if ("impact".equals(stringExtra) || "brush".equals(stringExtra)) {
             bluetoothGattCharacteristicFindCharacteristic = findCharacteristic(sessionFindSession, LENOVO_HAPTIC_IMPACT);
         } else if ("continuous".equals(stringExtra) || "stop".equals(stringExtra)) {
