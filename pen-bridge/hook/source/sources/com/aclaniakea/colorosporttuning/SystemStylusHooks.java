@@ -78,15 +78,6 @@ final class SystemStylusHooks {
             SystemStylusHooks.stopWriting();
         }
     };
-    private static final Runnable RELEASE_REFRESH = new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda16
-        @Override // java.lang.Runnable
-        public final void run() {
-            Context context = SystemStylusHooks.refreshContext;
-            if (context != null) {
-                SystemStylusHooks.setRefreshActive(context, false);
-            }
-        }
-    };
     private static final Runnable EXPIRE_LONG = new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda16
         @Override // java.lang.Runnable
         public final void run() {
@@ -790,6 +781,9 @@ final class SystemStylusHooks {
                     }
                 }, 350L);
             }
+        } else if (screenOn) {
+            setPenTouchpadEnabled(context, true);
+            setRefreshActive(context, true);
         } else {
             setPenTouchpadEnabled(context, true);
             setRefreshActive(context, false);
@@ -1192,20 +1186,12 @@ final class SystemStylusHooks {
                 }
                 int actionMasked = motionEvent.getActionMasked();
                 if (Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_global_writing_haptic", 1) == 0) {
-                    if (actionMasked == 0 || (actionMasked == 2 && motionEvent.getPressure() > 0.0f)) {
-                        setRefreshActive(context, true);
-                        main.removeCallbacks(RELEASE_REFRESH);
-                    } else if (actionMasked == 1 || actionMasked == 3) {
-                        main.postDelayed(RELEASE_REFRESH, 1000L);
-                    }
                     if (writing) {
                         stopWriting();
                     }
                     return false;
                 }
                 if (actionMasked == 0 || (actionMasked == 2 && motionEvent.getPressure() > 0.0f)) {
-                    setRefreshActive(context, true);
-                    main.removeCallbacks(RELEASE_REFRESH);
                     if (actionMasked == 0) {
                         consumeLongLatch();
                     }
@@ -1216,9 +1202,6 @@ final class SystemStylusHooks {
                         HookUtils.log("start writing haptic pressure=" + motionEvent.getPressure());
                     }
                 } else if (actionMasked == 1 || actionMasked == 3 || writing) {
-                    if (actionMasked == 1 || actionMasked == 3) {
-                        main.postDelayed(RELEASE_REFRESH, 1000L);
-                    }
                     scheduleStopWriting();
                 }
                 return false;
