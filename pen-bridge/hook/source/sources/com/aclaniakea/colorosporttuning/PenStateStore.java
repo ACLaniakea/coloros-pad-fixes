@@ -100,8 +100,6 @@ final class PenStateStore {
             HookUtils.setIpePreferenceString(context, "pencil_sp_fw_version", penState.firmware);
             Settings.Global.putString(context.getContentResolver(), "lenovo_pen_hardware", penState.hardware);
             Settings.Global.putString(context.getContentResolver(), "lenovo_pen_serial", penState.serial);
-            int iDocked = HookUtils.physicalDocked(context);
-            Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", (iDocked != 1 && i == 1) ? 1 : 0);
             Settings.Global.putInt(context.getContentResolver(), "stylus_handwriting_enabled", 1);
             Settings.Secure.putInt(context.getContentResolver(), "stylus_handwriting_enabled", 1);
             for (String str : PenBridgeConstants.CONNECT_KEYS) {

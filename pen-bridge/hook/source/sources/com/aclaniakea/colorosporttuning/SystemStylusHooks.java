@@ -725,10 +725,10 @@ final class SystemStylusHooks {
         int oemWirelessPenPresent = readOemWirelessPenPresent();
         if (oemWirelessPenPresent == 0 || oemWirelessPenPresent == 1) {
             i = oemWirelessPenPresent == 1 ? 0 : 1;
-        } else if (i3 == 0 && i4 == 1) {
-            i = 1;
-        } else if (i3 == 1 && i4 == 1) {
-            i = 0;
+        } else if (i3 >= 0 && i4 >= 0) {
+            // Match the Root service hall mapping: 1:1 is detached,
+            // 0:0 / 0:1 / 1:0 are all docked orientations.
+            i = (i3 == 1 && i4 == 1) ? 1 : 0;
         } else {
             return;
         }
@@ -1020,9 +1020,14 @@ final class SystemStylusHooks {
         }
         int iBatteryForCapsule = HookUtils.batteryForCapsule(context);
         if (iBatteryForCapsule >= 0) {
-            PenState penStateState = HookUtils.state(context);
-            sendAll(context, new Intent("com.aclaniakea.lenovopenbridge.action.SHOW_PENCIL_CAPSULE").setPackage("com.oplus.ipemanager").putExtra("battery_level", iBatteryForCapsule).putExtra("charging_state", penStateState.charging).putExtra("chargingState", penStateState.charging).putExtra("charging", penStateState.charging).putExtra("present", penStateState.connected ? "1" : "0").putExtra("macAddr", penStateState.macNoColon()).putExtra("source", "lenovo_pen_hall_validated"), null);
-            HookUtils.log("validated Hall magnetic capsule requested: battery=" + iBatteryForCapsule + " charging=" + penStateState.charging);
+            // Avoid HookUtils.state()/penAddress() on the main thread: it walks
+            // BluetoothAdapter.getBondedDevices() and can jank the capsule. The
+            // dock capsule only needs cached charging + address.
+            int charging = HookUtils.effectiveCharging(context, Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0));
+            String mac = Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr");
+            boolean present = !HookUtils.disconnectRequested(context);
+            sendAll(context, new Intent("com.aclaniakea.lenovopenbridge.action.SHOW_PENCIL_CAPSULE").setPackage("com.oplus.ipemanager").putExtra("battery_level", iBatteryForCapsule).putExtra("charging_state", charging).putExtra("chargingState", charging).putExtra("charging", charging).putExtra("present", present ? "1" : "0").putExtra("macAddr", mac == null ? "" : mac.replace(":", "")).putExtra("source", "lenovo_pen_hall_validated"), null);
+            HookUtils.log("validated Hall magnetic capsule requested: battery=" + iBatteryForCapsule + " charging=" + charging);
         } else if (i < 10) {
             main.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda0
                 @Override // java.lang.Runnable

@@ -98,7 +98,6 @@ final class IpeManagerHooks {
                         }
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 0);
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 0);
-                        Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", 1);
                         Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 1);
                         HookUtils.log("stock CONNECT_PENCIL cleared disconnect latch");
                     } else if ("com.oplus.ipemanager.action.DISCONNECT_PENCIL".equals(intentIntentArg.getAction())) {
@@ -109,7 +108,6 @@ final class IpeManagerHooks {
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 1);
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 1);
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_refresh_active", 0);
-                        Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", 0);
                         Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 0);
                         IpeManagerHooks.invokeOriginalGattDisconnect(context, intentIntentArg.getStringExtra("device_mac_info"));
                         HookUtils.log("stock DISCONNECT_PENCIL armed disconnect latch");
@@ -2297,14 +2295,12 @@ final class IpeManagerHooks {
                 Settings.Global.putInt(context.getContentResolver(), str, penStateState.connectState());
             }
             int i = penStateState.connected ? 1 : 0;
-            Settings.Global.putInt(context.getContentResolver(), "settings_enable_oppo_pencil", i);
             Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", i);
             Settings.Global.putString(context.getContentResolver(), "ipe_pencil_mac_addr", penStateState.address);
             if (penStateState.battery >= 0 && penStateState.battery <= 100) {
                 Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_battery_level", penStateState.battery);
             }
             Settings.Global.putString(context.getContentResolver(), "ipe_pencil_bt_device_name", penStateState.name);
-            put(context, "integer/local_config/settings_enable_oppo_pencil/" + i);
             put(context, "integer/local_config/ipe_pencil_present/" + i);
             HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", penStateState.charging);
             if (penStateState.battery >= 0 && penStateState.battery <= 100) {

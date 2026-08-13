@@ -364,6 +364,10 @@ final class OemGattProtocolHooks {
         Session sessionFindSession = findSession(stringExtra2);
         if (sessionFindSession == null) {
             HookUtils.log("OEM control dropped: no active s0 session op=" + stringExtra + " address=" + stringExtra2);
+            try {
+                Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0);
+            } catch (Throwable unused) {
+            }
             return false;
         }
         if (sessionFindSession.gatt == null) {
