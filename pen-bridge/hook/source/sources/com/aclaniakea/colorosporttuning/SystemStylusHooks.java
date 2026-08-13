@@ -119,6 +119,7 @@ final class SystemStylusHooks {
     private static boolean lastPenInUseState;
     private static int lastLinkedState = -1;
     private static int lastDockedState = -1;
+    private static boolean lastInputEnabled = true;
     private static Object oplusDisplayModeService;
     private static Method oplusRequestUpdate;
     private static long bootSettleUntilMs;
@@ -827,8 +828,25 @@ final class SystemStylusHooks {
     /** 笔不在磁吸位 → 锁 120Hz；磁吸回 → 释放 144Hz。蓝牙连接状态会跳动，不作为判定条件。 */
     private static void updateRefreshFromState(Context context) {
         try {
-            int iDocked = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_physical_docked", 0);
-            boolean zPenInUse = iDocked == 0;
+            // Root service and this hook read different hall sources and can
+            // disagree at boot (pen2_hall vs OplusBatteryManager wireless-pen
+            // present). The Root service overwrites lenovo_pen_physical_docked,
+            // which used to disable the pen for a long time until a screen
+            // off/on replay. Prefer the debounced hall reading owned by this
+            // hook (lastPenHall: 0=docked, 1=undocked) so refresh rate and
+            // input follow the same reliable source.
+            int iDocked;
+            if (lastPenHall >= 0) {
+                iDocked = lastPenHall == 0 ? 1 : 0;
+            } else {
+                iDocked = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_physical_docked", 0);
+            }
+            // A settings-page "disconnect" must actually stop the pen input,
+            // not just the GATT link. The stock disconnect only tears down
+            // s0/BLE, while the HID input device stays live, so gate the input
+            // on the explicit disconnect latch as well as the magnetic dock.
+            boolean zDisconnected = HookUtils.disconnectRequested(context);
+            boolean zPenInUse = iDocked == 0 && !zDisconnected;
             setRefreshActive(context, zPenInUse);
             // OPlusRefreshRatePolicyImpl reads settings_enable_oppo_pencil as
             // isIPEPencilConnected and votes ipePencilRateId (120 Hz) while 1.
@@ -845,7 +863,12 @@ final class SystemStylusHooks {
             }
             if (iDocked != lastDockedState) {
                 lastDockedState = iDocked;
-                setPenInputEnabled(context, iDocked == 0);
+            }
+            boolean zInputEnabled = iDocked == 0 && !zDisconnected;
+            if (zInputEnabled != lastInputEnabled) {
+                lastInputEnabled = zInputEnabled;
+                setPenInputEnabled(context, zInputEnabled);
+                HookUtils.log("pen input gate -> " + zInputEnabled + " (docked=" + iDocked + " disconnect=" + zDisconnected + ")");
             }
         } catch (Throwable th) {
             HookUtils.log("pen refresh state update: " + th);

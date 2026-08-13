@@ -260,7 +260,14 @@ final class HookUtils {
             return new PenState(false, "", "", -1, 0, "SECOND_GENERATION_PENCIL_LITE", "1.0.0", "Lenovo Tab Pen", "LENOVO-PEN", "fallback", 0L);
         }
         String string = penAddress(context);
-        boolean z = linkConnected(context) > 0;
+        boolean z;
+        if (disconnectRequested(context)) {
+            z = false;
+        } else if (physicalDocked(context) == 0) {
+            z = true;
+        } else {
+            z = bluetoothConnected(context, string);
+        }
         boolean z2 = z;
         String string2 = Settings.Global.getString(context.getContentResolver(), "lenovo_pen_serial");
         if (string2 == null || string2.length() == 0) {
