@@ -3,6 +3,7 @@ package com.aclaniakea.colorosporttuning;
 import android.app.Application;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -338,11 +339,10 @@ final class IpeManagerHooks {
 
     private static void refreshDeviceCardData(Context context) {
         try {
-            String strMac = Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr");
-            if (strMac == null || strMac.length() == 0) {
+            BluetoothDevice device = findPenDevice(context);
+            if (device == null) {
                 return;
             }
-            BluetoothDevice device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice(strMac);
             Class<?> clsB = Class.forName("x2.b", false, ipeClassLoader);
             Object deviceInfo = clsB.getMethod("d", Context.class, BluetoothDevice.class, Boolean.TYPE).invoke(null, context, device, Boolean.TRUE);
             if (deviceInfo == null) {
@@ -355,6 +355,34 @@ final class IpeManagerHooks {
         } catch (Throwable th) {
             HookUtils.log("device card refresh failed: " + th);
         }
+    }
+
+    /** 从真实蓝牙栈按名字找联想笔设备，避免依赖固定 MAC 记忆。 */
+    private static BluetoothDevice findPenDevice(Context context) {
+        try {
+            BluetoothManager manager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+            if (manager == null) {
+                return null;
+            }
+            for (BluetoothDevice d : manager.getConnectedDevices(7)) {
+                String name = d.getName();
+                if (name != null && name.toLowerCase().contains("lenovo tab pen")) {
+                    return d;
+                }
+            }
+            BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+            if (adapter == null) {
+                return null;
+            }
+            for (BluetoothDevice d : adapter.getBondedDevices()) {
+                String name = d.getName();
+                if (name != null && name.toLowerCase().contains("lenovo tab pen")) {
+                    return d;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static void installPencilPanelControlBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
