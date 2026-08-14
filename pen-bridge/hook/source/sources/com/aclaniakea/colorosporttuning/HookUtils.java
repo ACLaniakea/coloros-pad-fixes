@@ -260,11 +260,11 @@ final class HookUtils {
             return new PenState(false, "", "", -1, 0, "SECOND_GENERATION_PENCIL_LITE", "1.0.0", "Lenovo Tab Pen", "LENOVO-PEN", "fallback", 0L);
         }
         String string = penAddress(context);
+        // Connection state follows the real Bluetooth link. Only an
+        // explicit settings-page disconnect forces it off.
         boolean z;
         if (disconnectRequested(context)) {
             z = false;
-        } else if (physicalDocked(context) == 0) {
-            z = true;
         } else {
             z = bluetoothConnected(context, string);
         }

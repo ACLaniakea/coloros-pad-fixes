@@ -766,8 +766,7 @@ final class IpeManagerHooks {
             if (isHardwareBatteryIntent(intent) && intExtra2 >= 0 && intExtra2 <= 100) {
                 HookUtils.markHardwareBattery(context, intExtra2);
             }
-            int intExtra3 = intent.hasExtra("connected") ? intent.getIntExtra("connected", penStateState.connected ? 1 : 0) : penStateState.connectState();
-            PenState penState = new PenState(!HookUtils.disconnectRequested(context) && (intExtra3 == 1 || intExtra3 == 2 || intExtra3 == 12 || "1".equals(intent.getStringExtra("present"))) == true && (!"kernel_pen_framework".equals(intent.getStringExtra("source")) || HookUtils.bluetoothConnected(context, strFirstString)), strFirstString, strFirstString2, intExtra2, i, penStateState.type, penStateState.firmware, penStateState.hardware, penStateState.serial, "ipemanager_handoff", System.currentTimeMillis());
+            PenState penState = new PenState(penStateState.connected, strFirstString, strFirstString2, intExtra2, i, penStateState.type, penStateState.firmware, penStateState.hardware, penStateState.serial, "ipemanager_handoff", System.currentTimeMillis());
             PenStateStore.write(context, penState);
             HookUtils.log("IPe state handoff delivered: battery=" + penState.battery + " charging=" + penState.charging + " connected=" + penState.connected);
         } catch (Throwable th) {
