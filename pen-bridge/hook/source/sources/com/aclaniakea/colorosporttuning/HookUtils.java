@@ -275,7 +275,10 @@ final class HookUtils {
         }
         String str = string2;
         int iHardwareBattery = hardwareBattery(context);
-        if (iHardwareBattery < 0) {
+        if (iHardwareBattery < 0 && z2) {
+            // Only fall back to the last known level while the pen is still
+            // connected. When disconnected, report no battery so the lock
+            // screen ring / card shows "not connected" instead of a stale 100%.
             int iLastValidBattery = lastValidBattery(context);
             if (iLastValidBattery >= 0) {
                 iHardwareBattery = iLastValidBattery;
