@@ -203,6 +203,17 @@ final class OemGattProtocolHooks {
                     }, 500L);
                 }
                 setOemControlReady(context, hasCharacteristic(services, LENOVO_HAPTIC_IMPACT) || hasCharacteristic(services, LENOVO_HAPTIC_CONTINUOUS));
+                // 开机时 setWritingEnabled 会在 s0 GATT 尚未 ready 前广播 switch，
+                // 此时没有活动 session，会被 handleControl 丢弃，导致第一次连接后
+                // 书写触觉未真正打开。这里在 s0 服务发现后重新补发一次 switch。
+                if (!HookUtils.disconnectRequested(context) &&
+                        Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_global_writing_haptic", 1) != 0) {
+                    BluetoothGattCharacteristic switchChar = findCharacteristic(sessionSessionFor, LENOVO_HAPTIC_SWITCH);
+                    if (switchChar != null) {
+                        enqueueWrite(sessionSessionFor, switchChar, new byte[]{1});
+                        HookUtils.log("IPe OEM haptic switch re-applied after s0 ready");
+                    }
+                }
                 return;
             }
             HookUtils.log("IPe OEM GATT service set ignored for non-pen manager address=" + address);
