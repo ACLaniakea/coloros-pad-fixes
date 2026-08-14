@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the ColorOS port-tuning KernelSU module (ACLaniakea 1.0.2)."""
+"""Package the ColorOS port-tuning KernelSU module (ACLaniakea 1.1.0)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "PortTuning-Module-v1.0.2.zip"
+OUT = ROOT.parents[1] / "releases" / "PortTuning-Module-v1.1.0.zip"
 EXCLUDE = {"tuning.log", "daemon.pid"}
 
 

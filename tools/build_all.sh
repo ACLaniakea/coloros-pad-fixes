@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ACLaniakea ColorOS Pad Port Fixes - 1.0.2 全量构建
+# ACLaniakea ColorOS Pad Port Fixes - 1.1.0 全量构建
 # 输出统一到 releases/。需要本机工具链：
 #   /tmp/android-sdk (aapt2/d8/zipalign/apksigner/android-35)
 #   /tmp/acdb/stubs (Xposed stubs)
@@ -25,11 +25,11 @@ echo "== 3/6 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py
 
 echo "== 4/6 refresh PenHidCtl inside pen-bridge module =="
-cp releases/PenHidCtl-v1.0.2.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
+cp releases/PenHidCtl-v1.1.0.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
 echo "== 5/6 module zips =="
 python3 base-fix/module/tools/build_release.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.0.2.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.1.0.zip
 python3 port-tuning/tools/build_tuning.py
 
 echo "== 6/6 releases =="
