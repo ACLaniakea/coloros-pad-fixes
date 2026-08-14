@@ -691,7 +691,7 @@ final class IpeManagerHooks {
                         if ("com.aclaniakea.lenovopenbridge.action.SHOW_PENCIL_CAPSULE".equals(intent.getAction())) {
                             if (zEquals) {
                                 Context context3 = context;
-                                IpeManagerHooks.showMagneticCapsule(context3, intent.getIntExtra("battery_level", HookUtils.state(context3).battery), IpeManagerHooks.chargingExtra(intent, HookUtils.state(context).charging));
+                                IpeManagerHooks.showMagneticCapsule(context3, intent.getIntExtra("battery_level", -1), IpeManagerHooks.chargingExtra(intent, -1));
                                 return;
                             }
                             return;

@@ -722,12 +722,11 @@ final class SystemStylusHooks {
             return;
         }
         hallReadFailed = false;
-        int oemWirelessPenPresent = readOemWirelessPenPresent();
-        if (oemWirelessPenPresent == 0 || oemWirelessPenPresent == 1) {
-            i = oemWirelessPenPresent == 1 ? 0 : 1;
-        } else if (i3 >= 0 && i4 >= 0) {
-            // Match the Root service hall mapping: 1:1 is detached,
-            // 0:0 / 0:1 / 1:0 are all docked orientations.
+        if (i3 >= 0 && i4 >= 0) {
+            // Root service and this hook both trust the hall pair. 1:1 is
+            // detached; 0:0 / 0:1 / 1:0 are all docked orientations.
+            // OplusBatteryManager.getWirelessPenPresent() is unreliable on
+            // this Lenovo pen (always 0), so it must never override the hall pair.
             i = (i3 == 1 && i4 == 1) ? 1 : 0;
         } else {
             return;

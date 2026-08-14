@@ -93,8 +93,18 @@ def main() -> None:
             [str(p) for p in sorted(SOURCES.rglob("*.java"))])
         d8_cmd = ([D8] if not R8_JAR.is_file()
                   else ["java", "-cp", R8_JAR, "com.android.tools.r8.D8"])
-        run(d8_cmd + ["--lib", ANDROID_JAR, "--min-api", "31", "--output", tmp / "dex"] +
-            [str(p) for p in sorted((tmp / "classes").rglob("*.class"))])
+        # Xposed API and the UEventObserver stub are provided at runtime by
+        # LSPosed / the framework. They must never be baked into classes.dex,
+        # otherwise LSPosed refuses to load the module ("The Xposed API
+        # classes are compiled into the module's APK").
+        _provided_prefixes = ("android/os/UEventObserver", "de/robv/android/xposed/")
+        _class_files = []
+        for p in sorted((tmp / "classes").rglob("*.class")):
+            rel = str(p.relative_to(tmp / "classes"))
+            if any(rel.startswith(prefix) for prefix in _provided_prefixes):
+                continue
+            _class_files.append(str(p))
+        run(d8_cmd + ["--lib", ANDROID_JAR, "--min-api", "31", "--output", tmp / "dex"] + _class_files)
         dex = tmp / "dex" / "classes.dex"
         unsigned = tmp / "unsigned.apk"
         with zipfile.ZipFile(tmp / "base.apk", "r") as src, \
