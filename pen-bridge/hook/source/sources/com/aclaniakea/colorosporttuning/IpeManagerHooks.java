@@ -41,6 +41,7 @@ final class IpeManagerHooks {
     private static volatile boolean handoffReceiverInstalled = false;
     private static volatile ClassLoader ipeClassLoader = null;
     private static volatile long lastCapsuleAt = 0;
+    private static volatile long lastCardRefreshAt = 0;
     private static volatile long lastStockGattConnectAt = 0;
     private static volatile long lastStockProfileConnectedAt = 0;
     private static volatile Object pencilPanelCallback = null;
@@ -337,6 +338,11 @@ final class IpeManagerHooks {
 
     private static void refreshDeviceCardData(Context context) {
         try {
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastCardRefreshAt < 1500) {
+                return;
+            }
+            lastCardRefreshAt = now;
             BluetoothDevice device = findPenDevice(context);
             if (device == null) {
                 return;
