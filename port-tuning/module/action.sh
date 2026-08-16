@@ -13,7 +13,7 @@ case "$soc/$platform" in
     *SM8650Q*/*pineapple*) ;;
     *) echo "Unsupported device: soc=$soc platform=$platform"; exit 0;;
 esac
-echo "Global VM values (not managed):"
+echo "Managed VM values:"
 echo "  swappiness=$(cat /proc/sys/vm/swappiness)"
 echo "  min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes)"
 echo "Active UI cgroup swappiness=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null)"
