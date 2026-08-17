@@ -51,9 +51,28 @@ HIDCTL_LAUNCHER_FILE="$MODDIR/pen-hid-launcher.hidden"
 PEN_USER_DISCONNECT_KEY=lenovo_pen_user_disconnect_requested
 
 # Respawn guard: if the real service exits (crash, OOM, kill), bring it
-# back after a short delay. KernelSU starts the script once; this first
-# invocation only owns the respawn loop.
+# back after a short delay. KernelSU can invoke service.sh several times
+# during boot (module refresh, boot-completed callbacks), so only one
+# invocation may own the respawn loop and the monitors.
+#
+# The singleton lock is an exclusive flock on $SERVICE_LOCK held by the
+# first invocation's file descriptor. The descriptor is inherited by the
+# background respawn loop and by each service child, so exactly one loop
+# (and one monitor set) stays alive for the whole session. Later KernelSU
+# invocations fail the non-blocking lock and exit immediately. If the loop
+# dies, the descriptor closes, the lock is released, and a later invocation
+# takes over.
 if [ -z "$PEN_SERVICE_RESPAWN" ]; then
+    if [ -d "$SERVICE_LOCK" ]; then
+        # Legacy mkdir lock from older builds; replace it with the flock file.
+        rm -rf "$SERVICE_LOCK" 2>/dev/null
+    fi
+    exec 9>"$SERVICE_LOCK" 2>/dev/null || exit 0
+    if ! /data/adb/ksu/bin/busybox flock -n 9 2>/dev/null; then
+        # Either the lock is taken or busybox flock is unavailable; in both
+        # cases exit without running a second monitor set.
+        exit 0
+    fi
     export PEN_SERVICE_RESPAWN=1
     (
         while [ ! -e "$CPS_DISABLED" ]; do
@@ -63,33 +82,6 @@ if [ -z "$PEN_SERVICE_RESPAWN" ]; then
     ) &
     exit 0
 fi
-
-# KernelSU normally starts one copy, but manual module refreshes can leave
-# old service.sh instances alive.  Keep one owner of the Hall/CPS monitors so
-# one physical edge cannot produce duplicate capsule requests.
-if ! mkdir "$SERVICE_LOCK" 2>/dev/null; then
-    old_pid=$(cat "$SERVICE_LOCK/pid" 2>/dev/null)
-    case "$old_pid" in
-        ''|*[!0-9]*) ;;
-        *)
-            if kill -0 "$old_pid" 2>/dev/null; then
-                cmd=$(tr "\0" " " < /proc/$old_pid/cmdline 2>/dev/null)
-                case "$cmd" in
-                    *lenovo_pen_bridge/service.sh*) exit 0 ;;
-                esac
-            fi
-            ;;
-    esac
-    rm -f "$SERVICE_LOCK/pid" 2>/dev/null
-    rmdir "$SERVICE_LOCK" 2>/dev/null || exit 0
-    mkdir "$SERVICE_LOCK" 2>/dev/null || exit 0
-fi
-echo $$ >"$SERVICE_LOCK/pid"
-cleanup_service_lock() {
-    rm -f "$SERVICE_LOCK/pid" 2>/dev/null
-    rmdir "$SERVICE_LOCK" 2>/dev/null
-}
-trap cleanup_service_lock EXIT INT TERM
 
 soc=$(getprop ro.soc.model)
 platform=$(getprop ro.board.platform)
@@ -877,12 +869,6 @@ monitor_hall_capsule() {
     done
 }
 
-monitor_hall_capsule &
-monitor_screen_replay &
-monitor_battery_cache &
-monitor_charging_cache &
-monitor_real_bt_state &
-
 run_hidctl() {
     action="$1"
     mac=$(resolve_pen_mac)
@@ -1015,6 +1001,18 @@ monitor_hid_latch() {
         sleep_sec 2
     done
 }
+
+# Boot-time monitors start here: after every helper they call (run_hidctl,
+# request_oem_pen_action, request_pen_connect, request_pen_disconnect) has
+# already been parsed above, so the forked subshells inherit the full symbol
+# table and the first magnetic edge cannot hit "request_pen_connect: not
+# found". They still start before the boot-connect retry window, preserving
+# the original boot-time state publication (connection mirrors + haptics).
+monitor_hall_capsule &
+monitor_screen_replay &
+monitor_battery_cache &
+monitor_charging_cache &
+monitor_real_bt_state &
 
 monitor_hid_latch &
 

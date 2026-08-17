@@ -1,6 +1,5 @@
 # 构建产物 / 密钥 / 日志
 releases/
-!experimental/find-device/releases/
 *.jks
 *.idsig
 __pycache__/
@@ -14,9 +13,18 @@ base-fix/module/payload/voice/
 base-fix/module/payload/libdl32.tango-cfi.so
 base-fix/module/zygisk/arm64-v8a.so
 base-fix/module/bin/card-protocol-patcher.jar
+fix-module/module/payload/aon-libs/
+fix-module/module/payload/voice/
+fix-module/module/payload/libdl32.tango-cfi.so
+fix-module/module/zygisk/arm64-v8a.so
+fix-module/module/bin/card-protocol-patcher.jar
 pen-bridge/module/bin/pen-cps-gpio
 pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
 # OEM 原生库（odm 运行时与 hook APK 的 libpeninput.so），README 注明来源
 base-fix/module/odm/
+fix-module/module/odm/
 pen-bridge/hook/source/resources/lib/
+
+# experimental/find-device 的 release APK 可由各 tools/build_*.py 从源码重建
+experimental/find-device/releases/

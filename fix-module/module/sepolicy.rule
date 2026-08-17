@@ -1,0 +1,9 @@
+allow hal_gameopt_oplus_aidl system_file file { read open getattr map execute };
+allow oplus_phonemanager_app proc_stat file { read open getattr };
+allow oplus_phonemanager_app vendor_sysfs_kgsl file { read open getattr };
+allow platform_app vendor_qdsp_device chr_file { open read write ioctl getattr };
+allow platform_app vendor_xdsp_device chr_file { open read write ioctl getattr };
+allow platform_app adsprpcd_file file { open read getattr map };
+allow platform_app vendor_file dir { open read getattr search watch };
+allow platform_app adsprpcd_file dir { open read getattr search watch };
+allow hal_audio_default system_file file { read open getattr map };
