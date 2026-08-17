@@ -9,3 +9,8 @@
 #   专业鲜艳 -> native gamut (the framework's 259 is already native)
 ro.oplus.display.colormode.vivid.renderintent=256
 ro.oplus.display.colormode.soft.renderintent=0
+
+# 杜比音效（原厂 DAX3 DMS HAL 链路）：特性由 post-fs-data 的
+# com.oplus.oplus-feature.xml 覆盖开启，这里补齐均衡器/模式支持属性。
+ro.oplus.audio.dolby.equalizer_support=true
+ro.oplus.audio.dolby.movieToMusic_support=true

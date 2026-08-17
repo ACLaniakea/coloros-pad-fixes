@@ -5,7 +5,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-1.2.1-orange)
+![Version](https://img.shields.io/badge/version-1.2.2-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -63,7 +63,7 @@ adb shell su -c 'ksud module uninstall coloros_port_tuning'
 adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
-adb shell su -c 'ksud module install /sdcard/FixModule-v1.2.1.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v1.2.2.zip'
 adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.3.zip'
 
 # 4. 安装 Hook APK（LSPosed）

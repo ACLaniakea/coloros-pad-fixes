@@ -63,6 +63,22 @@ bind_over sys_osense_io_decisionmaker_config.xml
 bind_over sys_osense_memory_decisionmaker_config.xml
 
 # ============================================================================
+# 杜比音效特性开关（一次性覆盖）：原厂 OPlus 特性配置缺少
+# oplus.software.audio.dolby_support，导致设置内“声音与振动→音效”页的
+# 杜比区域被隐藏。补上该特性后，系统自带的 DolbyMainActivity/均衡器界面
+# 恢复显示，走原生 DMS HAL 链路，无需第三方杜比 App。
+# ============================================================================
+FEATURE_TARGET=/my_stock/etc/extension/com.oplus.oplus-feature.xml
+FEATURE_PAYLOAD="$MODDIR/payload/oplus/oplus-feature.xml"
+if [ -f "$FEATURE_PAYLOAD" ] && [ -f "$FEATURE_TARGET" ]; then
+    chown 0:0 "$FEATURE_PAYLOAD"
+    chmod 0644 "$FEATURE_PAYLOAD"
+    chcon u:object_r:system_file:s0 "$FEATURE_PAYLOAD" 2>/dev/null
+    mount --bind "$FEATURE_PAYLOAD" "$FEATURE_TARGET" 2>/dev/null && \
+        log_msg "oplus feature dolby_support bind mounted"
+fi
+
+# ============================================================================
 # 一次性覆盖高通开机脚本的 swappiness=100：/vendor/bin/init.qcom.post_boot.sh
 # 与 init.kernel.post_boot.sh 会在开机阶段把全局 swappiness 硬编码写回 100，
 # 覆盖 post-fs-data 早期的写入。把补丁版（100→20）bind 到原路径，开机脚本
