@@ -16,10 +16,10 @@ MODDIR=${0%/*}
 
 export PATH="/sbin:/system/bin:/system/xbin:/vendor/bin:$PATH"
 
-# 1) 尽早把全局 swappiness 降到 40：开机早期（service 阶段之前）若仍为
+# 1) 尽早把全局 swappiness 降到 20：开机早期（service 阶段之前）若仍为
 #    ROM 默认 100，会把 system_server/launcher/systemui 也压进 zram；
 #    此时先降全局，后续创建的 app cgroup 也会继承较低基线。
-echo 40 >/proc/sys/vm/swappiness 2>/dev/null
+echo 20 >/proc/sys/vm/swappiness 2>/dev/null
 
 # 等待 /my_stock 分区可用
 wait_count=0

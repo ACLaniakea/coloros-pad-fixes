@@ -5,7 +5,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-1.1.4-orange)
+![Version](https://img.shields.io/badge/version-1.1.5-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -29,7 +29,7 @@
 | --- | --- | --- | --- |
 | **base-fix 基础修复** | KernelSU 模块 | `coloros_port_base_fix` | AON QNN 生命周期、环境光自适应、小布 BWV 语音唤醒、录音增益、144Hz、显示色域、Tango/序列号/性能 HAL 兼容 |
 | **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护等 |
-| **port-tuning 调优** | KernelSU 模块 | `coloros_port_tuning` | post-fs-data 阶段尽早防换出 + 禁用 osense 主动换出/内存清理策略，解决开机早期与长待机唤醒的动画卡顿掉帧 |
+| **port-tuning 调优** | KernelSU 模块 | `coloros_port_tuning` | 全局 swappiness=20 阻止关键进程被持续换出 + 禁用 osense 主动换出/内存清理策略，解决开机与长待机唤醒的动画卡顿掉帧 |
 | **pen-bridge 手写笔桥接** | KernelSU 模块 | `lenovo_pen_bridge` | 原厂 CoreService BLE 连接/断开、CPS 上电、真实 ACL/GATT/Hall 状态同步、PenHidCtl HID 控制 |
 | **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，真实 GATT 断开 |
 | **PenHidCtl** | priv-app | `com.aclaniakea.penhidctl` | HID 连接控制（纯服务、无桌面图标） |

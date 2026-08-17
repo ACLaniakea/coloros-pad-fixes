@@ -6,10 +6,11 @@ LOGFILE="$MODDIR/tuning.log"
 # ============================================================================
 # 联想平板 Pro GT - ColorOS 调优 · service 阶段
 # 实际修复与作用：
-#   1) 关键进程防换出：active/systemserver memcg swappiness 降到 10，长待机
-#      时不再被压入 zram，点亮后无需大量 swap-in；
-#   2) 后台 apps swappiness 降到 40，配合 post-fs-data 关闭 osense 主动换出，
-#      消除实测约 120MB/s 换出、76MB/s 换入的 zram 抖动；
+#   1) 全局 swappiness 降到 20（关键）：本内核的全局回收不遵守 per-memcg
+#      swappiness（cgroup v1 无内存限制时按全局值从全局 LRU 换出），实测全局
+#      40 时 system_server/launcher/systemui 仍被持续换出，降到 20 后停止增长；
+#   2) active/systemserver memcg swappiness 保持 10、后台 40，作为 memcg 回收
+#      路径的补充保护；
 #   3) min_free_kbytes 提到 64MB，给内核留足水位余量，避免 direct-reclaim /
 #      allocstall 停顿；
 #   4) 常驻轻量守护每 30s 复校一次，防止 osense/其他服务回改。
@@ -32,7 +33,7 @@ until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done
 sleep 8
 echo "[$(date '+%F %T')] service start"
 
-GLOBAL_SWAPPINESS=40
+GLOBAL_SWAPPINESS=20
 CRITICAL_SWAPPINESS=10
 MIN_FREE_KB=65536
 
