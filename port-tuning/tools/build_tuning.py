@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "PortTuning-Module-v1.1.1.zip"
+OUT = ROOT.parents[1] / "releases" / "PortTuning-Module-v1.1.2.zip"
 EXCLUDE = {"tuning.log", "daemon.pid"}
 
 

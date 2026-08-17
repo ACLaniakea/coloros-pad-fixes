@@ -1,6 +1,6 @@
 id=coloros_port_tuning
 name=联想平板 Pro GT - ColorOS 调优
 author=ACLaniakea
-version=1.1.1
-versionCode=1101
-description=SM8650Q/pineapple ColorOS 移植调优：降低 swappiness(100→60) 并提高 min_free_kbytes，减少长待机唤醒后的 zram swap-in 卡顿与压缩耗电，改善续航。
+version=1.1.2
+versionCode=1102
+description=SM8650Q/pineapple ColorOS 移植调优：关键进程(launcher/systemui/system_server)防换出 + 提高 min_free_kbytes，解决长待机唤醒后解锁/动画卡顿与掉帧，改善续航。
