@@ -11,8 +11,9 @@ MODDIR=${0%/*}
 #   1) 停用移植 ROM 不兼容的 source-device 性能 HAL（perf2-hal、
 #      vendor.perfservice），保留 OPlus 性能 HAL，避免 CPU 频点被错误封顶；
 #   2) 重载 thermal-engine，让 CPU 策略在模块挂载后生效；
-#   3) 把每个 CPU policy 的 scaling_max_freq 恢复为内核硬件上限，并常驻
-#      cpu-limit-guard 防止运行期被再次压低；
+#   3) 把每个 CPU policy 的 scaling_max_freq 一次性恢复为内核硬件上限
+#      （充电/CPU 热限频由 thermal-engine_battery_0/2.conf 覆盖策略接管，
+#      不再使用常驻守护脚本）；
 #   4) 保持 Tango 32 位 zygote 停止，启用 horae，避免移植运行时不兼容；
 #   5) 恢复小布语音唤醒：启用/解冻 OVoice 与 SpeechAssist 包、写入全局
 #      唤醒开关与唤醒词、安装原厂 BWV 模型、委托 ExSystem BootReceiver、
@@ -60,9 +61,6 @@ for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     echo "$hw_max" >"$max_file" 2>/dev/null
     log_msg "cpu $(basename "$policy") max=$(cat "$max_file" 2>/dev/null)"
 done
-
-"$MODDIR/bin/cpu-limit-guard.sh" "$MODDIR" &
-echo $! >"$MODDIR/cpu-limit-guard.pid"
 
 # The port's tango translator repeatedly aborts on this tablet's 32-bit
 # runtime. Keep the native secondary zygote stopped instead of respawning it.
@@ -287,5 +285,10 @@ fi
 if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
     echo 20 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
 fi
+
+# 一次性把 min_free_kbytes 提到 32MB：ROM 后期会把它压到 ~11MB，内存紧张时
+# 容易直接回收抖动；32MB 余量可显著降低唤醒/切应用的直接回收卡顿（单次写入，
+# 不做常驻守护）。
+echo 32768 >/proc/sys/vm/min_free_kbytes 2>/dev/null
 
 log_msg "tuning ready: swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null)"

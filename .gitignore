@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 *.log
 daemon.pid
+.git-corrupt-*/
 
 # OEM 固件二进制与预编译产物（README 注明来源，不随源码分发）
 base-fix/module/payload/aon-libs/
