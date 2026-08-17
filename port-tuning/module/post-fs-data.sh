@@ -16,6 +16,11 @@ MODDIR=${0%/*}
 
 export PATH="/sbin:/system/bin:/system/xbin:/vendor/bin:$PATH"
 
+# 1) 尽早把全局 swappiness 降到 40：开机早期（service 阶段之前）若仍为
+#    ROM 默认 100，会把 system_server/launcher/systemui 也压进 zram；
+#    此时先降全局，后续创建的 app cgroup 也会继承较低基线。
+echo 40 >/proc/sys/vm/swappiness 2>/dev/null
+
 # 等待 /my_stock 分区可用
 wait_count=0
 while [ ! -f /my_stock/etc/extension/sys_osense_memory_config.xml ] &&
@@ -35,3 +40,18 @@ bind_over() {
 
 bind_over sys_osense_memory_config.xml
 bind_over sys_osense_io_decisionmaker_config.xml
+bind_over sys_osense_memory_decisionmaker_config.xml
+
+# 2) 尽早应用关键 memcg swappiness（若 cgroup 已存在；否则由 service 阶段补）
+wait_count=0
+while [ ! -w /dev/memcg/apps/active/memory.swappiness ] &&
+      [ "$wait_count" -lt 15 ]; do
+    sleep 1
+    wait_count=$((wait_count + 1))
+done
+if [ -w /dev/memcg/apps/active/memory.swappiness ]; then
+    echo 10 >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
+fi
+if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
+    echo 10 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
+fi
