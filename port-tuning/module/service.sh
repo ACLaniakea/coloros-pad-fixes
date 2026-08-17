@@ -6,15 +6,13 @@ LOGFILE="$MODDIR/tuning.log"
 # ============================================================================
 # 联想平板 Pro GT - ColorOS 调优 · service 阶段
 # 实际修复与作用：
-#   1) 关键进程防换出：active（launcher/systemui/前台）/systemserver（system_server）
-#      memcg swappiness 降到 20，长待机时不再被压入 zram；点亮后无需大量
-#      swap-in，解锁与动画不再拖慢掉帧（实测 zram 中 system_server/launcher/
-#      systemui 共被换出约 800MB，是长待机唤醒卡顿的直接来源）；
-#   2) 后台 apps 保持较高 swappiness（60），回收压力自然落到可换出的后台应用；
-#   3) min_free_kbytes 提到 32MB，给内核留足水位余量，避免关键 cgroup
-#      低 swappiness 时触发同步 direct-reclaim / allocstall 停顿；
-#   4) 全局 swappiness=60（ROM 基线 100 过激，会连系统进程一起换出）；
-#   5) 常驻轻量守护每 30s 复校一次，防止 osense/其他服务回改。
+#   1) 关键进程防换出：active/systemserver memcg swappiness 降到 10，长待机
+#      时不再被压入 zram，点亮后无需大量 swap-in；
+#   2) 后台 apps swappiness 降到 40，配合 post-fs-data 关闭 osense 主动换出，
+#      消除实测约 120MB/s 换出、76MB/s 换入的 zram 抖动；
+#   3) min_free_kbytes 提到 64MB，给内核留足水位余量，避免 direct-reclaim /
+#      allocstall 停顿；
+#   4) 常驻轻量守护每 30s 复校一次，防止 osense/其他服务回改。
 # 仅适用于 SM8650Q / pineapple 平台。
 # ============================================================================
 
@@ -34,9 +32,9 @@ until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done
 sleep 8
 echo "[$(date '+%F %T')] service start"
 
-GLOBAL_SWAPPINESS=60
-CRITICAL_SWAPPINESS=20
-MIN_FREE_KB=32768
+GLOBAL_SWAPPINESS=40
+CRITICAL_SWAPPINESS=10
+MIN_FREE_KB=65536
 
 # 1) 全局 VM 基线
 echo "$GLOBAL_SWAPPINESS" >/proc/sys/vm/swappiness 2>/dev/null
