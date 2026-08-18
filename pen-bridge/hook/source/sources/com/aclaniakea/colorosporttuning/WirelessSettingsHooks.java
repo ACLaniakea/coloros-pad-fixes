@@ -20,7 +20,10 @@ final class WirelessSettingsHooks {
                     } catch (Throwable unused) {
                         string = null;
                     }
-                    if ("0".equals(string)) {
+                    ContentResolver resolver = (ContentResolver) methodHookParam.args[0];
+                    boolean oemFullOrIdle = Settings.Global.getInt(resolver, "lenovo_pen_oem_charge_valid", 0) == 1
+                            && Settings.Global.getInt(resolver, "lenovo_pen_oem_charge_state", -1) == 0;
+                    if ("0".equals(string) || oemFullOrIdle) {
                         try {
                             methodHookParam.setResult(HookUtils.adapt(((Method) methodHookParam.method).getReturnType(), 0));
                         } catch (Throwable unused2) {

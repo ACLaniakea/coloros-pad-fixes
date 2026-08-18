@@ -443,7 +443,7 @@ final class IpeManagerHooks {
                 if (application == null) {
                     return;
                 }
-                int iCharging = Settings.Global.getInt(application.getContentResolver(), "ipe_pencil_charging_state", 0);
+                int iCharging = HookUtils.effectiveCharging(application, Settings.Global.getInt(application.getContentResolver(), "ipe_pencil_charging_state", 0));
                 methodHookParam.setResult(Boolean.valueOf(iCharging != 0));
                 HookUtils.log("IPe DeviceSpace card charging overridden");
             }
@@ -470,7 +470,7 @@ final class IpeManagerHooks {
                 } catch (Throwable unused8) {
                     application = null;
                 }
-                if (application == null || Settings.Global.getInt(application.getContentResolver(), "ipe_pencil_charging_state", 0) != 0) {
+                if (application == null || HookUtils.effectiveCharging(application, Settings.Global.getInt(application.getContentResolver(), "ipe_pencil_charging_state", 0)) != 0) {
                     return;
                 }
                 iArr[3] = 0;

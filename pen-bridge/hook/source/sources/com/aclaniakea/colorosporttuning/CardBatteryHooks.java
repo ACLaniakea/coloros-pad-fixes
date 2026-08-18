@@ -244,7 +244,7 @@ final class CardBatteryHooks {
         }
         int charging = 0;
         try {
-            charging = Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0);
+            charging = HookUtils.effectiveCharging(context, Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0));
         } catch (Throwable unused) {
         }
         int battery = -1;

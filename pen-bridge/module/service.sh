@@ -704,10 +704,15 @@ monitor_charging_cache() {
                 charging=$(read_hardware_charging "$docked")
                 case "$charging" in
                     0|1)
-                        if [ "$charging" != "$last" ]; then
+                        mirrored=$(settings get global ipe_pencil_charging_state 2>/dev/null | tr -d '\r')
+                        # OEM state replay can overwrite the UI mirror after
+                        # the hardware value has already settled. Repair a
+                        # mirror mismatch even when the physical state itself
+                        # did not change (notably 100%/Full -> charging=0).
+                        if [ "$charging" != "$last" ] || [ "$mirrored" != "$charging" ]; then
                             last="$charging"
                             publish_hall_state "$docked"
-                            echo "[$(date '+%F %T')] charging state repaired charging=$charging docked=$docked"
+                            echo "[$(date '+%F %T')] charging state repaired charging=$charging mirrored=$mirrored docked=$docked"
                         fi
                         ;;
                 esac

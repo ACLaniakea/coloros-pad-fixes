@@ -68,12 +68,16 @@ final class PenStateStore {
         if (penState.battery >= 0 && isHardwareSource(penState.source)) {
             HookUtils.markHardwareBattery(context, penState.battery);
         }
+        int effectiveCharging = HookUtils.effectiveCharging(context, penState.charging);
+        if (effectiveCharging < 0) {
+            effectiveCharging = 0;
+        }
         int iStoredBattery = penState.battery;
         if (iStoredBattery < 0) {
             iStoredBattery = HookUtils.lastValidBattery(context);
         }
         try {
-            SharedPreferences.Editor editorPutLong = context.getSharedPreferences(PREF, 0).edit().putBoolean("connected", penState.connected).putString("address", penState.address).putString("name", penState.name).putInt("charging", penState.charging).putString("type", penState.type).putString("firmware", penState.firmware).putString("hardware", penState.hardware).putString("serial", penState.serial).putString("source", penState.source).putLong("updated", penState.updatedAt);
+            SharedPreferences.Editor editorPutLong = context.getSharedPreferences(PREF, 0).edit().putBoolean("connected", penState.connected).putString("address", penState.address).putString("name", penState.name).putInt("charging", effectiveCharging).putString("type", penState.type).putString("firmware", penState.firmware).putString("hardware", penState.hardware).putString("serial", penState.serial).putString("source", penState.source).putLong("updated", penState.updatedAt);
             if (iStoredBattery >= 0) {
                 editorPutLong.putInt("battery", iStoredBattery).putInt("last_valid_battery", iStoredBattery);
             }
@@ -88,8 +92,8 @@ final class PenStateStore {
                 Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_battery_level", iStoredBattery);
                 Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_last_valid_battery", iStoredBattery);
             }
-            Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_charging_state", penState.charging);
-            HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", penState.charging);
+            Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_charging_state", effectiveCharging);
+            HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", effectiveCharging);
             if (iStoredBattery >= 0) {
                 HookUtils.setIpePreferenceInt(context, "pencil_sp_battery_level", iStoredBattery);
             }
