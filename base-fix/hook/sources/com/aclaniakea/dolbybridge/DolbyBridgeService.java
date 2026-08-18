@@ -210,7 +210,15 @@ public class DolbyBridgeService extends Service {
             String raw = Settings.System.getString(getContentResolver(), "system_dolby_music_geq");
             int[] gains = parseGains(raw);
             if (gains != null) {
-                mMusicGains = gains;
+                // The OEM key is the canonical persisted GEQ value.  Both the
+                // music getter (txn 8) and the custom-page getter (txn 15) must
+                // restore from it; otherwise reopening the custom page shows 0s
+                // even though DAX and Settings contain the user's gains.
+                mMusicGains = gains.clone();
+                mCustomGains = gains.clone();
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putString(PREF_MUSIC_GAINS, gainsString(mMusicGains))
+                        .putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains)).apply();
                 daxSetEqGains(gains);
             }
             Log.i(TAG, "OEM settings applied dolby=" + dolby + " scene=" + mScene
@@ -291,7 +299,9 @@ public class DolbyBridgeService extends Service {
     synchronized void setMusicGeqBandGains(int[] gains) {
         if (gains == null) return;
         mMusicGains = gains.clone();
+        mCustomGains = gains.clone();
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_MUSIC_GAINS, gainsString(mMusicGains)).apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains)).apply();
         Log.i(TAG, "music GEQ gains=" + java.util.Arrays.toString(mMusicGains));
         daxSetEqGains(mMusicGains);
     }
@@ -320,6 +330,7 @@ public class DolbyBridgeService extends Service {
         if ("dolby_geq_on_off".equals(key)) {
             mGeqEnabled = parseOn(v);
             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_GEQ, mGeqEnabled).apply();
+            daxSetEqEnabled(mGeqEnabled);
             Log.i(TAG, "GEQ state=" + mGeqEnabled);
             notifyCallbacks(1);
             return;
