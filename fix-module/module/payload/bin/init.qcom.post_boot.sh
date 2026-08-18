@@ -712,7 +712,7 @@ if [ "$ProductName" == "msmnile" ] || [ "$ProductName" == "kona" ] || [ "$Produc
       configure_zram_parameters
       configure_read_ahead_kb_values
       echo 0 > /proc/sys/vm/page-cluster
-      echo 20 > /proc/sys/vm/swappiness
+      echo 5 > /proc/sys/vm/swappiness
 else
     arch_type=`uname -m`
 
@@ -817,7 +817,7 @@ else
     # Set allocstall_threshold to 0 for all targets.
     # Set swappiness to 100 for all targets
     echo 0 > /sys/module/vmpressure/parameters/allocstall_threshold
-    echo 20 > /proc/sys/vm/swappiness
+    echo 5 > /proc/sys/vm/swappiness
 
     # Disable wsf for all targets beacause we are using efk.
     # wsf Range : 1..1000 So set to bare minimum value 1.
@@ -4264,7 +4264,7 @@ case "$target" in
 
             # Turn on sleep modes.
             echo 0 > /sys/module/lpm_levels/parameters/sleep_disabled
-            echo 20 > /proc/sys/vm/swappiness
+            echo 5 > /proc/sys/vm/swappiness
             ;;
         esac
     ;;
@@ -4820,7 +4820,7 @@ case "$target" in
 	echo N > /sys/module/lpm_levels/L3/l3-dyn-ret/idle_enabled
         # Turn on sleep modes.
         echo 0 > /sys/module/lpm_levels/parameters/sleep_disabled
-	echo 20 > /proc/sys/vm/swappiness
+	echo 5 > /proc/sys/vm/swappiness
 	echo 120 > /proc/sys/vm/watermark_scale_factor
     ;;
 esac
@@ -5741,7 +5741,7 @@ esac
 case "$target" in
      "msm7627a")
     echo 0,1,2,4,9,12 > /sys/module/lowmemorykiller/parameters/adj
-    echo 5120 > /proc/sys/vm/min_free_kbytes
+    echo 65536 > /proc/sys/vm/min_free_kbytes
      ;;
 esac
 
@@ -5764,7 +5764,7 @@ case "$target" in
      "msm8660")
         start qosmgrd
         echo 0,1,2,4,9,12 > /sys/module/lowmemorykiller/parameters/adj
-        echo 5120 > /proc/sys/vm/min_free_kbytes
+        echo 65536 > /proc/sys/vm/min_free_kbytes
      ;;
 esac
 # Let kernel know our image version/variant/crm_version

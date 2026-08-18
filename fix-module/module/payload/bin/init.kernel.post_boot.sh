@@ -123,7 +123,7 @@ function configure_memory_parameters() {
 
 	#configure_zram_parameters
 	configure_read_ahead_kb_values
-	echo 20 > /proc/sys/vm/swappiness
+	echo 5 > /proc/sys/vm/swappiness
 
 	# Disable periodic kcompactd wakeups. We do not use THP, so having many
 	# huge pages is not as necessary.
@@ -156,13 +156,13 @@ function configure_memory_parameters() {
 
 	# Set the min_free_kbytes to standard kernel value
 	if [ $RamSizeGB -ge 8 ]; then
-		echo 11584 > /proc/sys/vm/min_free_kbytes
+		echo 65536 > /proc/sys/vm/min_free_kbytes
 	elif [ $RamSizeGB -ge 4 ]; then
-		echo 8192 > /proc/sys/vm/min_free_kbytes
+		echo 65536 > /proc/sys/vm/min_free_kbytes
 	elif [ $RamSizeGB -ge 2 ]; then
-		echo 5792 > /proc/sys/vm/min_free_kbytes
+		echo 65536 > /proc/sys/vm/min_free_kbytes
 	else
-		echo 4096 > /proc/sys/vm/min_free_kbytes
+		echo 65536 > /proc/sys/vm/min_free_kbytes
 	fi
 
 	#Set per-app max kgsl reclaim limit and per shrinker call limit

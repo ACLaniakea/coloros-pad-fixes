@@ -9,8 +9,10 @@ AON_PAYLOAD=/data/local/tmp/coloros-aon-runtime-v2459
 AON_TARGET=/my_product/app/AONService/lib/arm64
 EXPECTED_JNI=80aedb964ca38112a003a8f77b72bca0bbf37ac221017e678e031f09cde428fc
 
-last_pid=
 stopped_pid=
+logcat_pid=
+last_pid=
+event_fifo="$MODDIR/aon-process-events.fifo"
 
 resume_stopped_process() {
     if [ -n "$stopped_pid" ]; then
@@ -19,7 +21,13 @@ resume_stopped_process() {
     fi
 }
 
-trap 'resume_stopped_process; exit 0' INT TERM EXIT
+cleanup() {
+    resume_stopped_process
+    [ -n "$logcat_pid" ] && kill "$logcat_pid" 2>/dev/null
+    rm -f "$event_fifo" 2>/dev/null
+}
+
+trap 'cleanup; exit 0' INT TERM EXIT
 
 if [ ! -r "$AON_PAYLOAD/libaiboost_jni.so" ] ||
    [ ! -r "$AON_PAYLOAD/libaiboost.so" ] ||
@@ -30,24 +38,13 @@ if [ ! -r "$AON_PAYLOAD/libaiboost_jni.so" ] ||
     exit 1
 fi
 
-log_msg "AON namespace loader armed for original 2.4.59 runtime"
-
-while true; do
-    aon_pid=$(pidof "$AON_PACKAGE" 2>/dev/null)
-    set -- $aon_pid
+attach_runtime() {
     aon_pid="$1"
-
-    if [ -z "$aon_pid" ]; then
-        last_pid=
-        sleep 0.05
-        continue
-    fi
-
-    if [ "$aon_pid" = "$last_pid" ]; then
-        sleep 0.05
-        continue
-    fi
-
+    case "$aon_pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ -d "/proc/$aon_pid" ] || return 1
+    [ "$aon_pid" = "$last_pid" ] && return 0
     if kill -STOP "$aon_pid" 2>/dev/null; then
         stopped_pid="$aon_pid"
         if [ -e "/proc/$aon_pid/ns/mnt" ] &&
@@ -76,8 +73,44 @@ while true; do
             log_msg "ERROR: AON namespace runtime attach failed pid=$aon_pid"
         fi
         resume_stopped_process
+        last_pid="$aon_pid"
     fi
+}
 
-    last_pid="$aon_pid"
-    sleep 0.05
+log_msg "AON namespace loader armed with ActivityManager process events"
+
+# Cover the small window between module startup and logcat subscription.
+current_pid=$(pidof "$AON_PACKAGE" 2>/dev/null)
+set -- $current_pid
+attach_runtime "$1"
+
+# am_proc_start is emitted immediately after ActivityManager forks an app.  A
+# blocking logcat subscription reacts at process creation without the old
+# 20Hz pidof loop, which consumed minutes of CPU time and generated hundreds
+# of thousands of scheduler wakeups during a normal uptime.
+while true; do
+    rm -f "$event_fifo" 2>/dev/null
+    if ! mkfifo "$event_fifo" 2>/dev/null; then
+        log_msg "ERROR: AON process-event FIFO creation failed"
+        sleep 5
+        continue
+    fi
+    logcat -b events -v raw -T 1 -s am_proc_start:I '*:S' \
+        >"$event_fifo" 2>/dev/null &
+    logcat_pid=$!
+    while IFS= read -r event; do
+        case "$event" in
+            \[*",$AON_PACKAGE,"*)
+                event_tail=${event#*,}
+                event_pid=${event_tail%%,*}
+                attach_runtime "$event_pid"
+                ;;
+        esac
+    done <"$event_fifo"
+    kill "$logcat_pid" 2>/dev/null
+    wait "$logcat_pid" 2>/dev/null
+    logcat_pid=
+    rm -f "$event_fifo" 2>/dev/null
+    log_msg "AON process-event stream restarted"
+    sleep 1
 done

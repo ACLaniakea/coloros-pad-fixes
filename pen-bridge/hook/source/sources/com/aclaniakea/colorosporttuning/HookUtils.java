@@ -217,6 +217,12 @@ final class HookUtils {
     }
 
     static int effectiveCharging(Context context, int i) {
+        // Hall is the physical source of truth. The OEM GATT charge byte can
+        // remain cached for several seconds after the pen leaves the rail;
+        // never let that stale byte resurrect the charging indicator.
+        if (physicalDocked(context) == 0) {
+            return 0;
+        }
         int iOemCharging = oemCharging(context);
         if (iOemCharging >= 0) {
             return iOemCharging;
@@ -224,7 +230,7 @@ final class HookUtils {
         if (i < 0) {
             return -1;
         }
-        return (i == 0 || physicalDocked(context) == 0) ? 0 : 1;
+        return i == 0 ? 0 : 1;
     }
 
     static int wirelessPenPresent(Context context) {
@@ -451,7 +457,16 @@ final class HookUtils {
     }
 
     static void log(String str) {
-        XposedBridge.log("LenovoPenBridge: " + str);
+        String message = "LenovoPenBridge: " + str;
+        // The exported hardware receiver also runs in the module APK's normal
+        // process, where LSPosed classes are intentionally absent.  Resolve the
+        // logger lazily so real Hall/battery broadcasts cannot crash that path.
+        try {
+            Class<?> bridge = Class.forName("de.robv.android.xposed.XposedBridge");
+            bridge.getMethod("log", String.class).invoke(null, message);
+        } catch (Throwable ignored) {
+            android.util.Log.i("LenovoPenBridge", message);
+        }
     }
 
     private HookUtils() {

@@ -339,7 +339,10 @@ final class IpeManagerHooks {
     private static void refreshDeviceCardData(Context context) {
         try {
             long now = SystemClock.elapsedRealtime();
-            if (now - lastCardRefreshAt < 1500) {
+            // A quick attach/detach can legitimately produce two different
+            // states inside one second. Keep only a short duplicate guard so
+            // DeviceInfoManager.add() still emits both provider changes.
+            if (now - lastCardRefreshAt < 250) {
                 return;
             }
             lastCardRefreshAt = now;
@@ -759,10 +762,15 @@ final class IpeManagerHooks {
             }
             int iChargingExtra = chargingExtra(intent, penStateState.charging);
             int iOemCharging = HookUtils.oemCharging(context);
-            if (iOemCharging >= 0) {
+            boolean zHardwareIntent = isHardwareBatteryIntent(intent);
+            if (zHardwareIntent && (iChargingExtra == 0 || iChargingExtra == 1)) {
+                HookUtils.markOemCharging(context, iChargingExtra, iChargingExtra);
+                iOemCharging = iChargingExtra;
+            }
+            if (!zHardwareIntent && iOemCharging >= 0) {
                 iChargingExtra = iOemCharging;
             }
-            int i = (HookUtils.physicalDocked(context) != 0 || HookUtils.oemCharging(context) >= 0) ? iChargingExtra : 0;
+            int i = HookUtils.physicalDocked(context) == 0 ? 0 : iChargingExtra;
             if (isHardwareBatteryIntent(intent) && intExtra2 >= 0 && intExtra2 <= 100) {
                 HookUtils.markHardwareBattery(context, intExtra2);
             }
@@ -928,10 +936,10 @@ final class IpeManagerHooks {
             }
             int iCharging = chargingExtra(intent, penState.charging);
             int iOemCharging = HookUtils.oemCharging(context);
-            if (iOemCharging >= 0) {
+            if (!zHardware && iOemCharging >= 0) {
                 iCharging = iOemCharging;
             }
-            if (HookUtils.physicalDocked(context) == 0 && HookUtils.oemCharging(context) < 0) {
+            if (HookUtils.physicalDocked(context) == 0) {
                 iCharging = 0;
             }
             if (iBattery >= 0) {

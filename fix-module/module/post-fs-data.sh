@@ -54,15 +54,24 @@ fi
 
 # ============================================================================
 # 调优部分（原 coloros_port_tuning）：post-fs-data 阶段
-#   1) 尽早把全局 swappiness 降到 20：开机早期（service 阶段之前）若仍为
+#   1) 开机阶段把系统根 swappiness 暂设为 5：zygote 进程迁入最终 memcg 前若仍为
 #      ROM 默认 100，会把 system_server/launcher/systemui 也压进 zram；
 #      此时先降全局，后续创建的 app cgroup 也会继承较低基线。
-#   2) bind mount 覆盖 /my_stock 的 osense 配置：禁用 osense 对后台应用的
-#      主动 zram 换出（长待机换出-换入抖动的主因）与 IO PSI 高频清理规则。
-#   3) 尽早应用关键 memcg swappiness（若 cgroup 已存在；否则由 service 阶段补）。
+#   2) bind mount 覆盖 /my_stock 的 osense 配置：关闭主动后台换出，避免实测
+#      应用切换期间出现压缩/换入风暴；ZRAM 仍由内核在真实压力下按需使用。
+#      不创建、不扩容 ZRAM，兼容 8/12GB RAM 及未启用 ZRAM 的同型号设备。
+#   3) 开机阶段先把 apps 父 memcg 设为 5，显著压低早期换出但保留 OOM 缓冲；
+#      系统稳定后后台应用由 service 放宽到 10。
 # ============================================================================
 
-echo 20 >/proc/sys/vm/swappiness 2>/dev/null
+echo 5 >/proc/sys/vm/swappiness 2>/dev/null
+echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
+if [ -w /dev/memcg/apps/memory.swappiness ]; then
+    echo 5 >/dev/memcg/apps/memory.swappiness 2>/dev/null
+fi
+if [ -w /dev/memcg/system/memory.swappiness ]; then
+    echo 5 >/dev/memcg/system/memory.swappiness 2>/dev/null
+fi
 
 wait_count=0
 while [ ! -f /my_stock/etc/extension/sys_osense_memory_config.xml ] &&
@@ -103,8 +112,8 @@ fi
 # ============================================================================
 # 一次性覆盖高通开机脚本的 swappiness=100：/vendor/bin/init.qcom.post_boot.sh
 # 与 init.kernel.post_boot.sh 会在开机阶段把全局 swappiness 硬编码写回 100，
-# 覆盖 post-fs-data 早期的写入。把补丁版（100→20）bind 到原路径，开机脚本
-# 实际执行时写的就是 20，属于源头修复而非事后轮询。
+# 覆盖 post-fs-data 早期的写入。把补丁版 bind 到原路径，开机脚本
+# 实际执行时写的就是 5，属于源头修复而非事后轮询。
 # ============================================================================
 bind_postboot_script() {
     name="$1"
@@ -130,12 +139,12 @@ while [ ! -w /dev/memcg/apps/active/memory.swappiness ] &&
     wait_count=$((wait_count + 1))
 done
 if [ -w /dev/memcg/apps/active/memory.swappiness ]; then
-    echo 10 >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
+    echo 5 >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
 fi
 if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
-    echo 10 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
+    echo 5 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
 fi
-log_msg "tuning early: swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null)"
+log_msg "tuning early: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null)"
 
 # Bridge the ported ColorOS labels to this tablet's real Qualcomm/Oplus
 # display-color manager before system_server loads OplusFeatureColorMode.

@@ -37,7 +37,11 @@ def main() -> None:
         ], check=True)
         OUTPUT.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(OUTPUT, "w", compression=zipfile.ZIP_STORED) as dst:
-            dst.write(dex / "classes.dex", "classes.dex")
+            info = zipfile.ZipInfo("classes.dex", date_time=(2026, 8, 17, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = 0o644 << 16
+            info.compress_type = zipfile.ZIP_STORED
+            dst.writestr(info, (dex / "classes.dex").read_bytes())
     print(OUTPUT)
 
 

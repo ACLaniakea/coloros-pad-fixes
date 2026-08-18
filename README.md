@@ -5,7 +5,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-1.2.2-orange)
+![Version](https://img.shields.io/badge/version-2.0.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -27,7 +27,7 @@
 
 | 项目 | 类型 | 包名 / 模块 ID | 作用 |
 | --- | --- | --- | --- |
-| **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV 语音唤醒、录音增益、144Hz、显示色域、Tango/序列号/性能 HAL 兼容；全局 swappiness=20（一次性覆盖高通开机脚本）、禁用 osense 主动换出/内存清理策略 |
+| **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比与性能 HAL 兼容；兼容 8/12GB RAM 与 ROM 既有的 0～1×RAM ZRAM，不创建/扩容；实测后关闭 OSense 主动换出，保留内核按需 ZRAM；开机 swappiness=5，稳定后普通=10、冷后台=20、活跃与 system_server=5，64MB 水位；AON 挂载为零轮询事件驱动；恢复 ROMUpdate Provider |
 | **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护等 |
 | **pen-bridge 手写笔桥接** | KernelSU 模块 | `lenovo_pen_bridge` | 原厂 CoreService BLE 连接/断开、CPS 上电、真实 ACL/GATT/Hall 状态同步、PenHidCtl HID 控制（flock 单例 + 开机监控时序） |
 | **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，真实 GATT 断开 |
@@ -63,12 +63,12 @@ adb shell su -c 'ksud module uninstall coloros_port_tuning'
 adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
-adb shell su -c 'ksud module install /sdcard/FixModule-v1.2.6.zip'
-adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.3.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.0.zip'
+adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.4.zip'
 
 # 4. 安装 Hook APK（LSPosed）
 adb install --no-incremental BaseFix-Hook-v1.1.0.apk
-adb install PenBridge-Hook-v1.1.0.apk
+adb install PenBridge-Hook-v1.1.4.apk
 
 # 5. 重启
 adb reboot
@@ -134,7 +134,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 > **OEM 二进制不随仓库分发**：`payload/aon-libs/`、`payload/voice/`、`odm/lib64/`、`zygisk/`、`libpeninput.so`、`pen-cps-gpio` 等为原厂固件/运行时，已通过 `.gitignore` 排除，可从设备已安装模块目录或原厂备份还原；`PenHidCtl.apk` 与 `bin/card-protocol-patcher.jar` 均由仓库内源码构建生成（后者由 `base-fix/module/tools/smali/` 经 `tools/build_patcher.py` 自动重编译，需 smali.jar）。
 > 修复模块内 `payload/bin/init.qcom.post_boot.sh` 与 `payload/bin/init.kernel.post_boot.sh`
-> 为高通开机脚本的一次性补丁（swappiness 100→20，见 `fix-module/tools/patch_postboot.sh`），
+> 为高通开机脚本的一次性补丁（开机 swappiness 100→5，见 `fix-module/tools/patch_postboot.sh`），
 > 由原厂 `/vendor/bin/` 脚本经该工具生成，随模块 bind 覆盖，属文本补丁而非预编译二进制。
 
 ## 目录结构
@@ -163,7 +163,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 - 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响），待机耗电较高；
 - 小布说话开头偶发卡顿暂未稳定复现，待修复。
-- 手写笔连接状态显示与开机振动：v1.1.3 已恢复开机监控时序并修正函数解析顺序，待实测确认。
+- 手写笔连接状态显示与开机振动：v1.1.4 修复控制中心卡片的 Hall/OEM 充电缓存竞态，物理离座强制清除充电态，并缩短原厂 DeviceProvider 的有效边沿去重窗口。
 - 查找设备功能由于缺少RPMB内的服务器公钥，无法注册本设备，但可以查看其他设备
 
 ## 致谢与免责

@@ -51,6 +51,14 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam p) {
                             try {
+                                Context c = (Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
+                                int enabled = c == null ? 0 : Settings.System.getInt(
+                                        c.getContentResolver(), "system_dolby", 0);
+                                // mCurrentMode is the actual source for both the
+                                // assignment label and checked popup item.  It is
+                                // not restored from a Settings key on this port.
+                                XposedHelpers.setIntField(p.thisObject, "mCurrentMode",
+                                        enabled != 0 ? 1 : 0);
                                 Object map = XposedHelpers.getObjectField(p.thisObject, "mSoundEffectValueToTitleMap");
                                 if (map instanceof java.util.Map) {
                                     java.util.Map<Object, Object> m = (java.util.Map<Object, Object>) map;
@@ -66,6 +74,32 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                     });
         } catch (Throwable t) {
             XposedBridge.log("SoundEffectsMenuFix: hook failed " + t);
+        }
+        try {
+            XposedHelpers.findAndHookMethod(FRAGMENT, lp.classLoader, "onResume",
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            try {
+                                Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
+                                int enabled = c == null ? 0 : Settings.System.getInt(
+                                        c.getContentResolver(), "system_dolby", 0);
+                                XposedHelpers.setIntField(p.thisObject, "mCurrentMode",
+                                        enabled != 0 ? 1 : 0);
+                                // The first stock pass may already have hidden
+                                // DolbyAudioModePreference while mode was 0.
+                                // Re-run the OEM switch routine so its complete
+                                // scene/EQ content is restored, not just the menu label.
+                                XposedHelpers.callMethod(p.thisObject, "switchSoundEffect");
+                                XposedHelpers.callMethod(p.thisObject, "updateSoundEffectsMenu");
+                                XposedBridge.log("SoundEffectsMenuFix: resumed mode="
+                                        + (enabled != 0 ? 1 : 0));
+                            } catch (Throwable t) {
+                                XposedBridge.log("SoundEffectsMenuFix: resume sync failed " + t);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: resume hook failed " + t);
         }
         hookOemController(lp);
     }
@@ -115,6 +149,7 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                             Context c = (Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
                             boolean on = (Boolean) p.args[0];
                             putInt(c, "system_dolby", on ? 1 : 0);
+                            putInt(c, "system_effect_profile", on ? 1 : 0);
                         }
                     });
             XposedHelpers.findAndHookMethod(manager, lp.classLoader,

@@ -154,7 +154,12 @@ final class CardBatteryHooks {
                     } catch (Throwable th) {
                         HookUtils.log("CardBatteryHooks poll: " + th);
                     }
-                    handler.postDelayed(this, 400L);
+                    // The control-center card is refreshed by the stock
+                    // DeviceInfoManager provider callback. This fallback is
+                    // needed only while the detail activity is visible; do
+                    // not wake the MyDevices main thread 2.5 times/second in
+                    // the background.
+                    handler.postDelayed(this, CardBatteryHooks.topActivity != null ? 400L : 5000L);
                 }
             });
         }

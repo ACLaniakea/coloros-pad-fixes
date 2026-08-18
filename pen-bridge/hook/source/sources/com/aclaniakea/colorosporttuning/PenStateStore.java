@@ -46,7 +46,11 @@ final class PenStateStore {
             }
         }
         int i = iHardwareBattery;
-        int i2 = (HookUtils.physicalDocked(context) != 0 || HookUtils.oemCharging(context) >= 0) ? sharedPreferences == null ? Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0) : sharedPreferences.getInt("charging", Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0)) : 0;
+        // A magnetic pen cannot be charging while both Hall sensors report
+        // detached. Do not preserve an OEM/provider value from the previous
+        // dock session in the process-local SharedPreferences cache.
+        int iStoredCharging = sharedPreferences == null ? Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0) : sharedPreferences.getInt("charging", Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0));
+        int i2 = HookUtils.effectiveCharging(context, iStoredCharging);
         String string4 = sharedPreferences != null ? sharedPreferences.getString("type", "SECOND_GENERATION_PENCIL_LITE") : "SECOND_GENERATION_PENCIL_LITE";
         String string5 = sharedPreferences != null ? sharedPreferences.getString("firmware", "1.0.0") : "1.0.0";
         String string6 = sharedPreferences != null ? sharedPreferences.getString("hardware", "Lenovo Tab Pen") : "Lenovo Tab Pen";

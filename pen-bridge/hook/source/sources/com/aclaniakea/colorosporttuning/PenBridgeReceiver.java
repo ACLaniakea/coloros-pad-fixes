@@ -122,10 +122,16 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
             HookUtils.setPhysicalDocked(context, iIntExtra2 != 0);
         }
         int iOemCharging = HookUtils.oemCharging(context);
-        if (iOemCharging >= 0) {
+        // Hardware Hall/CPS updates are newer than the OEM provider cache.
+        // For non-hardware events the OEM byte remains the preferred source.
+        if (z && (iChargingExtra == 0 || iChargingExtra == 1)) {
+            HookUtils.markOemCharging(context, iChargingExtra, iChargingExtra);
+            iOemCharging = iChargingExtra;
+        }
+        if (!z && iOemCharging >= 0) {
             iChargingExtra = iOemCharging;
         }
-        if (HookUtils.physicalDocked(context) == 0 && HookUtils.oemCharging(context) < 0) {
+        if (HookUtils.physicalDocked(context) == 0) {
             iChargingExtra = 0;
         }
         boolean isPenEvent = isLenovo(strFirst3) || strValueOf.contains("PEN_") || strValueOf.contains("INPUT_DEVICE") || !strValueOf.startsWith("android.bluetooth") || sameMac(strFirst2, penState.address);

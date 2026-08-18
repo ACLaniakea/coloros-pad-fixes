@@ -9,7 +9,7 @@ MODDIR=${0%/*}
 # 联想平板 Pro GT - ColorOS 基础修复 · service（开机完成后）阶段
 # 实际修复与作用：
 #   1) 停用移植 ROM 不兼容的 source-device 性能 HAL（perf2-hal、
-#      vendor.perfservice），保留 OPlus 性能 HAL，避免 CPU 频点被错误封顶；
+#      vendor.perfservice），保留设备 performance 与 Thermal HAL；
 #   2) 重载 thermal-engine，让 CPU 策略在模块挂载后生效；
 #   3) 把每个 CPU policy 的 scaling_max_freq 一次性恢复为内核硬件上限
 #      （充电/CPU 热限频由 thermal-engine_battery_0/2.conf 覆盖策略接管，
@@ -22,7 +22,9 @@ MODDIR=${0%/*}
 #   7) 允许 Dolby Bridge 后台运行，避免原厂控制页仍在前台时服务被 app-idle
 #      回收，导致 UI 仅写入设置但没有实时下发 DAP；
 #   8) 清理已合并的旧 AON 独立包；启动 horae/gameopt；
-#   9) 按需执行应用建议协议修复与序列号补齐。
+#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：稳定态普通后台 20、
+#      冷后台 40、活跃 UI 10、system_server 5，并保留 64MB 水位；
+#  10) 按需执行应用建议协议修复与序列号补齐。
 # ============================================================================
 
 until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done
@@ -57,13 +59,30 @@ fi
 # continues to reach the live session-0 DAP effect.
 DOLBY_BRIDGE_PACKAGE=com.aclaniakea.colorosostatsguard
 if pm path "$DOLBY_BRIDGE_PACKAGE" >/dev/null 2>&1; then
+    pm enable --user 0 "$DOLBY_BRIDGE_PACKAGE" >/dev/null 2>&1
+    pm enable --user 0 \
+        "$DOLBY_BRIDGE_PACKAGE/com.aclaniakea.dolbybridge.DolbyBridgeService" \
+        >/dev/null 2>&1
+    cmd package unstop --user 0 "$DOLBY_BRIDGE_PACKAGE" >/dev/null 2>&1
     cmd deviceidle whitelist "+$DOLBY_BRIDGE_PACKAGE" >/dev/null 2>&1
     cmd appops set "$DOLBY_BRIDGE_PACKAGE" RUN_IN_BACKGROUND allow >/dev/null 2>&1
     cmd appops set "$DOLBY_BRIDGE_PACKAGE" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1
     am set-inactive "$DOLBY_BRIDGE_PACKAGE" false >/dev/null 2>&1
-    log_msg "Dolby bridge background execution allowed"
+    log_msg "Dolby bridge enabled, unstopped, and allowed in background"
 else
     log_msg "Dolby bridge package missing; background policy deferred"
+fi
+
+# Scene's ColorOS "关闭无障碍服务" switch writes the OEM whitelist through
+# com.oplus.romupdate.provider.db.  Debloat state on the port can leave the
+# stock provider package disabled (enabled=2), in which case Scene reports
+# "Could not find provider" even though the authority exists in its manifest.
+# Restore only this required OEM package; preserve the user's switch value.
+ROMUPDATE_PACKAGE=com.oplus.romupdate
+if pm path "$ROMUPDATE_PACKAGE" >/dev/null 2>&1; then
+    pm enable --user 0 "$ROMUPDATE_PACKAGE" >/dev/null 2>&1
+    cmd package unstop --user 0 "$ROMUPDATE_PACKAGE" >/dev/null 2>&1
+    log_msg "ROMUpdate provider enabled for Scene accessibility policy"
 fi
 
 # The port's incompatible source-device performance HALs
@@ -72,7 +91,7 @@ fi
 stop perf2-hal-1-0
 stop vendor.perfservice
 sleep 2
-log_msg "stopped incompatible source-device performance HALs; kept OPlus performance HAL for app compatibility"
+log_msg "stopped incompatible source-device performance HALs; kept device performance and thermal HALs"
 
 # thermal-engine can read its configuration before KernelSU finishes mounting
 # the module overlay. Reload it once so it picks up the CPU-only policy.
@@ -290,39 +309,60 @@ fi
 
 # ============================================================================
 # 调优部分（原 coloros_port_tuning）：service 阶段
-# 保持 ROM 基线不变：把 active/systemserver memcg 的 swappiness 重新对齐
-# 全局值（模块早期写 10 是防止开机高峰期被换出；此后由 osense 按自身策略
-# 管理 UI 分组）。此内核为 cgroup v1 无内存限制回收，全局 swappiness 才是
-# 关键进程不被换出的根本保障，已在 post-fs-data 阶段设为 20。
+# 实机发现合并版只写 active/systemserver，apps 根分组和每个应用子分组仍为
+# swappiness=100，导致 Launcher/SystemUI/常用应用累计数百 MB Swap。交互切换
+# 实测证明普通=20 + OSense 主动换出会产生换页风暴，因此稳定态收敛为普通=10、
+# inactive=20、active/systemserver=5；保留按需 ZRAM，又不使用 0/1 极端值。
 # ============================================================================
-if [ -w /dev/memcg/apps/active/memory.swappiness ]; then
-    cat /proc/sys/vm/swappiness >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
-fi
-
 wait_count=0
-while [ ! -w /dev/memcg/apps/systemserver/memory.swappiness ] &&
+while [ ! -w /dev/memcg/apps/memory.swappiness ] &&
       [ "$wait_count" -lt 60 ]; do
     toybox sleep 1
     wait_count=$((wait_count + 1))
 done
-if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
-    cat /proc/sys/vm/swappiness >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
+echo 10 >/proc/sys/vm/swappiness 2>/dev/null
+echo 10 >/dev/memcg/memory.swappiness 2>/dev/null
+for memcg_file in /dev/memcg/apps/memory.swappiness \
+        /dev/memcg/apps/*/memory.swappiness; do
+    [ -w "$memcg_file" ] || continue
+    case "$memcg_file" in
+        */active/memory.swappiness)
+            echo 5 >"$memcg_file" 2>/dev/null
+            ;;
+        */systemserver/memory.swappiness)
+            echo 5 >"$memcg_file" 2>/dev/null
+            ;;
+        */inactive/memory.swappiness)
+            echo 20 >"$memcg_file" 2>/dev/null
+            ;;
+        *)
+            echo 10 >"$memcg_file" 2>/dev/null
+            ;;
+    esac
+done
+if [ -w /dev/memcg/system/memory.swappiness ]; then
+    echo 10 >/dev/memcg/system/memory.swappiness 2>/dev/null
 fi
 
-# 开机脚本的 swappiness 已由 post-fs-data 阶段的 bind 补丁改为写 20；
-# 这里在 service 阶段再补一次一次性写入（不轮询），兜底 bind 未生效的情况，
-# 并同步关键 memcg 到同一基线。
-echo 20 >/proc/sys/vm/swappiness 2>/dev/null
-if [ -w /dev/memcg/apps/active/memory.swappiness ]; then
-    echo 20 >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
-fi
-if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
-    echo 20 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
-fi
+# On this port /dev/memcg/apps/systemserver may be created only after the first
+# user unlock, later than service.sh.  A bounded 1-second waiter fixes it once
+# and exits; it is not a permanent tuning daemon.
+(
+    attempt=0
+    while [ "$attempt" -lt 120 ]; do
+        if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
+            echo 5 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
+            log_msg "late systemserver memcg protected from swap"
+            exit 0
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+    log_msg "late systemserver memcg one-shot wait timed out"
+) &
 
-# 一次性把 min_free_kbytes 提到 32MB：ROM 后期会把它压到 ~11MB，内存紧张时
-# 容易直接回收抖动；32MB 余量可显著降低唤醒/切应用的直接回收卡顿（单次写入，
-# 不做常驻守护）。
-echo 32768 >/proc/sys/vm/min_free_kbytes 2>/dev/null
+# 64MB is only 0.8% of RAM and restores the previously validated tuning value.
+# It wakes kswapd before a UI allocation falls into direct reclaim/allocstall.
+echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
 
-log_msg "tuning ready: swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null)"
+log_msg "tuning ready: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null) inactive=$(cat /dev/memcg/apps/inactive/memory.swappiness 2>/dev/null)"
