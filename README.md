@@ -63,7 +63,7 @@ adb shell su -c 'ksud module uninstall coloros_port_tuning'
 adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
-adb shell su -c 'ksud module install /sdcard/FixModule-v1.2.5.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v1.2.6.zip'
 adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.3.zip'
 
 # 4. 安装 Hook APK（LSPosed）

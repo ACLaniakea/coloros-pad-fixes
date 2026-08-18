@@ -19,8 +19,10 @@ MODDIR=${0%/*}
 #      唤醒开关与唤醒词、安装原厂 BWV 模型、委托 ExSystem BootReceiver、
 #      并把 OVMS 检测窗口延长到 6000ms 减少重启间隙漏唤醒；
 #   6) 开启电池健康入口（数据由 LSPosed BatteryHealthBridge 从 sysfs 桥接）；
-#   7) 清理已合并的旧 AON 独立包；启动 horae/gameopt；
-#   8) 按需执行应用建议协议修复与序列号补齐。
+#   7) 允许 Dolby Bridge 后台运行，避免原厂控制页仍在前台时服务被 app-idle
+#      回收，导致 UI 仅写入设置但没有实时下发 DAP；
+#   8) 清理已合并的旧 AON 独立包；启动 horae/gameopt；
+#   9) 按需执行应用建议协议修复与序列号补齐。
 # ============================================================================
 
 until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done
@@ -46,6 +48,22 @@ if [ -f "$MODDIR/bin/lsposed-path-sync.jar" ] && \
     else
         log_msg "ERROR: late LSPosed hook path pin failed"
     fi
+fi
+
+# Settings uses the external BaseFix package as its Dolby control service.
+# ColorOS marks that package idle about one minute after install/start and then
+# stops the service even while DolbyMainActivity is still visible.  Keep this
+# narrowly scoped bridge eligible for background execution so each UI change
+# continues to reach the live session-0 DAP effect.
+DOLBY_BRIDGE_PACKAGE=com.aclaniakea.colorosostatsguard
+if pm path "$DOLBY_BRIDGE_PACKAGE" >/dev/null 2>&1; then
+    cmd deviceidle whitelist "+$DOLBY_BRIDGE_PACKAGE" >/dev/null 2>&1
+    cmd appops set "$DOLBY_BRIDGE_PACKAGE" RUN_IN_BACKGROUND allow >/dev/null 2>&1
+    cmd appops set "$DOLBY_BRIDGE_PACKAGE" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1
+    am set-inactive "$DOLBY_BRIDGE_PACKAGE" false >/dev/null 2>&1
+    log_msg "Dolby bridge background execution allowed"
+else
+    log_msg "Dolby bridge package missing; background policy deferred"
 fi
 
 # The port's incompatible source-device performance HALs
