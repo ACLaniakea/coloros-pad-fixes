@@ -1,5 +1,6 @@
 package com.aclaniakea.colorosporttuning;
 
+import android.app.ActivityManager;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
@@ -15,6 +16,7 @@ import android.provider.Settings;
 import com.aclaniakea.colorosporttuning.PenHapticGatt;
 import de.robv.android.xposed.XposedBridge;
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.UUID;
 
 /* loaded from: classes.dex */
@@ -23,6 +25,7 @@ final class PenHapticGatt {
     private static BluetoothGattCharacteristic con;
     private static boolean continuous;
     private static byte[] continuousPayload;
+    private static Write activeWrite;
     private static BluetoothGatt gatt;
     private static BluetoothGattCharacteristic impact;
     private static long lastPulse;
@@ -185,6 +188,7 @@ final class PenHapticGatt {
     /* JADX INFO: Access modifiers changed from: private */
     public static void resetTransport() {
         queue.clear();
+        activeWrite = null;
         ready = false;
         writing = false;
         switcher = null;
@@ -229,7 +233,7 @@ final class PenHapticGatt {
     public static synchronized void drain() {
         boolean zWriteDescriptor;
         if (ready && !writing && gatt != null) {
-            Write writePoll = queue.poll();
+            Write writePoll = queue.peek();
             if (writePoll == null) {
                 return;
             }
@@ -248,12 +252,20 @@ final class PenHapticGatt {
             }
             if (!zWriteDescriptor) {
                 writing = false;
+                activeWrite = null;
+                writePoll.retries++;
+                if (writePoll.retries > 5 && queue.peek() == writePoll) {
+                    queue.poll();
+                    log("direct write dropped after retries uuid=" + writePoll.uuid(), null);
+                }
                 handler.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.PenHapticGatt$$ExternalSyntheticLambda1
                     @Override // java.lang.Runnable
                     public final void run() {
                         PenHapticGatt.drain();
                     }
                 }, 25L);
+            } else {
+                activeWrite = writePoll;
             }
         }
     }
@@ -305,6 +317,10 @@ final class PenHapticGatt {
                         BluetoothGattCharacteristic unused4 = PenHapticGatt.notify = service.getCharacteristic(PenHapticGatt.INFO_NOTIFY);
                         BluetoothGattCharacteristic unused5 = PenHapticGatt.switcher = service.getCharacteristic(PenHapticGatt.SWITCH);
                         boolean unused6 = PenHapticGatt.ready = true;
+                        PenHapticGatt.log("direct haptic service ready status=" + i
+                                + " impact=" + (PenHapticGatt.impact != null)
+                                + " continuous=" + (PenHapticGatt.con != null)
+                                + " switch=" + (PenHapticGatt.switcher != null), null);
                         if (PenHapticGatt.notify != null) {
                             try {
                                 bluetoothGatt.setCharacteristicNotification(PenHapticGatt.notify, true);
@@ -330,14 +346,14 @@ final class PenHapticGatt {
         @Override // android.bluetooth.BluetoothGattCallback
         public void onCharacteristicWrite(BluetoothGatt bluetoothGatt, BluetoothGattCharacteristic bluetoothGattCharacteristic, int i) {
             if (bluetoothGatt == PenHapticGatt.gatt) {
-                PenHapticGatt.done();
+                PenHapticGatt.done(i, bluetoothGattCharacteristic == null ? "" : String.valueOf(bluetoothGattCharacteristic.getUuid()));
             }
         }
 
         @Override // android.bluetooth.BluetoothGattCallback
         public void onDescriptorWrite(BluetoothGatt bluetoothGatt, BluetoothGattDescriptor bluetoothGattDescriptor, int i) {
             if (bluetoothGatt == PenHapticGatt.gatt) {
-                PenHapticGatt.done();
+                PenHapticGatt.done(i, bluetoothGattDescriptor == null ? "" : String.valueOf(bluetoothGattDescriptor.getUuid()));
             }
         }
 
@@ -348,8 +364,24 @@ final class PenHapticGatt {
     }
 
     /* JADX INFO: Access modifiers changed from: private */
-    public static synchronized void done() {
+    public static synchronized void done(int status, String uuid) {
+        Write completed = activeWrite;
+        activeWrite = null;
         writing = false;
+        if (completed != null) {
+            if (status == 0) {
+                if (queue.peek() == completed) {
+                    queue.poll();
+                }
+            } else {
+                completed.retries++;
+                if (completed.retries > 5 && queue.peek() == completed) {
+                    queue.poll();
+                }
+            }
+            log("direct write callback status=" + status + " uuid=" + uuid
+                    + (status == 0 ? "" : " retry=" + completed.retries), null);
+        }
         drain();
     }
 
@@ -370,6 +402,13 @@ final class PenHapticGatt {
                 if (Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0) != 1) {
                     return false;
                 }
+                int ownerPid = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_oem_control_pid", 0);
+                if (!isIpeManagerSessionAlive(context, ownerPid)) {
+                    Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0);
+                    Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_pid", 0);
+                    log("OEM transport owner missing; using direct GATT", null);
+                    return false;
+                }
                 Intent intentPutExtra = new Intent("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL")
                         .setPackage("com.oplus.ipemanager")
                         .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
@@ -383,6 +422,32 @@ final class PenHapticGatt {
             } catch (Throwable th) {
                 log("OEM forward " + str2, th);
             }
+        }
+        return false;
+    }
+
+    private static boolean isIpeManagerSessionAlive(Context context, int ownerPid) {
+        if (context == null || ownerPid <= 0) {
+            return false;
+        }
+        try {
+            ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            List<ActivityManager.RunningAppProcessInfo> processes = manager == null
+                    ? null : manager.getRunningAppProcesses();
+            if (processes == null) {
+                return false;
+            }
+            for (ActivityManager.RunningAppProcessInfo process : processes) {
+                if (process != null && process.pid == ownerPid) {
+                    String processName = process.processName;
+                    if ("com.oplus.ipemanager".equals(processName)
+                            || (processName != null && processName.startsWith("com.oplus.ipemanager:"))) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            log("OEM transport owner check", th);
         }
         return false;
     }
@@ -407,11 +472,19 @@ final class PenHapticGatt {
         final BluetoothGattCharacteristic ch;
         final BluetoothGattDescriptor desc;
         final byte[] value;
+        int retries;
 
         Write(BluetoothGattCharacteristic bluetoothGattCharacteristic, BluetoothGattDescriptor bluetoothGattDescriptor, byte[] bArr) {
             this.ch = bluetoothGattCharacteristic;
             this.desc = bluetoothGattDescriptor;
             this.value = bArr;
+        }
+
+        String uuid() {
+            if (ch != null && ch.getUuid() != null) {
+                return String.valueOf(ch.getUuid());
+            }
+            return desc != null && desc.getUuid() != null ? String.valueOf(desc.getUuid()) : "";
         }
     }
 

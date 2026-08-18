@@ -28,7 +28,7 @@
 | 项目 | 类型 | 包名 / 模块 ID | 作用 |
 | --- | --- | --- | --- |
 | **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比与性能 HAL 兼容；兼容 8/12GB RAM 与 ROM 既有的 0～1×RAM ZRAM，不创建/扩容；实测后关闭 OSense 主动换出，保留内核按需 ZRAM；开机 swappiness=5，稳定后普通=10、冷后台=20、活跃与 system_server=5，64MB 水位；AON 挂载为零轮询事件驱动；恢复 ROMUpdate Provider |
-| **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护等 |
+| **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护、移植 Thermal HAL 的 skin 状态恢复等 |
 | **pen-bridge 手写笔桥接** | KernelSU 模块 | `lenovo_pen_bridge` | 原厂 CoreService BLE 连接/断开、CPS 上电、真实 ACL/GATT/Hall 状态同步、PenHidCtl HID 控制（flock 单例 + 开机监控时序） |
 | **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，真实 GATT 断开 |
 | **PenHidCtl** | priv-app | `com.aclaniakea.penhidctl` | HID 连接控制（纯服务、无桌面图标） |
@@ -68,7 +68,7 @@ adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.4.zip'
 
 # 4. 安装 Hook APK（LSPosed）
 adb install --no-incremental BaseFix-Hook-v1.1.0.apk
-adb install PenBridge-Hook-v1.1.4.apk
+adb install --no-incremental -r PenBridge-Hook-v1.1.4.apk
 
 # 5. 重启
 adb reboot

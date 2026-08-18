@@ -203,6 +203,13 @@ until [ "$(getprop sys.boot_completed)" = 1 ]; do
     sleep_sec 2
 done
 normalize_disconnect_latch
+# OEM GATT readiness belongs to the current IPeManager process/session.  A
+# persisted value from the previous boot makes system_server broadcast haptic
+# commands to a dynamic receiver that no longer exists, suppressing the direct
+# GATT fallback.  The Hook writes the live owner PID after service discovery.
+settings put global lenovo_pen_oem_control_ready 0 >/dev/null 2>&1
+settings put global lenovo_pen_oem_control_pid 0 >/dev/null 2>&1
+echo "[$(date '+%F %T')] stale OEM haptic transport session cleared"
 apply_pen_wake
 reset_pen_state_mirror
 monitor_pen_wake &

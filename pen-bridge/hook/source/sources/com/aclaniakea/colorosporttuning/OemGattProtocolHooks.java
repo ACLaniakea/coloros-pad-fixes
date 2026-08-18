@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 import android.provider.Settings;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -356,6 +357,7 @@ final class OemGattProtocolHooks {
         }
         try {
             Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", z ? 1 : 0);
+            Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_pid", z ? Process.myPid() : 0);
         } catch (Throwable unused) {
         }
         HookUtils.log("OEM GATT control transport ".concat(z ? "ready" : "unavailable"));
@@ -375,17 +377,11 @@ final class OemGattProtocolHooks {
         Session sessionFindSession = findSession(stringExtra2);
         if (sessionFindSession == null) {
             HookUtils.log("OEM control dropped: no active s0 session op=" + stringExtra + " address=" + stringExtra2);
-            try {
-                Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0);
-            } catch (Throwable unused) {
-            }
+            setOemControlReady(context, false);
             return false;
         }
         if (sessionFindSession.gatt == null) {
-            try {
-                Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0);
-            } catch (Throwable unused) {
-            }
+            setOemControlReady(context, false);
             HookUtils.log("OEM control transport unusable; fall back to direct GATT op=" + stringExtra + " address=" + stringExtra2);
             return false;
         }
