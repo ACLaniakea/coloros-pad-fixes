@@ -11,3 +11,5 @@ com.aclaniakea.colorosvoicewakeupbridge.ColorOSVoiceWakeupBridge
 com.aclaniakea.soundtriggerguard.SoundTriggerTrackerGuard
 com.aclaniakea.batteryhealthbridge.BatteryHealthBridge
 com.aclaniakea.coloroscryptoengbridge.ColorOsCryptoEngBridge
+com.aclaniakea.orealityguard.OrealityDisableBridge
+com.aclaniakea.dolbybridge.SoundEffectsMenuFix

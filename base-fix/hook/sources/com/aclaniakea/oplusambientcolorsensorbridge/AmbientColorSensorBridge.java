@@ -303,25 +303,35 @@ public final class AmbientColorSensorBridge implements IXposedHookLoadPackage {
 
     private static int hookMethod(ClassLoader classLoader, String str) {
         try {
-            XposedHelpers.findAndHookMethod(TARGET_CLASS, classLoader, str, new Object[]{SensorEvent.class, new XC_MethodHook() { // from class: com.aclaniakea.oplusambientcolorsensorbridge.AmbientColorSensorBridge.6
-                protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
-                    float[] fArr;
-                    if (methodHookParam.args == null || methodHookParam.args.length == 0 || !(methodHookParam.args[AmbientColorSensorBridge.CCT_INDEX] instanceof SensorEvent) || (fArr = ((SensorEvent) methodHookParam.args[AmbientColorSensorBridge.CCT_INDEX]).values) == null || fArr.length <= AmbientColorSensorBridge.FRAMEWORK_LUX_INDEX) {
-                        return;
+            Class<?> target = XposedHelpers.findClass(TARGET_CLASS, classLoader);
+            XposedBridge.hookAllMethods(target, str, new XC_MethodHook() {
+                protected void beforeHookedMethod(XC_MethodHook.MethodHookParam p) {
+                    // ColorOS revisions changed this method's extra arguments. Find the
+                    // SensorEvent instead of requiring the old one-argument signature.
+                    SensorEvent event = null;
+                    if (p.args != null) {
+                        for (Object arg : p.args) {
+                            if (arg instanceof SensorEvent) {
+                                event = (SensorEvent) arg;
+                                break;
+                            }
+                        }
                     }
-                    float f = fArr[AmbientColorSensorBridge.CCT_INDEX];
-                    float f2 = fArr[AmbientColorSensorBridge.REAL_LUX_INDEX];
-                    if (!AmbientColorSensorBridge.isFinite(f) || !AmbientColorSensorBridge.isFinite(f2) || f < 1000.0f || f > 20000.0f || f2 < 0.0f || f2 > 200000.0f) {
-                        return;
-                    }
-                    float f3 = fArr[AmbientColorSensorBridge.FRAMEWORK_LUX_INDEX];
-                    fArr[AmbientColorSensorBridge.FRAMEWORK_LUX_INDEX] = f2;
-                    int iIncrementAndGet = AmbientColorSensorBridge.REMAP_COUNT.incrementAndGet();
-                    if (iIncrementAndGet <= 5) {
-                        XposedBridge.log("AmbientColorSensorBridge: remapped sample #" + iIncrementAndGet + " cct=" + f + " lux=" + f2 + " oldIndex9=" + f3);
+                    if (event == null || event.values == null || event.values.length <= FRAMEWORK_LUX_INDEX) return;
+                    float cct = event.values[CCT_INDEX];
+                    float lux = event.values[REAL_LUX_INDEX];
+                    if (!isFinite(cct) || !isFinite(lux) || cct < 1000.0f || cct > 20000.0f
+                            || lux < 0.0f || lux > 200000.0f) return;
+                    float old = event.values[FRAMEWORK_LUX_INDEX];
+                    event.values[FRAMEWORK_LUX_INDEX] = lux;
+                    int count = REMAP_COUNT.incrementAndGet();
+                    if (count <= 5) {
+                        XposedBridge.log(TAG + ": remapped sample #" + count + " cct=" + cct
+                                + " lux=" + lux + " oldIndex9=" + old);
                     }
                 }
-            }});
+            });
+            XposedBridge.log(TAG + ": hookAllMethods installed for " + str);
             return REAL_LUX_INDEX;
         } catch (Throwable th) {
             XposedBridge.log("AmbientColorSensorBridge: failed to hook " + str);

@@ -238,20 +238,20 @@ log_msg "zygote_tango=$(getprop init.svc.zygote_tango) horae=$(getprop init.svc.
 log_msg "late service end"
 
 # ============================================================================
-# 环境光自适应：根治注入时序，不再软重启 zygote。
-# system_server 开机最早拉起，完整重启后偶发撞上 LSPosed 注入时 Hook APK
-# dex 尚未优化的 I/O 竞态。开机后再触发一次 dexopt，保证下一次完整重启的
-# 首次注入即成功（安装时 customize.sh 已预编译过一遍）。
+# 环境光自适应：只做诊断，不从模块 service 中杀 lspd/system_server。
+# LSPosed 的注入生命周期由 Zygisk/LSPosed 管理；在 service.sh 中手动杀这两个
+# 进程会让 system_server 进入反复崩溃/重启，结果是所有 Hook（不仅是环境光）
+# 一起失效。若本次冷启动未注入，应保留证据，交给下一次完整重启或手动诊断。
 # ============================================================================
 cmd package compile -m speed -f com.aclaniakea.colorosostatsguard >/dev/null 2>&1
 log_msg "hook apk dexopt refreshed for next boot"
 
-sleep 5
+sleep 8
 latest_verbose=$(ls -t /data/adb/lspd/log/verbose_*.log 2>/dev/null | head -1)
 if [ -n "$latest_verbose" ] && grep -q "AmbientColorSensorBridge: installed" "$latest_verbose"; then
     log_msg "ambient light bridge loaded"
 else
-    log_msg "ambient light bridge not loaded this boot; dex precompiled, next full reboot will load it"
+    log_msg "ambient light bridge not loaded this boot; no destructive recovery attempted"
 fi
 
 # ============================================================================
