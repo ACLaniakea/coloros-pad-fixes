@@ -4,6 +4,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.net.Uri;
 import android.os.IBinder;
 import android.provider.Settings;
 
@@ -24,6 +25,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
     private static final String TARGET = "com.android.settings";
     private static final String FRAGMENT = "com.oplus.settings.feature.soundeffects.view.SoundEffectsFragment";
+    private static final String DOLBY_OBSERVER = FRAGMENT + "$DolbyStateObserver";
     private static volatile boolean keeperBound;
     private static final ServiceConnection KEEPER = new ServiceConnection() {
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -59,6 +61,7 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                                 // not restored from a Settings key on this port.
                                 XposedHelpers.setIntField(p.thisObject, "mCurrentMode",
                                         enabled != 0 ? 1 : 0);
+                                forceFragmentMode(p.thisObject, enabled != 0);
                                 Object map = XposedHelpers.getObjectField(p.thisObject, "mSoundEffectValueToTitleMap");
                                 if (map instanceof java.util.Map) {
                                     java.util.Map<Object, Object> m = (java.util.Map<Object, Object>) map;
@@ -83,6 +86,11 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                                 Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
                                 int enabled = c == null ? 0 : Settings.System.getInt(
                                         c.getContentResolver(), "system_dolby", 0);
+                                // The stock fragment also observes the hidden
+                                // Secure key dolby_switch. On this port it can
+                                // remain 1 after the public/system mode is set
+                                // to Original, reopening the Dolby controls.
+                                putSecureInt(c, "dolby_switch", enabled != 0 ? 1 : 0);
                                 XposedHelpers.setIntField(p.thisObject, "mCurrentMode",
                                         enabled != 0 ? 1 : 0);
                                 // The first stock pass may already have hidden
@@ -101,7 +109,81 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("SoundEffectsMenuFix: resume hook failed " + t);
         }
+        hookFragmentStateSources(lp);
         hookOemController(lp);
+    }
+
+    private static void hookFragmentStateSources(XC_LoadPackage.LoadPackageParam lp) {
+        try {
+            Class<?> preference = XposedHelpers.findClass("androidx.preference.Preference", lp.classLoader);
+            XposedHelpers.findAndHookMethod(FRAGMENT, lp.classLoader, "onPreferenceChange",
+                    preference, Object.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            String value = String.valueOf(p.args[1]);
+                            if (!"0".equals(value) && !"1".equals(value)) return;
+                            Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
+                            boolean enabled = "1".equals(value);
+                            syncModeKeys(c, enabled);
+                            forceFragmentMode(p.thisObject, enabled);
+                            XposedHelpers.callMethod(p.thisObject, "updateSoundEffectsMenu");
+                            XposedBridge.log("SoundEffectsMenuFix: user mode=" + value
+                                    + " contentVisible=" + enabled);
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: preference hook failed " + t);
+        }
+        try {
+            Class<?> model = XposedHelpers.findClass("com.oplus.partners.dolby.DolbyModel", lp.classLoader);
+            XposedHelpers.findAndHookMethod(FRAGMENT, lp.classLoader, "updateView",
+                    model, boolean.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
+                            boolean enabled = c != null && Settings.System.getInt(
+                                    c.getContentResolver(), "system_dolby", 0) != 0;
+                            forceFragmentMode(p.thisObject, enabled);
+                            XposedHelpers.callMethod(p.thisObject, "updateSoundEffectsMenu");
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: model callback hook failed " + t);
+        }
+        try {
+            XposedHelpers.findAndHookMethod(DOLBY_OBSERVER, lp.classLoader, "onChange",
+                    boolean.class, Uri.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            Object fragment = XposedHelpers.getObjectField(p.thisObject, "this$0");
+                            Context c = (Context) XposedHelpers.callMethod(fragment, "getContext");
+                            if (c == null) return;
+                            int enabled = Settings.System.getInt(c.getContentResolver(), "system_dolby", 0);
+                            putSecureInt(c, "dolby_switch", enabled != 0 ? 1 : 0);
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: secure observer hook failed " + t);
+        }
+    }
+
+    private static void syncModeKeys(Context c, boolean enabled) {
+        putInt(c, "system_dolby", enabled ? 1 : 0);
+        putInt(c, "system_effect_profile", enabled ? 1 : 0);
+        putSecureInt(c, "dolby_switch", enabled ? 1 : 0);
+    }
+
+    private static void forceFragmentMode(Object fragment, boolean enabled) {
+        if (fragment == null) return;
+        try {
+            XposedHelpers.setIntField(fragment, "mCurrentMode", enabled ? 1 : 0);
+            Object preference = XposedHelpers.getObjectField(fragment, "mDolbyPreference");
+            if (preference != null) {
+                XposedHelpers.callMethod(preference, "showContent", enabled);
+                XposedHelpers.callMethod(preference, "setVisible", enabled);
+            }
+            Object category = XposedHelpers.getObjectField(fragment, "mDolbyPreferenceCategory");
+            if (category != null) XposedHelpers.callMethod(category, "setVisible", enabled);
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: content visibility sync failed " + t);
+        }
     }
 
     private static void keepBridgeAlive(Context context) {
@@ -148,8 +230,7 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             Context c = (Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
                             boolean on = (Boolean) p.args[0];
-                            putInt(c, "system_dolby", on ? 1 : 0);
-                            putInt(c, "system_effect_profile", on ? 1 : 0);
+                            syncModeKeys(c, on);
                         }
                     });
             XposedHelpers.findAndHookMethod(manager, lp.classLoader,
@@ -182,6 +263,18 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
         if (c == null) return;
         try { Settings.System.putString(c.getContentResolver(), key, value); }
         catch (Throwable t) { XposedBridge.log("OEM putString failed " + key + ": " + t); }
+    }
+
+    private static void putSecureInt(Context c, String key, int value) {
+        if (c == null) return;
+        try {
+            // Avoid recursively waking DolbyStateObserver when the canonical
+            // value is already present. Some ColorOS providers notify even
+            // when putInt writes an unchanged value.
+            int current = Settings.Secure.getInt(c.getContentResolver(), key, Integer.MIN_VALUE);
+            if (current != value) Settings.Secure.putInt(c.getContentResolver(), key, value);
+        }
+        catch (Throwable t) { XposedBridge.log("OEM putSecureInt failed " + key + ": " + t); }
     }
 
 }
