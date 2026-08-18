@@ -7,6 +7,10 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
+import android.os.Handler;
+import android.database.ContentObserver;
+import android.net.Uri;
+import android.provider.Settings;
 import android.util.Log;
 
 import java.lang.reflect.Constructor;
@@ -24,10 +28,10 @@ import java.util.UUID;
  * Dolby Atmos UI. The port ROM ships the vendor DMS/DAX HAL but no control service, so
  * this service fills that gap: it attaches to the DAX effect
  * (9d4921da-8225-4f29-aefa-39537a04bcaa) via AudioEffect and maps the OPlus AIDL
- * surface onto the DAX parameters verified on TB710FU:
- *   param 5 : Dolby on/off (int)
- *   param 6 : current profile name (string, e.g. "Dynamic")
- *   param 4 : active endpoint (string)
+ * surface onto the real DAP AudioEffect shipped on TB710FU.  DAP's parameter 0
+ * accepts an EffectParamParser blob; individual Dolby parameters inside that blob
+ * are fourcc ids such as geon/gebs.  Do not use the similarly named AudioxEffect
+ * parameters here: that effect is not registered on this device.
  */
 public class DolbyBridgeService extends Service {
     static final String TAG = "DolbyBridge";
@@ -35,9 +39,19 @@ public class DolbyBridgeService extends Service {
     static final String CALLBACK_DESCRIPTOR = "com.oplus.audio.effectcenter.IEffectServiceCallback";
     static final UUID DAX = UUID.fromString("9d4921da-8225-4f29-aefa-39537a04bcaa");
 
-    static final int DOLBY_ONOFF_ID = 5;
     static final int PROFILE_NAME_ID = 6;
-    static final int ENDPOINT_ID = 4;
+    static final int DAP_PARAM_VALUES = 0;
+    static final int DAP_GEQ_ENABLE = fourcc("geon");
+    static final int DAP_GEQ_BANDS = fourcc("gebs");
+    static final int[] OPLUS_GEQ_FREQS = {31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+    static final int[] DAP_GEQ_FREQS = {47, 141, 234, 328, 469, 656, 844, 1031, 1313, 1688,
+            2250, 3000, 3750, 4688, 5813, 7125, 9000, 11250, 13875, 19688};
+    static final String PREFS = "dolby_bridge_state";
+    static final String PREF_SCENE = "scene";
+    static final String PREF_EQ = "eq_preset";
+    static final String PREF_MUSIC_GAINS = "music_gains";
+    static final String PREF_CUSTOM_GAINS = "custom_gains";
+    static final String PREF_GEQ = "geq_enabled";
 
     // OPlus scene id -> DAX profile id (dax-default.xml)
     static final int[] SCENE_TO_PROFILE = {0, 2, 1, 8}; // 智能, 音乐, 影院, 游戏
@@ -48,14 +62,23 @@ public class DolbyBridgeService extends Service {
     final List<IBinder> mCallbacks = new ArrayList<>();
     volatile boolean mEnabled = true;
     volatile int mScene = 0;
+    volatile int mAppliedDapProfile = -1;
+    volatile int mEqPreset = 0;
+    volatile boolean mGeqEnabled = false;
+    volatile int[] mMusicGains = new int[10];
+    volatile int[] mCustomGains = new int[10];
+    ContentObserver mSettingsObserver;
 
     final Binder mStub = new Binder() {
         @Override
         protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
             if (code >= 1 && code <= 16777215) data.enforceInterface(DESCRIPTOR);
+            Log.i(TAG, "txn=" + code + " flags=0x" + Integer.toHexString(flags));
             switch (code) {
                 case 1: // setEnabled(boolean)
-                    setEnabled(data.readInt() != 0);
+                    boolean enabled = data.readInt() != 0;
+                    Log.i(TAG, "txn setEnabled(" + enabled + ")");
+                    setEnabled(enabled);
                     reply.writeNoException();
                     return true;
                 case 2: // getEnabled() -> boolean
@@ -63,26 +86,30 @@ public class DolbyBridgeService extends Service {
                     reply.writeInt(getEnabled() ? 1 : 0);
                     return true;
                 case 3: // setMusicIeqPreset(int)
-                    setMusicIeqPreset(data.readInt());
+                    int scene = data.readInt();
+                    Log.i(TAG, "txn setMusicIeqPreset(" + scene + ")");
+                    setMusicIeqPreset(scene);
                     reply.writeNoException();
                     return true;
                 case 4: // getMusicIeqPreset() -> int
                     reply.writeNoException();
                     reply.writeInt(getMusicIeqPreset());
                     return true;
-                case 5: // setCustomGeqBandGains(int[], boolean, int)
+                case 5: // setEffectCategory(int)
+                    setEffectCategory(data.readInt());
                     reply.writeNoException();
                     return true;
                 case 6: // getEffectCategory() -> int
                     reply.writeNoException();
-                    reply.writeInt(1);
+                    reply.writeInt(mScene);
                     return true;
                 case 7: // setMusicGeqBandGains(int[])
+                    setMusicGeqBandGains(data.createIntArray());
                     reply.writeNoException();
                     return true;
                 case 8: // getMusicGeqBandGains() -> int[]
                     reply.writeNoException();
-                    reply.writeIntArray(new int[10]);
+                    reply.writeIntArray(mMusicGains);
                     return true;
                 case 9: // isBtDeviceSupported(String) -> boolean
                     data.readString();
@@ -90,12 +117,18 @@ public class DolbyBridgeService extends Service {
                     reply.writeInt(0);
                     return true;
                 case 10: // setParameter(String, String)
-                    setParameter(data.readString(), data.readString());
+                    String setKey = data.readString();
+                    String setValue = data.readString();
+                    Log.i(TAG, "txn setParameter key=" + setKey + " value=" + setValue);
+                    setParameter(setKey, setValue);
                     reply.writeNoException();
                     return true;
                 case 11: // getParameters(String) -> String
+                    String getKey = data.readString();
                     reply.writeNoException();
-                    reply.writeString(getParameters(data.readString()));
+                    String result = getParameters(getKey);
+                    Log.i(TAG, "txn getParameters key=" + getKey + " -> " + result);
+                    reply.writeString(result);
                     return true;
                 case 12: // registerCallback(IEffectServiceCallback)
                     registerCb(data.readStrongBinder());
@@ -105,17 +138,22 @@ public class DolbyBridgeService extends Service {
                     unregisterCb(data.readStrongBinder());
                     reply.writeNoException();
                     return true;
-                case 14: // setEffectCategory(int)
-                    setEffectCategory(data.readInt());
+                case 14: // setCustomGeqBandGains(int[], isHeadsetOn, presetEQType)
+                    int[] custom = data.createIntArray();
+                    boolean isHeadset = data.readInt() != 0;
+                    int customPreset = data.readInt();
+                    setCustomGeqBandGains(custom, isHeadset, customPreset);
                     reply.writeNoException();
                     return true;
                 case 15: // getCustomGeqBandGains(boolean) -> int[]
+                    data.readInt();
                     reply.writeNoException();
-                    reply.writeIntArray(new int[10]);
+                    reply.writeIntArray(mCustomGains);
                     return true;
                 case 16: // getCustomPresetEQType(boolean) -> int
+                    data.readInt();
                     reply.writeNoException();
-                    reply.writeInt(0);
+                    reply.writeInt(mEqPreset);
                     return true;
                 default:
                     return super.onTransact(code, data, reply, flags);
@@ -130,15 +168,87 @@ public class DolbyBridgeService extends Service {
             Constructor<AudioEffect> ctor = AudioEffect.class.getDeclaredConstructor(UUID.class, UUID.class, int.class, int.class);
             ctor.setAccessible(true);
             mFx = ctor.newInstance(DAX, DAX, 100, 0);
-            mSetP = AudioEffect.class.getMethod("setParameter", byte[].class, byte[].class);
-            mGetP = AudioEffect.class.getMethod("getParameter", byte[].class, byte[].class);
-            mEnabled = daxGetInt(DOLBY_ONOFF_ID) != 0;
+            // The factory AudioxEffectInvoker uses the hidden int,[B overloads.
+            // The public byte[],byte[] overload leaves this AudioEffect object
+            // uninitialized on this ROM and every vendor write returns -4.
+            mSetP = AudioEffect.class.getDeclaredMethod("setParameter", int.class, byte[].class);
+            mSetP.setAccessible(true);
+            mGetP = AudioEffect.class.getDeclaredMethod("getParameter", int.class, byte[].class);
+            mGetP.setAccessible(true);
+            mEnabled = mFx.getEnabled();
             mScene = sceneFromProfile(daxGetStr(PROFILE_NAME_ID));
+            int savedScene = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_SCENE, -1);
+            if (savedScene >= 0 && savedScene < SCENE_TO_PROFILE.length) mScene = savedScene;
+            mEqPreset = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_EQ, 0);
+            mGeqEnabled = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_GEQ, false);
+            mMusicGains = readGains(PREF_MUSIC_GAINS);
+            mCustomGains = readGains(PREF_CUSTOM_GAINS);
             Log.i(TAG, "DAX attached, enabled=" + mEnabled + " scene=" + mScene);
+            registerOemObservers();
         } catch (Throwable t) {
             Log.e(TAG, "DAX attach failed", t);
             mFx = null;
         }
+    }
+
+    void registerOemObservers() {
+        final android.content.ContentResolver cr = getContentResolver();
+        final String[] keys = {"system_dolby", "system_dolby_music_geq", "system_dolby_geq_state",
+                "system_dolby_category", "system_dolby_music_ieq"};
+        mSettingsObserver = new ContentObserver(new Handler()) {
+            @Override public void onChange(boolean selfChange, Uri uri) {
+                applyOemSettings();
+            }
+        };
+        for (String key : keys) cr.registerContentObserver(Settings.System.getUriFor(key), false, mSettingsObserver);
+        applyOemSettings();
+    }
+
+    void applyOemSettings() {
+        try {
+            int dolby = Settings.System.getInt(getContentResolver(), "system_dolby", mEnabled ? 1 : 0);
+            if ((dolby != 0) != mEnabled) setEnabled(dolby != 0);
+            int category = Settings.System.getInt(getContentResolver(), "system_dolby_category", mScene);
+            if (category >= 0 && category < SCENE_TO_PROFILE.length && category != mScene) {
+                applyScene(category);
+            } else if (category >= 0 && category < SCENE_TO_PROFILE.length
+                    && mAppliedDapProfile != SCENE_TO_PROFILE[category]) {
+                trySetProfile(SCENE_TO_PROFILE[category]);
+            }
+            int eq = Settings.System.getInt(getContentResolver(), "system_dolby_music_ieq", mEqPreset);
+            if (eq >= 0 && eq <= 7) {
+                mEqPreset = eq;
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_EQ, eq).apply();
+            }
+            mGeqEnabled = Settings.System.getInt(getContentResolver(), "system_dolby_geq_state", 0) != 0;
+            daxSetEqEnabled(mGeqEnabled);
+            String raw = Settings.System.getString(getContentResolver(), "system_dolby_music_geq");
+            int[] gains = parseGains(raw);
+            if (gains != null) {
+                // The OEM key is the canonical persisted GEQ value.  Both the
+                // music getter (txn 8) and the custom-page getter (txn 15) must
+                // restore from it; otherwise reopening the custom page shows 0s
+                // even though DAX and Settings contain the user's gains.
+                mMusicGains = gains.clone();
+                mCustomGains = gains.clone();
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                        .putString(PREF_MUSIC_GAINS, gainsString(mMusicGains))
+                        .putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains)).apply();
+                daxSetEqGains(gains);
+            }
+            Log.i(TAG, "OEM settings applied dolby=" + dolby + " scene=" + mScene
+                    + " eq=" + mEqPreset + " geq=" + mGeqEnabled + " gains=" + raw);
+        } catch (Throwable t) { Log.w(TAG, "OEM settings apply failed", t); }
+    }
+
+    static int[] parseGains(String raw) {
+        if (raw == null || raw.isEmpty()) return null;
+        String[] parts = raw.split(",");
+        if (parts.length != 10) return null;
+        int[] out = new int[10];
+        try { for (int i = 0; i < 10; i++) out[i] = Integer.parseInt(parts[i].trim()); }
+        catch (Throwable t) { return null; }
+        return out;
     }
 
     @Override
@@ -149,6 +259,11 @@ public class DolbyBridgeService extends Service {
     @Override
     public void onDestroy() {
         synchronized (mCallbacks) { mCallbacks.clear(); }
+        if (mSettingsObserver != null) {
+            try { getContentResolver().unregisterContentObserver(mSettingsObserver); }
+            catch (Throwable ignored) {}
+            mSettingsObserver = null;
+        }
         if (mFx != null) {
             try { mFx.release(); } catch (Throwable ignored) {}
         }
@@ -158,51 +273,147 @@ public class DolbyBridgeService extends Service {
     // ---------- IOplusEffectService surface ----------
 
     synchronized void setEnabled(boolean on) {
-        mEnabled = on;
         if (mFx != null) {
             try {
-                mSetP.invoke(mFx, le(DOLBY_ONOFF_ID), new byte[]{0,0,0,0,(byte)(on?1:0),0,0,0});
+                int rc = mFx.setEnabled(on);
+                mEnabled = mFx.getEnabled();
+                Log.i(TAG, "DAP setEnabled requested=" + on + " rc=" + rc + " readback=" + mEnabled);
             } catch (Throwable t) { Log.w(TAG, "setEnabled failed", t); }
-        }
+        } else mEnabled = on;
         notifyCallbacks(1); // EffectServiceStatusChangeCallback
     }
 
     boolean getEnabled() {
+        if (mFx != null) {
+            try { mEnabled = mFx.getEnabled(); } catch (Throwable ignored) {}
+        }
         return mEnabled;
     }
 
     synchronized void setMusicIeqPreset(int scene) {
-        mScene = scene;
-        if (scene >= 0 && scene < SCENE_TO_PROFILE.length && mFx != null) {
-            trySetProfile(SCENE_TO_PROFILE[scene]);
-        }
+        if (scene < 0 || scene > 7) return;
+        mEqPreset = scene;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_EQ, scene).apply();
         notifyCallbacks(4); // EffectServiceProfileCallback
     }
 
     int getMusicIeqPreset() {
-        return mScene;
+        return mEqPreset;
     }
 
     void setEffectCategory(int cat) {
-        // 1 = Dolby. No privileged settings writes from a normal-app service.
+        if (cat < 0 || cat >= SCENE_TO_PROFILE.length) {
+            Log.w(TAG, "ignored invalid effect category=" + cat);
+            return;
+        }
+        applyScene(cat);
+    }
+
+    synchronized void applyScene(int scene) {
+        mScene = scene;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_SCENE, scene).apply();
+        Log.i(TAG, "scene persisted=" + scene + " dapProfile=" + SCENE_TO_PROFILE[scene]);
+        trySetProfile(SCENE_TO_PROFILE[scene]);
+        notifyCallbacks(4);
+    }
+
+    synchronized void setMusicGeqBandGains(int[] gains) {
+        if (gains == null) return;
+        mMusicGains = gains.clone();
+        mCustomGains = gains.clone();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_MUSIC_GAINS, gainsString(mMusicGains)).apply();
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains)).apply();
+        Log.i(TAG, "music GEQ gains=" + java.util.Arrays.toString(mMusicGains));
+        daxSetEqGains(mMusicGains);
+    }
+
+    synchronized void setCustomGeqBandGains(int[] gains, boolean isHeadset, int preset) {
+        if (gains == null) return;
+        mCustomGains = gains.clone();
+        if (preset >= 0 && preset <= 7) {
+            mEqPreset = preset;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_EQ, preset).apply();
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains))
+                .putBoolean(PREF_GEQ, mGeqEnabled).apply();
+        Log.i(TAG, "custom GEQ isHeadset=" + isHeadset + " enabled=" + mGeqEnabled + " preset=" + preset
+                + " gains=" + java.util.Arrays.toString(mCustomGains));
+        daxSetEqEnabled(mGeqEnabled);
+        daxSetEqGains(mCustomGains);
     }
 
     void setParameter(String key, String value) {
-        // EQ toggle persisted by the Settings side; nothing privileged to write here.
+        if (key == null) return;
+        String v = value == null ? "" : value.trim();
+        if (key.contains("dolby_state") || key.contains("dax_state") || key.contains("on_off")
+                || "dolby_switch".equals(key)) {
+            setEnabled(parseOn(v));
+            return;
+        }
+        if ("dolby_geq_on_off".equals(key)) {
+            mGeqEnabled = parseOn(v);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_GEQ, mGeqEnabled).apply();
+            daxSetEqEnabled(mGeqEnabled);
+            Log.i(TAG, "GEQ state=" + mGeqEnabled);
+            notifyCallbacks(1);
+            return;
+        }
+        if (key.contains("dolby_profile") || key.contains("profile")) {
+            int requested = parseSuffix(v, "profile_");
+            if (requested >= 0) setMusicIeqPreset(requested);
+            else Log.w(TAG, "unrecognized profile value=" + v);
+            return;
+        }
+        Log.w(TAG, "ignored unknown parameter key=" + key + " value=" + v);
+    }
+
+    int[] readGains(String key) {
+        String raw = getSharedPreferences(PREFS, MODE_PRIVATE).getString(key, "");
+        int[] out = new int[10];
+        if (raw == null || raw.isEmpty()) return out;
+        String[] parts = raw.split(",");
+        for (int i = 0; i < parts.length && i < out.length; i++) {
+            try { out[i] = Integer.parseInt(parts[i]); } catch (Throwable ignored) {}
+        }
+        return out;
+    }
+
+    static String gainsString(int[] gains) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < gains.length; i++) {
+            if (i > 0) out.append(',');
+            out.append(gains[i]);
+        }
+        return out.toString();
+    }
+
+    static boolean parseOn(String value) {
+        return "1".equals(value) || "true".equalsIgnoreCase(value)
+                || "on".equalsIgnoreCase(value) || "enabled".equalsIgnoreCase(value)
+                || value.endsWith("_1");
+    }
+
+    static int parseSuffix(String value, String prefix) {
+        try {
+            String n = value.startsWith(prefix) ? value.substring(prefix.length()) : value;
+            return Integer.parseInt(n);
+        } catch (Throwable ignored) { return -1; }
     }
 
     String getParameters(String key) {
         if ("dolby_get_dolby_state".equals(key)) return "state_" + (mEnabled ? 1 : 0);
         if ("dolby_get_dolby_profile".equals(key)) return "profile_" + mScene;
         if ("dolby_get_device_status".equals(key)) return "0";
-        if ("dolby_geq_on_off".equals(key)) return "false";
+        if ("dolby_geq_on_off".equals(key)) return Boolean.toString(mGeqEnabled);
         return "";
     }
 
     // ---------- DAX helpers ----------
 
-    static byte[] le(int v) {
-        return new byte[]{(byte) v, (byte) (v >> 8), (byte) (v >> 16), (byte) (v >> 24)};
+    static int fourcc(String s) {
+        return (s.charAt(0) & 0xff) | ((s.charAt(1) & 0xff) << 8)
+                | ((s.charAt(2) & 0xff) << 16) | ((s.charAt(3) & 0xff) << 24);
     }
 
     static int rdle(byte[] a, int off) {
@@ -213,7 +424,7 @@ public class DolbyBridgeService extends Service {
         if (mGetP == null) return 0;
         try {
             byte[] v = new byte[8];
-            mGetP.invoke(mFx, le(id), v);
+            mGetP.invoke(mFx, id, v);
             return rdle(v, 0);
         } catch (Throwable t) { return 0; }
     }
@@ -222,7 +433,7 @@ public class DolbyBridgeService extends Service {
         if (mGetP == null) return "";
         try {
             byte[] v = new byte[64];
-            Object rc = mGetP.invoke(mFx, le(id), v);
+            Object rc = mGetP.invoke(mFx, id, v);
             int n = rc instanceof Integer ? (Integer) rc : 0;
             if (n > 0 && n <= v.length) return new String(v, 0, n, StandardCharsets.ISO_8859_1).trim();
         } catch (Throwable ignored) {}
@@ -230,13 +441,125 @@ public class DolbyBridgeService extends Service {
     }
 
     /**
-     * Profile switch. The DAX small-id space exposes no validated profile selector on
-     * TB710FU, and blind writes to unknown ids crash the DMS/audio HAL, so we only
-     * persist the selection and let the UI reflect it. (Bottom-level DMS profile
-     * application is a follow-up once a safe param is identified.)
+     * DMS exposes names/caches but no profile-selector command.  The four profiles
+     * used by the OPlus UI differ by only these runtime CPDP values for the tablet
+     * speaker; values are taken verbatim from vendor dax-default.xml.  DMS still
+     * owns all common tuning and endpoint changes.
      */
     void trySetProfile(int daxProfile) {
-        Log.i(TAG, "scene switch persisted (scene=" + mScene + ", dax=" + daxProfile + ")");
+        int steering = daxProfile == 0 ? 1 : 0;
+        int ieqOn, ieqAmount, dialogAmount, surroundBoost, volmaxBoost;
+        switch (daxProfile) {
+            case 1: // Movie
+                ieqOn = 1; ieqAmount = 10; dialogAmount = 6; surroundBoost = 80; volmaxBoost = 64;
+                break;
+            case 2: // Music
+                ieqOn = 0; ieqAmount = 15; dialogAmount = 4; surroundBoost = 0; volmaxBoost = 80;
+                break;
+            case 8: // Game
+                ieqOn = 0; ieqAmount = 6; dialogAmount = 4; surroundBoost = 96; volmaxBoost = 160;
+                break;
+            default: // Dynamic
+                ieqOn = 0; ieqAmount = 6; dialogAmount = 4; surroundBoost = 0; volmaxBoost = 80;
+                break;
+        }
+        int[] ids = {fourcc("mave"), fourcc("mdle"), fourcc("miee"), fourcc("msce"),
+                fourcc("ieon"), fourcc("iea\0"), fourcc("dea\0"), fourcc("dsb\0"), fourcc("vmb\0")};
+        int[][] values = {{steering}, {steering}, {steering}, {steering}, {ieqOn}, {ieqAmount},
+                {dialogAmount}, {surroundBoost}, {volmaxBoost}};
+        int rc = daxSetParams(ids, values);
+        if (rc == 0) mAppliedDapProfile = daxProfile;
+        Log.i(TAG, "DAP profile scene=" + mScene + " profile=" + daxProfile + " rc=" + rc);
+    }
+
+    void daxSetEqEnabled(boolean enabled) {
+        int rc = daxSetParams(new int[]{DAP_GEQ_ENABLE}, new int[][]{{enabled ? 1 : 0}});
+        Log.i(TAG, "DAP geon=" + enabled + " rc=" + rc);
+    }
+
+    void daxSetEqGains(int[] gains) {
+        if (mFx == null || mSetP == null || gains == null || gains.length != 10) return;
+        int[] values = new int[1 + DAP_GEQ_FREQS.length * 2];
+        values[0] = DAP_GEQ_FREQS.length;
+        System.arraycopy(DAP_GEQ_FREQS, 0, values, 1, DAP_GEQ_FREQS.length);
+        int[] dapGains = interpolateGains(gains);
+        System.arraycopy(dapGains, 0, values, 1 + DAP_GEQ_FREQS.length, dapGains.length);
+        int rc = daxSetParams(new int[]{DAP_GEQ_BANDS}, new int[][]{values});
+        Log.i(TAG, "DAP gebs rc=" + rc + " ui=" + java.util.Arrays.toString(gains)
+                + " dap=" + java.util.Arrays.toString(dapGains));
+    }
+
+    int daxSetParams(int[] ids, int[][] values) {
+        if (mFx == null || mSetP == null || ids == null || values == null || ids.length != values.length) return -1;
+        // EffectParamParser wire format:
+        // activeDevice, parameterCount, then for each parameter:
+        // device, fourcc, valueCount, values...
+        int device = activeDapDevice();
+        int words = 2;
+        for (int i = 0; i < ids.length; i++) words += 3 + values[i].length;
+        byte[] payload = new byte[words * 4];
+        putLe(payload, 0, device);
+        putLe(payload, 4, ids.length);
+        int off = 8;
+        for (int i = 0; i < ids.length; i++) {
+            putLe(payload, off, device); off += 4;
+            putLe(payload, off, ids[i]); off += 4;
+            putLe(payload, off, values[i].length); off += 4;
+            for (int value : values[i]) { putLe(payload, off, value); off += 4; }
+        }
+        try {
+            Object result = mSetP.invoke(mFx, DAP_PARAM_VALUES, payload);
+            return result instanceof Integer ? (Integer) result : 0;
+        } catch (Throwable t) {
+            Log.w(TAG, "DAP parameter blob failed", t);
+            return -1;
+        }
+    }
+
+    int activeDapDevice() {
+        android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+        if (am != null) {
+            try {
+                for (android.media.AudioDeviceInfo info : am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)) {
+                    switch (info.getType()) {
+                        case android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET: return 0x4;
+                        case android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES: return 0x8;
+                        case android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP: return 0x80;
+                        case android.media.AudioDeviceInfo.TYPE_USB_ACCESSORY: return 0x2000;
+                        case android.media.AudioDeviceInfo.TYPE_USB_DEVICE: return 0x4000;
+                        case android.media.AudioDeviceInfo.TYPE_USB_HEADSET: return 0x4000000;
+                        case android.media.AudioDeviceInfo.TYPE_BLE_HEADSET: return 0x20000000;
+                        default: break;
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+        return 0x2; // AUDIO_DEVICE_OUT_SPEAKER
+    }
+
+    static int[] interpolateGains(int[] ui) {
+        int[] out = new int[DAP_GEQ_FREQS.length];
+        for (int i = 0; i < out.length; i++) {
+            double f = Math.log(DAP_GEQ_FREQS[i]);
+            int hi = 0;
+            while (hi < OPLUS_GEQ_FREQS.length && Math.log(OPLUS_GEQ_FREQS[hi]) < f) hi++;
+            double gain;
+            if (hi == 0) gain = ui[0];
+            else if (hi == OPLUS_GEQ_FREQS.length) gain = ui[ui.length - 1];
+            else {
+                double loF = Math.log(OPLUS_GEQ_FREQS[hi - 1]);
+                double hiF = Math.log(OPLUS_GEQ_FREQS[hi]);
+                gain = ui[hi - 1] + (ui[hi] - ui[hi - 1]) * (f - loF) / (hiF - loF);
+            }
+            // DAP CPDP GEQ gain is Q4 dB; the OPlus UI exposes integer dB.
+            out[i] = (int) Math.round(gain * 16.0);
+        }
+        return out;
+    }
+
+    static void putLe(byte[] a, int off, int v) {
+        a[off] = (byte) v; a[off + 1] = (byte) (v >> 8);
+        a[off + 2] = (byte) (v >> 16); a[off + 3] = (byte) (v >> 24);
     }
 
     static int daxProfileNameToId(String name) {
