@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
-import android.os.Parcel;
 import android.provider.Settings;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -25,15 +24,27 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
     private static final String TARGET = "com.android.settings";
     private static final String FRAGMENT = "com.oplus.settings.feature.soundeffects.view.SoundEffectsFragment";
-    private static final String SERVICE = "com.aclaniakea.colorosostatsguard";
-    private static final String SERVICE_CLASS = "com.aclaniakea.dolbybridge.DolbyBridgeService";
-    private static final String DESCRIPTOR = "com.oplus.audio.effectcenter.IOplusEffectService";
-    private static final Object LOCK = new Object();
-    private static IBinder bridge;
-    private static boolean binding;
+    private static volatile boolean keeperBound;
+    private static final ServiceConnection KEEPER = new ServiceConnection() {
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            keeperBound = true;
+            XposedBridge.log("SoundEffectsMenuFix: persistent Dolby bridge connected");
+        }
+        public void onServiceDisconnected(ComponentName name) { keeperBound = false; }
+    };
 
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
         if (!TARGET.equals(lp.packageName)) return;
+        try {
+            XposedHelpers.findAndHookMethod("android.app.Application", lp.classLoader,
+                    "attach", Context.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam p) {
+                            keepBridgeAlive((Context) p.args[0]);
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: keeper hook failed " + t);
+        }
         try {
             XposedHelpers.findAndHookMethod(FRAGMENT, lp.classLoader, "updateSoundEffectsMenu",
                     new XC_MethodHook() {
@@ -56,37 +67,20 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("SoundEffectsMenuFix: hook failed " + t);
         }
-        try {
-            XposedHelpers.findAndHookMethod(
-                    "com.oplus.settings.feature.soundeffects.view.DolbyAudioModePreference",
-                    lp.classLoader, "selectMode", int.class, int.class, new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            // selectMode(scene, soundEffectCategory): the first argument
-                            // is the Dolby scene; the second is the effect category.
-                            int mode = (Integer) p.args[0];
-                            XposedBridge.log("SoundEffectsMenuFix: Dolby scene selected mode=" + mode);
-                            sendTransaction((Context) XposedHelpers.callMethod(p.thisObject, "getContext"), 14, mode);
-                        }
-                    });
-            XposedBridge.log("SoundEffectsMenuFix: scene fallback hook installed");
-        } catch (Throwable t) {
-            XposedBridge.log("SoundEffectsMenuFix: scene hook failed " + t);
-        }
-        try {
-            XposedHelpers.findAndHookMethod(
-                    "com.oplus.settings.feature.soundeffects.view.DolbyAudioModePreference",
-                    lp.classLoader, "selectEqualizer", int.class, int.class, new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam p) {
-                            int preset = (Integer) p.args[0];
-                            XposedBridge.log("SoundEffectsMenuFix: EQ preset selected=" + preset);
-                            sendTransaction((Context) XposedHelpers.callMethod(p.thisObject, "getContext"), 3, preset);
-                        }
-                    });
-            XposedBridge.log("SoundEffectsMenuFix: EQ fallback hook installed");
-        } catch (Throwable t) {
-            XposedBridge.log("SoundEffectsMenuFix: EQ hook failed " + t);
-        }
         hookOemController(lp);
+    }
+
+    private static void keepBridgeAlive(Context context) {
+        if (context == null || keeperBound) return;
+        try {
+            Intent i = new Intent().setComponent(new ComponentName(
+                    "com.aclaniakea.colorosostatsguard",
+                    "com.aclaniakea.dolbybridge.DolbyBridgeService"));
+            keeperBound = context.bindService(i, KEEPER, Context.BIND_AUTO_CREATE);
+            XposedBridge.log("SoundEffectsMenuFix: persistent bridge bind=" + keeperBound);
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: persistent bridge bind failed " + t);
+        }
     }
 
     private static void hookOemController(XC_LoadPackage.LoadPackageParam lp) {
@@ -102,16 +96,17 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(manager, lp.classLoader,
                     "setUserEqualizerCustomBandGains", int[].class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            putString((Context) XposedHelpers.getObjectField(p.thisObject, "mContext"),
-                                    "system_dolby_music_geq", gains((int[]) p.args[0]));
+                            Context c = (Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
+                            putString(c, "system_dolby_music_geq", gains((int[]) p.args[0]));
                         }
                     });
             XposedHelpers.findAndHookMethod(manager, lp.classLoader,
                     "setUserEqualizerCustomBandGainsRenewal", int[].class, int.class,
                     new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
-                            putString((Context) XposedHelpers.getObjectField(p.thisObject, "mContext"),
-                                    "system_dolby_music_geq", gains((int[]) p.args[0]));
+                            Context c = (Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
+                            putString(c, "system_dolby_music_geq", gains((int[]) p.args[0]));
+                            putInt(c, "system_dolby_music_ieq", (Integer) p.args[1]);
                         }
                     });
             XposedHelpers.findAndHookMethod(manager, lp.classLoader,
@@ -120,7 +115,6 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                             Context c = (Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
                             boolean on = (Boolean) p.args[0];
                             putInt(c, "system_dolby", on ? 1 : 0);
-                            sendTransaction(c, 1, on ? 1 : 0);
                         }
                     });
             XposedHelpers.findAndHookMethod(manager, lp.classLoader,
@@ -155,43 +149,4 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
         catch (Throwable t) { XposedBridge.log("OEM putString failed " + key + ": " + t); }
     }
 
-    private static void sendTransaction(Context context, int code, int value) {
-        if (context == null) return;
-        synchronized (LOCK) {
-            if (bridge != null && bridge.isBinderAlive()) {
-                transact(bridge, code, value);
-                return;
-            }
-            if (binding) return;
-            binding = true;
-        }
-        Intent i = new Intent().setComponent(new ComponentName(SERVICE, SERVICE_CLASS));
-        try {
-            context.bindService(i, new ServiceConnection() {
-                public void onServiceConnected(ComponentName n, IBinder b) {
-                    synchronized (LOCK) { bridge = b; binding = false; }
-                    transact(b, code, value);
-                }
-                public void onServiceDisconnected(ComponentName n) {
-                    synchronized (LOCK) { bridge = null; binding = false; }
-                }
-            }, Context.BIND_AUTO_CREATE);
-        } catch (Throwable t) {
-            synchronized (LOCK) { binding = false; }
-            XposedBridge.log("SoundEffectsMenuFix: bind fallback failed " + t);
-        }
-    }
-
-    private static void transact(IBinder b, int code, int value) {
-        Parcel data = Parcel.obtain();
-        Parcel reply = Parcel.obtain();
-        try {
-            data.writeInterfaceToken(DESCRIPTOR);
-            data.writeInt(value);
-            b.transact(code, data, reply, 0);
-            XposedBridge.log("SoundEffectsMenuFix: forwarded txn=" + code + " value=" + value);
-        } catch (Throwable t) {
-            XposedBridge.log("SoundEffectsMenuFix: scene transact failed " + t);
-        } finally { reply.recycle(); data.recycle(); }
-    }
 }
