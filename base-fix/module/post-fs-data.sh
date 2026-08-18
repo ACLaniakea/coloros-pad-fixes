@@ -42,6 +42,31 @@ log_msg "display color bridge: vivid=256(native) soft=0(standard)"
 
 # The port advertises AudioX while its effect table provides Dolby.
 resetprop ro.oplus.audio.effect.type dolby
+
+# Dolby DAP is a global session-0 effect on the deep-buffer output.  PliPlus
+# explicitly requests AUDIO_OUTPUT_FLAG_FAST, which leaves its PCM stream on
+# the primary output and bypasses DAP even though the UI and DAX parameter
+# writes succeed.  Use OPlus' own fast-audio-effects policy (value 2 means
+# force deep buffer) so the app's real playback stream shares the DAP chain.
+DOLBY_ROUTE_TARGET=/system_ext/etc/Multimedia_Daemon_List.xml
+DOLBY_ROUTE_RUNTIME="$MODDIR/runtime/Multimedia_Daemon_List.xml"
+if grep -q '<name>com.example.piliplus</name>' "$DOLBY_ROUTE_TARGET" 2>/dev/null; then
+    log_msg "Dolby route: PiliPlus already uses OEM policy"
+elif grep -q '</fast-audio-effects>' "$DOLBY_ROUTE_TARGET" 2>/dev/null; then
+    mkdir -p "${DOLBY_ROUTE_RUNTIME%/*}"
+    sed '/<\/fast-audio-effects>/i\
+        <name>com.example.piliplus</name>\
+        <attribute>2</attribute>
+' "$DOLBY_ROUTE_TARGET" >"$DOLBY_ROUTE_RUNTIME"
+    chown 0:0 "$DOLBY_ROUTE_RUNTIME"
+    chmod 0644 "$DOLBY_ROUTE_RUNTIME"
+    chcon u:object_r:system_file:s0 "$DOLBY_ROUTE_RUNTIME" 2>/dev/null
+    mount --bind "$DOLBY_ROUTE_RUNTIME" "$DOLBY_ROUTE_TARGET" 2>/dev/null && \
+        log_msg "Dolby route: PiliPlus forced through OEM deep-buffer DAP chain"
+else
+    log_msg "ERROR: Dolby route policy target missing or incompatible"
+fi
+
 resetprop -p persist.sys.horae.enable 1
 
 # Tango 32-bit compatibility. Bind only the translated 32-bit libdl entry.

@@ -10,6 +10,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -304,7 +305,7 @@ public final class AmbientColorSensorBridge implements IXposedHookLoadPackage {
     private static int hookMethod(ClassLoader classLoader, String str) {
         try {
             Class<?> target = XposedHelpers.findClass(TARGET_CLASS, classLoader);
-            XposedBridge.hookAllMethods(target, str, new XC_MethodHook() {
+            XC_MethodHook callback = new XC_MethodHook() {
                 protected void beforeHookedMethod(XC_MethodHook.MethodHookParam p) {
                     // ColorOS revisions changed this method's extra arguments. Find the
                     // SensorEvent instead of requiring the old one-argument signature.
@@ -330,8 +331,18 @@ public final class AmbientColorSensorBridge implements IXposedHookLoadPackage {
                                 + " lux=" + lux + " oldIndex9=" + old);
                     }
                 }
-            });
-            XposedBridge.log(TAG + ": hookAllMethods installed for " + str);
+            };
+            int hooked = 0;
+            for (Method method : target.getDeclaredMethods()) {
+                if (str.equals(method.getName())) {
+                    XposedBridge.hookMethod(method, callback);
+                    hooked++;
+                }
+            }
+            if (hooked == 0) {
+                throw new NoSuchMethodException(TARGET_CLASS + "#" + str);
+            }
+            XposedBridge.log(TAG + ": hookMethod installed for " + str + " overloads=" + hooked);
             return REAL_LUX_INDEX;
         } catch (Throwable th) {
             XposedBridge.log("AmbientColorSensorBridge: failed to hook " + str);

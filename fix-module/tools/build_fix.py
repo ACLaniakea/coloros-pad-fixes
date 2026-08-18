@@ -11,11 +11,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "FixModule-v1.2.4.zip"
+OUT = ROOT.parents[1] / "releases" / "FixModule-v1.2.5.zip"
+HOOK_APK = ROOT.parents[1] / "releases" / "BaseFix-Hook-v1.1.0.apk"
 EXCLUDE = {"fix-module.log", "tuning.log", "daemon.pid", "magic.pid"}
 
 
 def main() -> None:
+    subprocess.run([sys.executable, str(ROOT / "tools/build_lsposed_sync.py")], check=True)
+    if not HOOK_APK.is_file():
+        raise SystemExit(f"missing Hook APK: {HOOK_APK}")
     patcher = ROOT / "tools" / "build_patcher.py"
     jar = ROOT / "bin" / "card-protocol-patcher.jar"
     if patcher.is_file():
@@ -41,6 +45,11 @@ def main() -> None:
                 else zipfile.ZIP_DEFLATED
             )
             dst.writestr(info, path.read_bytes())
+        hook_info = zipfile.ZipInfo("hook/BaseFix-Hook.apk", date_time=(2026, 8, 18, 0, 0, 0))
+        hook_info.create_system = 3
+        hook_info.external_attr = 0o644 << 16
+        hook_info.compress_type = zipfile.ZIP_STORED
+        dst.writestr(hook_info, HOOK_APK.read_bytes())
     print(OUT)
 
 

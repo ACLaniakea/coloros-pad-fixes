@@ -81,7 +81,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1101", "--version-name", "1.1.1"])
+             "--version-code", "1104", "--version-name", "1.1.4"])
         # 2. compile java
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
@@ -113,7 +113,10 @@ def main() -> None:
             write_aligned_stored(dst, "classes.dex", dex.read_bytes())
             dst.writestr("assets/xposed_init", XPOSED_INIT.read_bytes(),
                          compress_type=zipfile.ZIP_DEFLATED)
-            dst.writestr("META-INF/xposed/scope.list", SCOPE_LIST.read_bytes(),
+            scope_list = SCOPE_LIST.read_bytes()
+            if scope_list.startswith(b"\xef\xbb\xbf"):
+                raise ValueError("scope.list must be UTF-8 without BOM")
+            dst.writestr("META-INF/xposed/scope.list", scope_list,
                          compress_type=zipfile.ZIP_DEFLATED)
         # 5. align + sign
         aligned = tmp / "aligned.apk"

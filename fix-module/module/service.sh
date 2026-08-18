@@ -32,6 +32,22 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# PackageManager may rewrite LSPosed's module path after an APK update.  Pin it
+# again once Android is up so the following cold boot already starts from the
+# stable module copy, even before post-fs-data performs its own early check.
+if [ -f "$MODDIR/bin/lsposed-path-sync.jar" ] && \
+        [ -f "$MODDIR/hook/BaseFix-Hook.apk" ] && \
+        [ -f /data/adb/lspd/config/modules_config.db ]; then
+    if CLASSPATH="$MODDIR/bin/lsposed-path-sync.jar" app_process /system/bin \
+            com.aclaniakea.tools.LsposedPathSync \
+            /data/adb/lspd/config/modules_config.db \
+            "$MODDIR/hook/BaseFix-Hook.apk" >>"$LOGFILE" 2>&1; then
+        log_msg "LSPosed hook path persisted for next boot"
+    else
+        log_msg "ERROR: late LSPosed hook path pin failed"
+    fi
+fi
+
 # The port's incompatible source-device performance HALs
 # persistently apply source-device CPU caps that do not match TB710FU's
 # kernel frequency table. Keep the scheduler and thermal stack running.
@@ -199,7 +215,7 @@ if [ "$(settings get system os.charge.settings.batterysettings.batteryhealth 2>/
     log_msg "battery health entry enabled"
 fi
 
-log_msg "LSPosed Hook APK is external; KernelSU module payload contains no APK"
+log_msg "stable LSPosed Hook payload verified"
 if pm path com.aclaniakea.colorosaonlifecycle >/dev/null 2>&1; then
     if pm uninstall --user 0 com.aclaniakea.colorosaonlifecycle >>"$LOGFILE" 2>&1; then
         log_msg "removed standalone AON lifecycle package after integration"

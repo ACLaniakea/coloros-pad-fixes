@@ -1,6 +1,6 @@
 id=coloros_port_fix
 name=联想平板 Pro GT - ColorOS 修复模块
 author=ACLaniakea
-version=1.2.4
-versionCode=1204
-description=SM8650Q/pineapple ColorOS 移植修复模块（基础修复+调优合并）：修正 AON QNN 生命周期与环境光自适应、恢复小布 BWV 语音唤醒链路与录音增益、绑定混音器策略、修复 Tango/序列号/性能 HAL 兼容性；全局 swappiness=20 阻止关键进程被持续换出，一次性覆盖高通开机脚本与充电热限频（38°C→52°C），min_free=32MB，恢复系统自带杜比音效入口（oplus.software.audio.dolby_support 特性覆盖，走原厂 DMS HAL）。全部为一次性覆盖，无常驻守护脚本。LSPosed Hook APK 独立安装；环境光 system_server 注入冷启动竞态由开机自愈（重启 lspd+system_server，非软重启）根治。
+version=1.2.5
+versionCode=1205
+description=SM8650Q/pineapple ColorOS 移植修复模块（基础修复+调优合并）：修正 AON QNN 生命周期与环境光自适应、恢复小布 BWV 语音唤醒链路与录音增益、绑定混音器策略、修复 Tango/序列号/性能 HAL 兼容性；全局 swappiness=20 阻止关键进程被持续换出，一次性覆盖高通开机脚本与充电热限频（38°C→52°C），min_free=32MB，恢复系统自带杜比音效入口并走原厂 DMS HAL。内置稳定 LSPosed Hook 副本，在 zygote 前固定 APK 路径，根治 system_server 环境光 Hook 的 /data/app 冷启动竞态。

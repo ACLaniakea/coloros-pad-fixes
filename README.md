@@ -63,22 +63,22 @@ adb shell su -c 'ksud module uninstall coloros_port_tuning'
 adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
-adb shell su -c 'ksud module install /sdcard/FixModule-v1.2.2.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v1.2.5.zip'
 adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.3.zip'
 
 # 4. 安装 Hook APK（LSPosed）
-adb install BaseFix-Hook-v1.1.0.apk
+adb install --no-incremental BaseFix-Hook-v1.1.0.apk
 adb install PenBridge-Hook-v1.1.0.apk
 
 # 5. 重启
 adb reboot
 ```
 
-> `PenHidCtl.apk` 已作为 priv-app 随 `PenBridge-Module` 挂载，无需单独安装；`BaseFix` / `PenBridge` 两个 Hook APK 由 LSPosed 管理器加载。
+> `PenHidCtl.apk` 已作为 priv-app 随 `PenBridge-Module` 挂载，无需单独安装。`FixModule` 内置一份签名 BaseFix Hook 副本并在 zygote 前固定 LSPosed 路径，用于避免 ColorOS 冷启动时随机 `/data/app` 路径尚不可见；外部 APK 仍需非增量安装，以注册 Dolby Bridge 服务和 LSPosed 模块包。
 
 ## 推荐作用域
 
-安装后请在 **LSPosed 管理器 → 模块 → 作用域** 手动勾选（模块不自动写入作用域）：
+安装后请在 **LSPosed 管理器 → 模块 → 作用域** 检查作用域。`FixModule` 会自动保留 BaseFix 的系统框架（`android` / 数据库中的 `system`）作用域，其余应用作用域仍请手动勾选：
 
 **base-fix（`com.aclaniakea.colorosostatsguard`）**，见 [scope.list](base-fix/hook/resources/META-INF/xposed/scope.list)：
 

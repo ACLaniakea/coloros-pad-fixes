@@ -9,7 +9,7 @@ ui_print "- 绑定显示色域映射与混音器配置"
 ui_print "- 修复 Tango 32 位兼容、序列号空项与性能 HAL 冲突"
 ui_print "- 调优：全局 swappiness=20 防关键进程换出，禁用 osense 主动换出"
 ui_print "- 合并自：coloros_port_base_fix + coloros_port_tuning"
-ui_print "- LSPosed Hook APK 独立安装，本模块不包含 APK"
+ui_print "- 内置稳定 Hook APK 副本，消除 /data/app 冷启动路径竞态"
 ui_print "- Hook APK 推荐作用域：android、com.aiunit.aon、com.heytap.speechassist、com.oplus.ovoicemanager.wakeup 等（scope.list）"
 ui_print "- 作用域请用户在 LSPosed 管理器手动勾选"
 
@@ -26,3 +26,19 @@ set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 set_perm "$MODPATH/common.sh" 0 0 0755
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0755
+set_perm_recursive "$MODPATH/hook" 0 0 0755 0644
+
+if [ -f /data/adb/lspd/config/modules_config.db ] && \
+        [ -f "$MODPATH/bin/lsposed-path-sync.jar" ] && \
+        [ -f "$MODPATH/hook/BaseFix-Hook.apk" ]; then
+    chcon u:object_r:system_file:s0 "$MODPATH/bin/lsposed-path-sync.jar" \
+        "$MODPATH/hook/BaseFix-Hook.apk" 2>/dev/null
+    if CLASSPATH="$MODPATH/bin/lsposed-path-sync.jar" app_process /system/bin \
+            com.aclaniakea.tools.LsposedPathSync \
+            /data/adb/lspd/config/modules_config.db \
+            "$MODPATH/hook/BaseFix-Hook.apk" >/dev/null 2>&1; then
+        ui_print "- LSPosed Hook 路径已固定，system_server 下次冷启动直接加载"
+    else
+        ui_print "! LSPosed 路径固定将在 post-fs-data 阶段重试"
+    fi
+fi
