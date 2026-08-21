@@ -306,4 +306,42 @@ fi
 
 apply_serial_fix
 
+# ============================================================================
+# 关闭移植 ColorOS 在启动/渲染/业务路径上的 DEBUG/INFO 日志刷屏。
+# 实测冷启动一次会刷出数千行 D 级日志（isLandscapeFullscreenEnabled、
+# SurfaceView/Region/ReflectedParamUpdater/CompositionEngine、nativeloader、
+# OplusTransition*/Synergy*/CompactWindow 等），这些日志除了拖慢对应线程外没有
+# 价值。只抬高 log.tag 级别（D/V/I -> WARN），不改任何系统逻辑；W/E 告警保留。
+# 原生库直打（SoundPool/SchedAssist/gc_priority 等）不经过 log.tag，无法在此压制。
+# ============================================================================
+for _logtag in \
+    ActivityAdapter ActivityTaskManager AHAL AONLog APM_AudioPolicyManager \
+    AppSenseClient AtlasEventUploadUtils AudioBoost AudioFlinger AudioManager \
+    AudioPolicyManager AudioPolicyManagerExtImpl AudioRecord AudioTrack \
+    BackgroundInstallControlService Bluetooth BufferPoolAccessor2.0 CCodecBuffers \
+    CCodecConfig CallDisablePromptDatabaseHelper CommCenterService \
+    CompatChangeReporter CompactWindowManagerService CompositionEngine \
+    ConnectivityService ContinuousTransitionController CoreBackPreview Dcp \
+    DeviceStatisticsService ExtensionsLoader FlexibleTaskController \
+    bt_device_interop \
+    FlexibleTaskTransitionController FlexibleWindowManagerService GameAudioEffects \
+    HARDCODER HMA-OSS HeadTrackingProcessor IntentAnalyzer KindaLib \
+    LSPosedFramework LocationManagerExtImpl MMListService MediaBufferGroup \
+    OplusAppSwitchRuleInfo OplusAtlasMapsUtil OplusFlexibleDragToSplitAnimController \
+    OplusFloorRefreshRateController OplusInputMethodUtil \
+    OplusLog_DeviceKit_com.oplus.linker OplusLog_IPe OplusMPEG4Extractor \
+    OplusMediaMonitor OplusScrollToTopManager OplusStartingWindowManager \
+    OplusSurfaceFlinger OplusTransitionAnimationManager OplusTransitionController \
+    OplusWifiPowerStatsManager OplusPreferencesHelperExt Panorama PatchPanel \
+    ReflectedParamUpdater Region ResourcesManagerExtImpl SatelliteController \
+    ScoreRequestHandler SensorPoseProvider SensorService \
+    ShellTaskOrganizerExt ShortcutService SimpleC2Component skia SoundPool \
+    Subsys-ScoreAppManager SurfaceView Synergy_EngineProcessor \
+    Synergy_SynergyCoreService Task Transition ViewRootImplExtImpl \
+    VirtualCommChannel WindowManager com.aiunit.aon jnicat nativeloader \
+    vendor.oplus.hardware.wifi-aidl-service vendor.qti.camera.provider-service_64; do
+    resetprop "log.tag.$_logtag" WARN 2>/dev/null
+done
+log_msg "debug/verbose log suppression applied ($(getprop 'log.tag.ActivityTaskManager'))"
+
 log_msg "post-fs-data end"

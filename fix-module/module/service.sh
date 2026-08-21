@@ -85,13 +85,22 @@ if pm path "$ROMUPDATE_PACKAGE" >/dev/null 2>&1; then
     log_msg "ROMUpdate provider enabled for Scene accessibility policy"
 fi
 
-# The port's incompatible source-device performance HALs
-# persistently apply source-device CPU caps that do not match TB710FU's
-# kernel frequency table. Keep the scheduler and thermal stack running.
+# The port ships the source-phone's perf HAL targetconfig (8-core pineapple).
+# This module overlays a corrected SoC-696 (6-core) targetconfig so the perf
+# HAL understands TB710FU's real topology and stops applying wrong source-device
+# CPU caps.  Reload both perf HALs so they pick it up, and KEEP them running:
+# the display composer / framework send CPU boost hints through perfservice on
+# every large composition; leaving them stopped turns that path into a
+# failed-AIDL IPC storm ("perf aidl service doesn't exist") that pegs
+# system_server's binder threads — the actual cause of the post-boot CPU
+# pressure, not the memory policy and not the powersave governor.
 stop perf2-hal-1-0
 stop vendor.perfservice
 sleep 2
-log_msg "stopped incompatible source-device performance HALs; kept device performance and thermal HALs"
+start vendor.perfservice
+start perf2-hal-1-0
+sleep 2
+log_msg "reloaded perf HALs with corrected pineapple SoC-696 topology"
 
 # thermal-engine can read its configuration before KernelSU finishes mounting
 # the module overlay. Reload it once so it picks up the CPU-only policy.
@@ -101,18 +110,13 @@ start thermal-engine
 sleep 3
 log_msg "reloaded thermal-engine after module mounts"
 
-# Restore each policy to the maximum exposed by this device's own kernel once.
+# Restore each policy's min/max to the hardware bounds of this device's own
+# kernel once, and recover from the third-party "powersave" governor pin that
+# locks every cluster to its minimum frequency after a long standby.  Runs once
+# at boot only (no resident guard/daemon).
+normalize_cpu
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
-    max_file="$policy/scaling_max_freq"
-    hw_max_file="$policy/cpuinfo_max_freq"
-    [ -r "$hw_max_file" ] && [ -e "$max_file" ] || continue
-    hw_max=$(cat "$hw_max_file" 2>/dev/null)
-    case "$hw_max" in
-        ''|*[!0-9]*) continue ;;
-    esac
-    chmod 0644 "$max_file" 2>/dev/null
-    echo "$hw_max" >"$max_file" 2>/dev/null
-    log_msg "cpu $(basename "$policy") max=$(cat "$max_file" 2>/dev/null)"
+    log_msg "cpu $(basename "$policy") gov=$(cat "$policy/scaling_governor" 2>/dev/null) min=$(cat "$policy/scaling_min_freq" 2>/dev/null) max=$(cat "$policy/scaling_max_freq" 2>/dev/null)"
 done
 
 # The port's tango translator repeatedly aborts on this tablet's 32-bit

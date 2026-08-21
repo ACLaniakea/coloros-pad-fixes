@@ -1,6 +1,6 @@
 id=coloros_port_fix
 name=联想平板 Pro GT - ColorOS 修复模块
 author=ACLaniakea
-version=2.0.0
-versionCode=2000
-description=SM8650Q/pineapple ColorOS 移植修复模块 2.0：兼容 8/12GB RAM 与 ROM 既有 0～1×RAM ZRAM，不创建或扩容；关闭会造成交互换页风暴的 OSense 主动换出，稳定态 swappiness 普通=10/冷后台=20/活跃与 system_server=5；保留 performance 与 Thermal HAL 安全策略；修正 AON、环境光、BWV、杜比与移植性能 HAL 冲突。
+version=2.0.1
+versionCode=2001
+description=SM8650Q/pineapple ColorOS 移植修复模块 2.0.1：兼容 8/12GB RAM 与 ROM 既有 0～1×RAM ZRAM，不创建或扩容；关闭会造成交互换页风暴的 OSense 主动换出，稳定态 swappiness 普通=10/冷后台=20/活跃与 system_server=5；用修正后的 SoC-696 六核 targetconfig 重载 perf HAL 并保持运行（避免停用后 framework 疯狂重连 perf AIDL 造成 binder 风暴与 CPU 高压）；开机一次性恢复 governor 与 min/max 频点；修正 AON、环境光、BWV、杜比与移植性能 HAL 冲突。
