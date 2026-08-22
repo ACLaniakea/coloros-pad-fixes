@@ -2,6 +2,7 @@ package com.aclaniakea.dolbybridge;
 
 import android.app.Service;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.media.audiofx.AudioEffect;
 import android.os.Binder;
 import android.os.IBinder;
@@ -68,6 +69,7 @@ public class DolbyBridgeService extends Service {
     volatile int[] mMusicGains = new int[10];
     volatile int[] mCustomGains = new int[10];
     ContentObserver mSettingsObserver;
+    SharedPreferences mPrefs;
 
     final Binder mStub = new Binder() {
         @Override
@@ -165,6 +167,12 @@ public class DolbyBridgeService extends Service {
     public void onCreate() {
         super.onCreate();
         try {
+            // The bridge is direct-boot aware so Settings can attach DAP even
+            // before the first unlock. Keep its small fallback cache in device
+            // encrypted storage; Settings.System remains the canonical OEM
+            // state and is applied immediately below.
+            mPrefs = createDeviceProtectedStorageContext()
+                    .getSharedPreferences(PREFS, MODE_PRIVATE);
             Constructor<AudioEffect> ctor = AudioEffect.class.getDeclaredConstructor(UUID.class, UUID.class, int.class, int.class);
             ctor.setAccessible(true);
             mFx = ctor.newInstance(DAX, DAX, 100, 0);
@@ -177,10 +185,10 @@ public class DolbyBridgeService extends Service {
             mGetP.setAccessible(true);
             mEnabled = mFx.getEnabled();
             mScene = sceneFromProfile(daxGetStr(PROFILE_NAME_ID));
-            int savedScene = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_SCENE, -1);
+            int savedScene = prefs().getInt(PREF_SCENE, -1);
             if (savedScene >= 0 && savedScene < SCENE_TO_PROFILE.length) mScene = savedScene;
-            mEqPreset = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_EQ, 0);
-            mGeqEnabled = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_GEQ, false);
+            mEqPreset = prefs().getInt(PREF_EQ, 0);
+            mGeqEnabled = prefs().getBoolean(PREF_GEQ, false);
             mMusicGains = readGains(PREF_MUSIC_GAINS);
             mCustomGains = readGains(PREF_CUSTOM_GAINS);
             Log.i(TAG, "DAX attached, enabled=" + mEnabled + " scene=" + mScene);
@@ -218,7 +226,7 @@ public class DolbyBridgeService extends Service {
             int eq = Settings.System.getInt(getContentResolver(), "system_dolby_music_ieq", mEqPreset);
             if (eq >= 0 && eq <= 7) {
                 mEqPreset = eq;
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_EQ, eq).apply();
+                prefs().edit().putInt(PREF_EQ, eq).apply();
             }
             mGeqEnabled = Settings.System.getInt(getContentResolver(), "system_dolby_geq_state", 0) != 0;
             daxSetEqEnabled(mGeqEnabled);
@@ -231,7 +239,7 @@ public class DolbyBridgeService extends Service {
                 // even though DAX and Settings contain the user's gains.
                 mMusicGains = gains.clone();
                 mCustomGains = gains.clone();
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                prefs().edit()
                         .putString(PREF_MUSIC_GAINS, gainsString(mMusicGains))
                         .putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains)).apply();
                 daxSetEqGains(gains);
@@ -293,7 +301,7 @@ public class DolbyBridgeService extends Service {
     synchronized void setMusicIeqPreset(int scene) {
         if (scene < 0 || scene > 7) return;
         mEqPreset = scene;
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_EQ, scene).apply();
+        prefs().edit().putInt(PREF_EQ, scene).apply();
         notifyCallbacks(4); // EffectServiceProfileCallback
     }
 
@@ -311,7 +319,7 @@ public class DolbyBridgeService extends Service {
 
     synchronized void applyScene(int scene) {
         mScene = scene;
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_SCENE, scene).apply();
+        prefs().edit().putInt(PREF_SCENE, scene).apply();
         Log.i(TAG, "scene persisted=" + scene + " dapProfile=" + SCENE_TO_PROFILE[scene]);
         trySetProfile(SCENE_TO_PROFILE[scene]);
         notifyCallbacks(4);
@@ -321,8 +329,8 @@ public class DolbyBridgeService extends Service {
         if (gains == null) return;
         mMusicGains = gains.clone();
         mCustomGains = gains.clone();
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_MUSIC_GAINS, gainsString(mMusicGains)).apply();
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains)).apply();
+        prefs().edit().putString(PREF_MUSIC_GAINS, gainsString(mMusicGains)).apply();
+        prefs().edit().putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains)).apply();
         Log.i(TAG, "music GEQ gains=" + java.util.Arrays.toString(mMusicGains));
         daxSetEqGains(mMusicGains);
     }
@@ -332,9 +340,9 @@ public class DolbyBridgeService extends Service {
         mCustomGains = gains.clone();
         if (preset >= 0 && preset <= 7) {
             mEqPreset = preset;
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_EQ, preset).apply();
+            prefs().edit().putInt(PREF_EQ, preset).apply();
         }
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+        prefs().edit()
                 .putString(PREF_CUSTOM_GAINS, gainsString(mCustomGains))
                 .putBoolean(PREF_GEQ, mGeqEnabled).apply();
         Log.i(TAG, "custom GEQ isHeadset=" + isHeadset + " enabled=" + mGeqEnabled + " preset=" + preset
@@ -353,7 +361,7 @@ public class DolbyBridgeService extends Service {
         }
         if ("dolby_geq_on_off".equals(key)) {
             mGeqEnabled = parseOn(v);
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_GEQ, mGeqEnabled).apply();
+            prefs().edit().putBoolean(PREF_GEQ, mGeqEnabled).apply();
             daxSetEqEnabled(mGeqEnabled);
             Log.i(TAG, "GEQ state=" + mGeqEnabled);
             notifyCallbacks(1);
@@ -369,7 +377,7 @@ public class DolbyBridgeService extends Service {
     }
 
     int[] readGains(String key) {
-        String raw = getSharedPreferences(PREFS, MODE_PRIVATE).getString(key, "");
+        String raw = prefs().getString(key, "");
         int[] out = new int[10];
         if (raw == null || raw.isEmpty()) return out;
         String[] parts = raw.split(",");
@@ -377,6 +385,14 @@ public class DolbyBridgeService extends Service {
             try { out[i] = Integer.parseInt(parts[i]); } catch (Throwable ignored) {}
         }
         return out;
+    }
+
+    SharedPreferences prefs() {
+        if (mPrefs == null) {
+            mPrefs = createDeviceProtectedStorageContext()
+                    .getSharedPreferences(PREFS, MODE_PRIVATE);
+        }
+        return mPrefs;
     }
 
     static String gainsString(int[] gains) {

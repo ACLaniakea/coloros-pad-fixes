@@ -5,7 +5,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.net.Uri;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.provider.Settings;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -27,12 +29,25 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
     private static final String FRAGMENT = "com.oplus.settings.feature.soundeffects.view.SoundEffectsFragment";
     private static final String DOLBY_OBSERVER = FRAGMENT + "$DolbyStateObserver";
     private static volatile boolean keeperBound;
+    private static volatile boolean keeperRetryScheduled;
+    private static volatile int keeperAttempts;
+    private static volatile Context keeperContext;
+    private static volatile boolean dolbyRefreshScheduled;
+    // LSPosed may instantiate the module entry while a scoped child process is
+    // still being forked and Looper.getMainLooper() is null.  Never create a
+    // Handler from the class initializer: one unrelated scoped process failing
+    // here can make the whole module look intermittently unloaded.
+    private static volatile Handler mainHandler;
     private static final ServiceConnection KEEPER = new ServiceConnection() {
         public void onServiceConnected(ComponentName name, IBinder service) {
             keeperBound = true;
+            keeperAttempts = 0;
             XposedBridge.log("SoundEffectsMenuFix: persistent Dolby bridge connected");
         }
-        public void onServiceDisconnected(ComponentName name) { keeperBound = false; }
+        public void onServiceDisconnected(ComponentName name) {
+            keeperBound = false;
+            scheduleBridgeRetry();
+        }
     };
 
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
@@ -54,14 +69,9 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam p) {
                             try {
                                 Context c = (Context) XposedHelpers.getObjectField(p.thisObject, "mContext");
-                                int enabled = c == null ? 0 : Settings.System.getInt(
-                                        c.getContentResolver(), "system_dolby", 0);
                                 // mCurrentMode is the actual source for both the
                                 // assignment label and checked popup item.  It is
                                 // not restored from a Settings key on this port.
-                                XposedHelpers.setIntField(p.thisObject, "mCurrentMode",
-                                        enabled != 0 ? 1 : 0);
-                                forceFragmentMode(p.thisObject, enabled != 0);
                                 Object map = XposedHelpers.getObjectField(p.thisObject, "mSoundEffectValueToTitleMap");
                                 if (map instanceof java.util.Map) {
                                     java.util.Map<Object, Object> m = (java.util.Map<Object, Object>) map;
@@ -70,6 +80,9 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                                         XposedBridge.log("SoundEffectsMenuFix: added 原始 OFF entry, size=" + m.size());
                                     }
                                 }
+                                int mode = resolveMode(p.thisObject, c);
+                                XposedHelpers.setIntField(p.thisObject, "mCurrentMode", mode);
+                                forceFragmentMode(p.thisObject, mode);
                             } catch (Throwable t) {
                                 XposedBridge.log("SoundEffectsMenuFix: map patch failed " + t);
                             }
@@ -84,6 +97,7 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             try {
                                 Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
+                                int mode = resolveMode(p.thisObject, c);
                                 int enabled = c == null ? 0 : Settings.System.getInt(
                                         c.getContentResolver(), "system_dolby", 0);
                                 // The stock fragment also observes the hidden
@@ -91,16 +105,14 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                                 // remain 1 after the public/system mode is set
                                 // to Original, reopening the Dolby controls.
                                 putSecureInt(c, "dolby_switch", enabled != 0 ? 1 : 0);
-                                XposedHelpers.setIntField(p.thisObject, "mCurrentMode",
-                                        enabled != 0 ? 1 : 0);
+                                XposedHelpers.setIntField(p.thisObject, "mCurrentMode", mode);
                                 // The first stock pass may already have hidden
                                 // DolbyAudioModePreference while mode was 0.
                                 // Re-run the OEM switch routine so its complete
                                 // scene/EQ content is restored, not just the menu label.
                                 XposedHelpers.callMethod(p.thisObject, "switchSoundEffect");
                                 XposedHelpers.callMethod(p.thisObject, "updateSoundEffectsMenu");
-                                XposedBridge.log("SoundEffectsMenuFix: resumed mode="
-                                        + (enabled != 0 ? 1 : 0));
+                                XposedBridge.log("SoundEffectsMenuFix: resumed mode=" + mode);
                             } catch (Throwable t) {
                                 XposedBridge.log("SoundEffectsMenuFix: resume sync failed " + t);
                             }
@@ -120,14 +132,22 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                     preference, Object.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             String value = String.valueOf(p.args[1]);
-                            if (!"0".equals(value) && !"1".equals(value)) return;
+                            if (!"0".equals(value) && !"1".equals(value) && !"3".equals(value)) return;
                             Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
-                            boolean enabled = "1".equals(value);
-                            syncModeKeys(c, enabled);
-                            forceFragmentMode(p.thisObject, enabled);
+                            int mode = Integer.parseInt(value);
+                            if (mode == 0 || mode == 1) {
+                                syncModeKeys(c, mode == 1);
+                            } else {
+                                // Spatial Audio is owned by the stock
+                                // SpatialAudioPresenter/Spatializer path. Keep
+                                // Dolby's backing engine state untouched and
+                                // persist only the outer menu selection.
+                                putInt(c, "system_effect_profile", 3);
+                            }
+                            forceFragmentMode(p.thisObject, mode);
                             XposedHelpers.callMethod(p.thisObject, "updateSoundEffectsMenu");
                             XposedBridge.log("SoundEffectsMenuFix: user mode=" + value
-                                    + " contentVisible=" + enabled);
+                                    + " dolbyContentVisible=" + (mode == 1));
                         }
                     });
         } catch (Throwable t) {
@@ -137,11 +157,26 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
             Class<?> model = XposedHelpers.findClass("com.oplus.partners.dolby.DolbyModel", lp.classLoader);
             XposedHelpers.findAndHookMethod(FRAGMENT, lp.classLoader, "updateView",
                     model, boolean.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
+                            int mode = resolveMode(p.thisObject, c);
+                            if (mode != 1 || !isDolbyViewReady(p.thisObject)) {
+                                // The OEM callback is asynchronous. In Spatial
+                                // mode (or before the Dolby Preference has
+                                // bound its ViewStub) its unconditional GEQ
+                                // refresh crashes Settings. The stock model is
+                                // retained and refreshed once the Dolby view is
+                                // actually selected and bound.
+                                forceFragmentMode(p.thisObject, mode);
+                                XposedHelpers.callMethod(p.thisObject, "updateSoundEffectsMenu");
+                                if (mode == 1) scheduleDolbyRefresh(p.thisObject, 0);
+                                p.setResult(null);
+                            }
+                        }
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
-                            boolean enabled = c != null && Settings.System.getInt(
-                                    c.getContentResolver(), "system_dolby", 0) != 0;
-                            forceFragmentMode(p.thisObject, enabled);
+                            int mode = resolveMode(p.thisObject, c);
+                            forceFragmentMode(p.thisObject, mode);
                             XposedHelpers.callMethod(p.thisObject, "updateSoundEffectsMenu");
                         }
                     });
@@ -164,23 +199,81 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
         }
     }
 
+    private static boolean isDolbyViewReady(Object fragment) {
+        try {
+            Object preference = XposedHelpers.getObjectField(fragment, "mDolbyPreference");
+            return preference != null
+                    && XposedHelpers.getObjectField(preference, "music_equalizer_custom_view_stub") != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void scheduleDolbyRefresh(final Object fragment, final int attempt) {
+        if (fragment == null || dolbyRefreshScheduled || attempt >= 10) return;
+        Handler handler = getMainHandler();
+        if (handler == null) return;
+        dolbyRefreshScheduled = true;
+        boolean posted = handler.postDelayed(new Runnable() {
+            @Override public void run() {
+                dolbyRefreshScheduled = false;
+                try {
+                    Context c = (Context) XposedHelpers.callMethod(fragment, "getContext");
+                    if (resolveMode(fragment, c) != 1) return;
+                    if (!isDolbyViewReady(fragment)) {
+                        scheduleDolbyRefresh(fragment, attempt + 1);
+                        return;
+                    }
+                    Object controller = XposedHelpers.getObjectField(fragment, "mDolbyController");
+                    if (controller != null) {
+                        XposedHelpers.callMethod(controller, "tryUpdateViewContent", 0);
+                        XposedBridge.log("SoundEffectsMenuFix: delayed Dolby view refresh completed");
+                    }
+                } catch (Throwable t) {
+                    XposedBridge.log("SoundEffectsMenuFix: delayed Dolby view refresh failed " + t);
+                }
+            }
+        }, 300L);
+        if (!posted) dolbyRefreshScheduled = false;
+    }
+
     private static void syncModeKeys(Context c, boolean enabled) {
         putInt(c, "system_dolby", enabled ? 1 : 0);
         putInt(c, "system_effect_profile", enabled ? 1 : 0);
         putSecureInt(c, "dolby_switch", enabled ? 1 : 0);
     }
 
-    private static void forceFragmentMode(Object fragment, boolean enabled) {
+    private static int resolveMode(Object fragment, Context c) {
+        if (fragment == null || c == null) return 0;
+        try {
+            Object mapObject = XposedHelpers.getObjectField(fragment, "mSoundEffectValueToTitleMap");
+            boolean hasSpatial = mapObject instanceof java.util.Map
+                    && ((java.util.Map<?, ?>) mapObject).containsKey("3");
+            int current = XposedHelpers.getIntField(fragment, "mCurrentMode");
+            boolean spatialOpen = false;
+            try {
+                spatialOpen = Boolean.TRUE.equals(XposedHelpers.callMethod(fragment, "isSpatialAudioOpen"));
+            } catch (Throwable ignored) {}
+            if (hasSpatial && (spatialOpen || current == 3)) return 3;
+            return Settings.System.getInt(c.getContentResolver(), "system_dolby", 0) != 0 ? 1 : 0;
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: resolve mode failed " + t);
+            return Settings.System.getInt(c.getContentResolver(), "system_dolby", 0) != 0 ? 1 : 0;
+        }
+    }
+
+    private static void forceFragmentMode(Object fragment, int mode) {
         if (fragment == null) return;
         try {
-            XposedHelpers.setIntField(fragment, "mCurrentMode", enabled ? 1 : 0);
+            boolean dolbyVisible = mode == 1;
+            XposedHelpers.setIntField(fragment, "mCurrentMode", mode);
             Object preference = XposedHelpers.getObjectField(fragment, "mDolbyPreference");
             if (preference != null) {
-                XposedHelpers.callMethod(preference, "showContent", enabled);
-                XposedHelpers.callMethod(preference, "setVisible", enabled);
+                XposedHelpers.callMethod(preference, "showContent", dolbyVisible);
+                XposedHelpers.callMethod(preference, "setVisible", dolbyVisible);
             }
             Object category = XposedHelpers.getObjectField(fragment, "mDolbyPreferenceCategory");
-            if (category != null) XposedHelpers.callMethod(category, "setVisible", enabled);
+            if (category != null) XposedHelpers.callMethod(category, "setVisible", dolbyVisible);
         } catch (Throwable t) {
             XposedBridge.log("SoundEffectsMenuFix: content visibility sync failed " + t);
         }
@@ -188,14 +281,49 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
 
     private static void keepBridgeAlive(Context context) {
         if (context == null || keeperBound) return;
+        Context app = context.getApplicationContext();
+        keeperContext = app != null ? app : context;
         try {
             Intent i = new Intent().setComponent(new ComponentName(
                     "com.aclaniakea.colorosostatsguard",
                     "com.aclaniakea.dolbybridge.DolbyBridgeService"));
-            keeperBound = context.bindService(i, KEEPER, Context.BIND_AUTO_CREATE);
+            // PackageManager can expose the updated Hook package a few
+            // seconds after Settings starts during cold boot. Explicitly
+            // start the component and retry the bind instead of losing the
+            // only Application.attach attempt to that transient window.
+            try { keeperContext.startService(i); } catch (Throwable ignored) {}
+            keeperBound = keeperContext.bindService(i, KEEPER, Context.BIND_AUTO_CREATE);
             XposedBridge.log("SoundEffectsMenuFix: persistent bridge bind=" + keeperBound);
+            if (!keeperBound) scheduleBridgeRetry();
         } catch (Throwable t) {
             XposedBridge.log("SoundEffectsMenuFix: persistent bridge bind failed " + t);
+            scheduleBridgeRetry();
+        }
+    }
+
+    private static void scheduleBridgeRetry() {
+        if (keeperBound || keeperRetryScheduled || keeperContext == null || keeperAttempts >= 20) return;
+        Handler handler = getMainHandler();
+        if (handler == null) return;
+        keeperRetryScheduled = true;
+        boolean posted = handler.postDelayed(new Runnable() {
+            @Override public void run() {
+                keeperRetryScheduled = false;
+                keeperAttempts++;
+                keepBridgeAlive(keeperContext);
+            }
+        }, 1500L);
+        if (!posted) keeperRetryScheduled = false;
+    }
+
+    private static Handler getMainHandler() {
+        Handler handler = mainHandler;
+        if (handler != null) return handler;
+        Looper looper = Looper.getMainLooper();
+        if (looper == null) return null;
+        synchronized (SoundEffectsMenuFix.class) {
+            if (mainHandler == null) mainHandler = new Handler(looper);
+            return mainHandler;
         }
     }
 
