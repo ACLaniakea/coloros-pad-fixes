@@ -297,8 +297,14 @@ final class HookUtils {
         if (context == null) {
             return -1;
         }
+        if (linkConnected(context) <= 0) {
+            // Hall can fire while the pen is still waiting to power up. The
+            // CPS placeholder at that point is 0%, so defer the capsule until
+            // the real Bluetooth session exists instead of flashing 0%.
+            return -1;
+        }
         int iHardwareBattery = hardwareBattery(context);
-        return iHardwareBattery >= 0 ? iHardwareBattery : lastValidBattery(context);
+        return iHardwareBattery >= 0 ? iHardwareBattery : -1;
     }
 
     static boolean bluetoothConnected(Context context, String str) {

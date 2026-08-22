@@ -64,11 +64,11 @@ adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
 adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.2.zip'
-adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.5.zip'
+adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.6.zip'
 
 # 4. 安装 Hook APK（LSPosed）
 adb install --no-incremental BaseFix-Hook-v1.1.0.apk
-adb install --no-incremental -r PenBridge-Hook-v1.1.5.apk
+adb install --no-incremental -r PenBridge-Hook-v1.1.6.apk
 
 # 5. 重启
 adb reboot
@@ -163,7 +163,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 - 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响），待机耗电较高；
 - 小布说话开头偶发卡顿暂未稳定复现，待修复。
-- 手写笔连接状态与振动：v1.1.5 在 v1.1.4 Hall/OEM 充电缓存修复基础上，增加 OEM GATT 丢回调 watchdog/直连恢复，并降低 Root fallback 轮询负载。
+- 手写笔连接状态与振动：v1.1.6 在 v1.1.5 触觉与固件稳定修复基础上，等待 BLE 与真实电量就绪后再显示首次吸附弹窗，避免待上电阶段误报 0%。
 - 查找设备功能由于缺少RPMB内的服务器公钥，无法注册本设备，但可以查看其他设备
 
 ## 致谢与免责

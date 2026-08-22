@@ -78,6 +78,12 @@ final class LenovoPenUEventBridge extends UEventObserver {
         if (zMacValid) {
             zConnected = HookUtils.linkConnected(this.context) > 0 || HookUtils.bluetoothConnected(this.context, strMac);
         }
+        if (iBattery == 0 && !zConnected) {
+            // The kernel framework publishes LEVEL=0 between the Hall attach
+            // edge and pen power/GATT readiness. It is an unknown placeholder,
+            // not a hardware battery measurement.
+            iBattery = -1;
+        }
         int iPhysicalDocked = HookUtils.physicalDocked(this.context);
         String stateSignature = strMac + '|' + iTouch + '|' + iBattery + '|'
                 + iCharging + '|' + strAttached + '|' + iPhysicalDocked + '|'

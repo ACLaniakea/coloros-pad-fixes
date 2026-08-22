@@ -324,28 +324,29 @@ cache_hardware_battery() {
 suspect_unconnected_zero_battery() {
     [ "$1" = 0 ] || return 1
     connected=$(settings get global lenovo_pen_link_connected 2>/dev/null | tr -d '\r')
-    [ "$connected" = 1 ] && return 1
-    battery_valid=$(settings get global lenovo_pen_hardware_battery_valid 2>/dev/null | tr -d '\r')
-    [ "$battery_valid" = 1 ] && return 1
-    last_valid=$(settings get global lenovo_pen_last_valid_battery 2>/dev/null | tr -d '\r')
-    valid_level "$last_valid" && [ "$last_valid" -gt 0 ]
+    [ "$connected" != 1 ]
 }
 
 read_hardware_battery() {
     level=$(settings get global ipe_pencil_battery_level 2>/dev/null | tr -d '\r')
     battery_valid=$(settings get global lenovo_pen_hardware_battery_valid 2>/dev/null | tr -d '\r')
-    if valid_level "$level" && [ "$battery_valid" = 1 ]; then
+    if valid_level "$level" && [ "$battery_valid" = 1 ] \
+            && ! suspect_unconnected_zero_battery "$level"; then
         echo "$level"
         return 0
     fi
     level=$(read_level_from_file "$CPS_UEVENT")
-    if valid_level "$level" && ! suspect_unconnected_zero_battery "$level"; then
+    # CPS exposes LEVEL=0 while the docked pen is only waiting to power up.
+    # A genuine 0% sample is still accepted from the live BLE/GATT cache, but
+    # a raw kernel/CPS zero is never promoted to trusted battery state.
+    connected=$(settings get global lenovo_pen_link_connected 2>/dev/null | tr -d '\r')
+    if [ "$connected" = 1 ] && valid_level "$level" && [ "$level" -gt 0 ]; then
         cache_hardware_battery "$level"
         echo "$level"
         return 0
     fi
     level=$(read_level_from_file "$UEVENT")
-    if valid_level "$level" && ! suspect_unconnected_zero_battery "$level"; then
+    if [ "$connected" = 1 ] && valid_level "$level" && [ "$level" -gt 0 ]; then
         cache_hardware_battery "$level"
         echo "$level"
         return 0
@@ -354,7 +355,6 @@ read_hardware_battery() {
     # hardware sample until the GATT link reports a fresh one.
     level=$(settings get global lenovo_pen_last_valid_battery 2>/dev/null | tr -d '\r')
     if valid_level "$level"; then
-        cache_hardware_battery "$level"
         echo "$level"
     else
         echo -1
@@ -402,6 +402,14 @@ read_attached_from_file() {
 
 read_hardware_charging() {
     docked="$1"
+    if [ "$docked" = 0 ]; then
+        # Hall is authoritative for physical charging. CPS ATTACHED and its
+        # charge byte can remain latched after removal; never mirror that
+        # stale state into the control-center widget or the next capsule.
+        cache_hardware_charging 0
+        echo 0
+        return 0
+    fi
     charge_state=$(read_charge_from_file "$CPS_UEVENT")
     attached=$(read_attached_from_file "$CPS_UEVENT")
     case "$charge_state" in
@@ -546,6 +554,21 @@ pen_mac_compact() {
 
 request_pen_capsule() {
     [ "$(read_hall_state)" = 1 ] || return 0
+    connected=$(settings get global lenovo_pen_link_connected 2>/dev/null | tr -d '\r')
+    if [ "$connected" != 1 ]; then
+        echo "[$(date '+%F %T')] magnetic capsule delayed: BLE link not ready"
+        return 1
+    fi
+    battery_valid=$(settings get global lenovo_pen_hardware_battery_valid 2>/dev/null | tr -d '\r')
+    if [ "$battery_valid" != 1 ]; then
+        echo "[$(date '+%F %T')] magnetic capsule delayed: fresh battery sample unavailable"
+        return 1
+    fi
+    battery=$(settings get global ipe_pencil_battery_level 2>/dev/null | tr -d '\r')
+    if ! valid_level "$battery"; then
+        echo "[$(date '+%F %T')] magnetic capsule delayed: invalid battery sample=$battery"
+        return 1
+    fi
     now=$(date '+%s' 2>/dev/null)
     previous=$(cat "$CAPSULE_DEDUP_FILE" 2>/dev/null)
     previous_time=${previous%%:*}
@@ -560,12 +583,6 @@ request_pen_capsule() {
             fi
             ;;
     esac
-    echo "$now:1" >"$CAPSULE_DEDUP_FILE"
-    battery=$(read_hardware_battery)
-    if ! valid_level "$battery"; then
-        echo "[$(date '+%F %T')] magnetic capsule delayed: CPS battery sample unavailable"
-        return 0
-    fi
     charging=$(read_hardware_charging 1)
     mac=$(pen_mac_compact)
     am broadcast --user 0 --receiver-foreground \
@@ -577,7 +594,18 @@ request_pen_capsule() {
         --es present 1 \
         --es macAddr "$mac" \
         --es source hardware_hall_root >/dev/null 2>&1
+    echo "$now:1" >"$CAPSULE_DEDUP_FILE"
     echo "[$(date '+%F %T')] real Hall magnetic capsule requested battery=$battery charging=$charging mac=$mac"
+}
+
+request_pen_capsule_when_ready() {
+    attempts=0
+    while [ "$attempts" -lt 40 ] && [ "$(read_hall_state)" = 1 ]; do
+        request_pen_capsule && return 0
+        attempts=$((attempts + 1))
+        sleep_sec 0.5
+    done
+    echo "[$(date '+%F %T')] magnetic capsule abandoned: link/battery not ready after ${attempts} attempts"
 }
 
 publish_hall_state() {
@@ -611,8 +639,12 @@ publish_hall_state() {
     settings put global ipe_pencil_present "$connected" >/dev/null 2>&1
 
     battery_args=""
-    if valid_level "$battery"; then
+    battery_trusted=$(settings get global lenovo_pen_hardware_battery_valid 2>/dev/null | tr -d '\r')
+    if valid_level "$battery" && [ "$battery_trusted" = 1 ]; then
         battery_args="--ei battery_level $battery --ei batteryLevel $battery"
+        hardware_battery=true
+    else
+        hardware_battery=false
     fi
     am broadcast --user 0 --receiver-foreground \
         -a com.aclaniakea.lenovopenbridge.action.COLOROS_PEN_STATE \
@@ -627,10 +659,10 @@ publish_hall_state() {
         --es macAddr "$mac" \
         --es name "Lenovo Tab Pen" \
         --es source hardware_hall \
-        --ez hardware_battery true \
+        --ez hardware_battery "$hardware_battery" \
         --ez hardware_identity_known true >/dev/null 2>&1
     apply_refresh_policy "$connected" "$docked"
-    echo "[$(date '+%F %T')] real Hall state docked=$docked battery=$battery charging=$charging connected=$connected mac=$mac"
+    echo "[$(date '+%F %T')] real Hall state docked=$docked battery=$battery trusted=$hardware_battery charging=$charging connected=$connected mac=$mac"
 }
 
 # The old monolithic Hook called applyPenHall immediately from SCREEN_ON.
@@ -854,6 +886,12 @@ monitor_hall_capsule() {
                         previous="$last"
                         last="$state"
                         echo "$state" >"$HALL_STATE_FILE"
+                        if [ "$state" = 1 ] && [ "$previous" != 1 ]; then
+                            # A dock edge starts a new pen power session. Do
+                            # not let the previous session's cached battery
+                            # satisfy this attach's capsule readiness check.
+                            settings put global lenovo_pen_hardware_battery_valid 0 >/dev/null 2>&1
+                        fi
                         publish_hall_state "$state"
                         if [ "$state" = 1 ]; then
                             # Magnetic attach is a physical reconnect intent:
@@ -872,10 +910,10 @@ monitor_hall_capsule() {
                                 # published above.
                                 (
                                     sleep_sec 22
-                                    request_pen_capsule
+                                    request_pen_capsule_when_ready
                                 ) &
                             else
-                                request_pen_capsule
+                                request_pen_capsule_when_ready &
                             fi
                         fi
                         boot_cycle=0

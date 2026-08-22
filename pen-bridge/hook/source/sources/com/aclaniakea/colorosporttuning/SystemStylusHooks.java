@@ -1027,7 +1027,7 @@ final class SystemStylusHooks {
             boolean present = !HookUtils.disconnectRequested(context);
             sendAll(context, new Intent("com.aclaniakea.lenovopenbridge.action.SHOW_PENCIL_CAPSULE").setPackage("com.oplus.ipemanager").putExtra("battery_level", iBatteryForCapsule).putExtra("charging_state", charging).putExtra("chargingState", charging).putExtra("charging", charging).putExtra("present", present ? "1" : "0").putExtra("macAddr", mac == null ? "" : mac.replace(":", "")).putExtra("source", "lenovo_pen_hall_validated"), null);
             HookUtils.log("validated Hall magnetic capsule requested: battery=" + iBatteryForCapsule + " charging=" + charging);
-        } else if (i < 10) {
+        } else if (i < 40) {
             main.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda0
                 @Override // java.lang.Runnable
                 public final void run() {
