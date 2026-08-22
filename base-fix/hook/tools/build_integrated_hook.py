@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the base-fix LSPosed Hook APK from source (ACLaniakea 1.1.7).
+"""Build the base-fix LSPosed Hook APK from source (ACLaniakea 1.1.8).
 
 Produces a signed APK for com.aclaniakea.colorosostatsguard:
   javac (android.jar + Xposed stubs) -> d8 -> classes.dex
@@ -48,7 +48,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "BaseFix-Hook-v1.1.7.apk"
+OUT_APK = OUT_DIR / "BaseFix-Hook-v1.1.8.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -81,7 +81,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1107", "--version-name", "1.1.7"])
+             "--version-code", "1108", "--version-name", "1.1.8"])
         # 2. compile java
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)

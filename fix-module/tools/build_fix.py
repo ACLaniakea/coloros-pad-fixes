@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "FixModule-v2.0.5.zip"
-HOOK_APK = ROOT.parents[1] / "releases" / "BaseFix-Hook-v1.1.7.apk"
+OUT = ROOT.parents[1] / "releases" / "FixModule-v2.0.6.zip"
+HOOK_APK = ROOT.parents[1] / "releases" / "BaseFix-Hook-v1.1.8.apk"
 EXCLUDE = {"fix-module.log", "tuning.log", "daemon.pid", "magic.pid"}
 
 

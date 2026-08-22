@@ -133,6 +133,16 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
                         @Override protected void afterHookedMethod(MethodHookParam p) {
                             String value = String.valueOf(p.args[1]);
                             if (!"0".equals(value) && !"1".equals(value) && !"3".equals(value)) return;
+                            // Keep the OEM mutual-exclusion decision. The stock
+                            // fragment returns false (and shows its own toast)
+                            // when Spatial Audio is selected while MSS sound-
+                            // field expansion is available/enabled. Previously
+                            // this after-hook ignored that result and forced mode
+                            // 3 anyway, leaving both controls visually enabled.
+                            if (Boolean.FALSE.equals(p.getResult())) {
+                                XposedBridge.log("SoundEffectsMenuFix: OEM rejected user mode=" + value);
+                                return;
+                            }
                             Context c = (Context) XposedHelpers.callMethod(p.thisObject, "getContext");
                             int mode = Integer.parseInt(value);
                             if (mode == 0 || mode == 1) {
@@ -254,11 +264,53 @@ public final class SoundEffectsMenuFix implements IXposedHookLoadPackage {
             try {
                 spatialOpen = Boolean.TRUE.equals(XposedHelpers.callMethod(fragment, "isSpatialAudioOpen"));
             } catch (Throwable ignored) {}
+            // MSS sound-field expansion also uses the platform spatializer, so
+            // isSpatialAudioOpen() alone cannot identify the outer "Spatial
+            // Audio" mode. Mirror the OEM Settings priority: while MSS is
+            // active/available, mode 3 is invalid and the prior Dolby state is
+            // retained. This also repairs stale conflicts persisted by older
+            // module versions after the page is resumed.
+            if (isMssSpatialRenderBlocking(fragment, c)) {
+                int fallback = Settings.System.getInt(
+                        c.getContentResolver(), "system_dolby", 0) != 0 ? 1 : 0;
+                int profile = Settings.System.getInt(
+                        c.getContentResolver(), "system_effect_profile", fallback);
+                if (current == 3 || profile == 3 || spatialOpen) {
+                    putInt(c, "system_effect_profile", fallback);
+                    XposedBridge.log("SoundEffectsMenuFix: repaired Spatial/MSS conflict, mode="
+                            + fallback);
+                }
+                return fallback;
+            }
             if (hasSpatial && (spatialOpen || current == 3)) return 3;
             return Settings.System.getInt(c.getContentResolver(), "system_dolby", 0) != 0 ? 1 : 0;
         } catch (Throwable t) {
             XposedBridge.log("SoundEffectsMenuFix: resolve mode failed " + t);
             return Settings.System.getInt(c.getContentResolver(), "system_dolby", 0) != 0 ? 1 : 0;
+        }
+    }
+
+    private static boolean isMssSpatialRenderBlocking(Object fragment, Context c) {
+        try {
+            Object model = XposedHelpers.getStaticObjectField(
+                    fragment.getClass(), "mMssSpatialRenderModel");
+            if (model != null) {
+                boolean enabled = Boolean.TRUE.equals(XposedHelpers.callMethod(model, "isEnabled"));
+                boolean mssEnabled = Boolean.TRUE.equals(
+                        XposedHelpers.callMethod(model, "isMssEnabled"));
+                return enabled || mssEnabled;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("SoundEffectsMenuFix: MSS model query failed " + t);
+        }
+        // During the first fragment pass the OEM service/model can still be
+        // unbound. Its persisted Secure state is the safest fallback and is
+        // the same key written by MssSpatialRenderModel.setEnabled().
+        try {
+            return c != null && Settings.Secure.getInt(
+                    c.getContentResolver(), "mss_spatial_render_switch", 0) != 0;
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
