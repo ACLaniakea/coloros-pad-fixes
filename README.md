@@ -5,7 +5,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-2.0.1-orange)
+![Version](https://img.shields.io/badge/version-2.0.2-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -30,7 +30,7 @@
 | **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比；用修正 SoC-696 六核配置重载 perf HAL 并保持运行（消除 composer 每帧 AIDL 重连风暴）；开机一次性恢复 governor（powersave→walt/schedutil）与 min/max 频点；兼容 8/12GB RAM 与 ROM 既有的 0～1×RAM ZRAM，不创建/扩容；实测后关闭 OSense 主动换出，保留内核按需 ZRAM；开机 swappiness=5，稳定后普通=10、冷后台=20、活跃与 system_server=5，64MB 水位；AON 挂载为零轮询事件驱动；恢复 ROMUpdate Provider；压制 92 个 ColorOS 启动/渲染 tag 的 DEBUG/INFO 日志 |
 | **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护、移植 Thermal HAL 的 skin 状态恢复等 |
 | **pen-bridge 手写笔桥接** | KernelSU 模块 | `lenovo_pen_bridge` | 原厂 CoreService BLE 连接/断开、CPS 上电、真实 ACL/GATT/Hall 状态同步、PenHidCtl HID 控制（flock 单例 + 开机监控时序） |
-| **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，真实 GATT 断开 |
+| **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，书写触觉直连 GATT、版本字段跨进程同步与真实 GATT 断开 |
 | **PenHidCtl** | priv-app | `com.aclaniakea.penhidctl` | HID 连接控制（纯服务、无桌面图标） |
 
 详细修复清单见 [修复汇总.md](修复汇总.md)。
@@ -63,12 +63,12 @@ adb shell su -c 'ksud module uninstall coloros_port_tuning'
 adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
-adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.1.zip'
-adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.4.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.2.zip'
+adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.5.zip'
 
 # 4. 安装 Hook APK（LSPosed）
 adb install --no-incremental BaseFix-Hook-v1.1.0.apk
-adb install --no-incremental -r PenBridge-Hook-v1.1.4.apk
+adb install --no-incremental -r PenBridge-Hook-v1.1.5.apk
 
 # 5. 重启
 adb reboot
@@ -163,7 +163,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 - 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响），待机耗电较高；
 - 小布说话开头偶发卡顿暂未稳定复现，待修复。
-- 手写笔连接状态显示与开机振动：v1.1.4 修复控制中心卡片的 Hall/OEM 充电缓存竞态，物理离座强制清除充电态，并缩短原厂 DeviceProvider 的有效边沿去重窗口。
+- 手写笔连接状态与振动：v1.1.5 在 v1.1.4 Hall/OEM 充电缓存修复基础上，增加 OEM GATT 丢回调 watchdog/直连恢复，并降低 Root fallback 轮询负载。
 - 查找设备功能由于缺少RPMB内的服务器公钥，无法注册本设备，但可以查看其他设备
 
 ## 致谢与免责

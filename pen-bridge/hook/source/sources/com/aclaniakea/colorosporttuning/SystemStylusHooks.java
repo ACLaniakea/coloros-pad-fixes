@@ -1312,10 +1312,9 @@ final class SystemStylusHooks {
     }
 
     private static boolean onMotion(Context context, MotionEvent motionEvent) {
-        InputDevice device = motionEvent.getDevice();
-        if (((device == null || device.getName() == null) ? "" : device.getName().toLowerCase()).contains("lenovo tab pen") && (device.getSources() & 8194) != 0) {
-            return false;
-        }
+        // This monitor exists specifically to observe the real Lenovo stylus.
+        // An old duplicate-input guard returned here for that exact device,
+        // making the writing-haptic state machine unreachable on hardware.
         for (int i = 0; i < motionEvent.getPointerCount(); i++) {
             int toolType = motionEvent.getToolType(i);
             if (toolType == 2 || toolType == HID_HOST_PROFILE) {

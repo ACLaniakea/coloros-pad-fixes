@@ -399,6 +399,16 @@ final class PenHapticGatt {
                 if (str != null && !str.trim().isEmpty()) {
                     address = str;
                 }
+                // The ported IPe process can advertise a live OEM session but
+                // silently drop this custom broadcast before it reaches the
+                // hooked queue. A sent broadcast is not a hardware ACK. Keep
+                // the OEM route available for explicit compatibility testing,
+                // but use the direct GATT path (which has write callbacks) by
+                // default for actual writing haptics.
+                if (Settings.Global.getInt(context.getContentResolver(),
+                        "lenovo_pen_oem_haptic_forward", 0) != 1) {
+                    return false;
+                }
                 if (Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0) != 1) {
                     return false;
                 }

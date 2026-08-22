@@ -66,6 +66,12 @@ fi
 
 echo 5 >/proc/sys/vm/swappiness 2>/dev/null
 echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
+# The transplanted ROM can leave this at 80/120. On the 8 GB tablet that
+# keeps kswapd scanning while MemAvailable is still around 1.8 GB. A/B tests
+# show 20 preserves an early reclaim margin without sustained kswapd stalls;
+# it is ratio-based and remains suitable for the 12 GB variant.
+echo 20 >/proc/sys/vm/watermark_scale_factor 2>/dev/null
+echo 0 >/proc/sys/vm/watermark_boost_factor 2>/dev/null
 if [ -w /dev/memcg/apps/memory.swappiness ]; then
     echo 5 >/dev/memcg/apps/memory.swappiness 2>/dev/null
 fi
@@ -144,7 +150,7 @@ fi
 if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
     echo 5 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
 fi
-log_msg "tuning early: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null)"
+log_msg "tuning early: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null)"
 
 # Bridge the ported ColorOS labels to this tablet's real Qualcomm/Oplus
 # display-color manager before system_server loads OplusFeatureColorMode.
@@ -326,7 +332,7 @@ for _logtag in \
     bt_device_interop \
     FlexibleTaskTransitionController FlexibleWindowManagerService GameAudioEffects \
     HARDCODER HMA-OSS HeadTrackingProcessor IntentAnalyzer KindaLib \
-    LSPosedFramework LocationManagerExtImpl MMListService MediaBufferGroup \
+    LocationManagerExtImpl MMListService MediaBufferGroup \
     OplusAppSwitchRuleInfo OplusAtlasMapsUtil OplusFlexibleDragToSplitAnimController \
     OplusFloorRefreshRateController OplusInputMethodUtil \
     OplusLog_DeviceKit_com.oplus.linker OplusLog_IPe OplusMPEG4Extractor \

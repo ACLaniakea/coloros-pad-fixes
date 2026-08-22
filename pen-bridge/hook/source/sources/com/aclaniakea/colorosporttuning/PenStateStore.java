@@ -52,7 +52,17 @@ final class PenStateStore {
         int iStoredCharging = sharedPreferences == null ? Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0) : sharedPreferences.getInt("charging", Settings.Global.getInt(context.getContentResolver(), "ipe_pencil_charging_state", 0));
         int i2 = HookUtils.effectiveCharging(context, iStoredCharging);
         String string4 = sharedPreferences != null ? sharedPreferences.getString("type", "SECOND_GENERATION_PENCIL_LITE") : "SECOND_GENERATION_PENCIL_LITE";
-        String string5 = sharedPreferences != null ? sharedPreferences.getString("firmware", "1.0.0") : "1.0.0";
+        String string5 = Settings.Global.getString(context.getContentResolver(), "lenovo_pen_firmware");
+        if (string5 == null || string5.trim().isEmpty() || "1.0.0".equals(string5)) {
+            String localFirmware = sharedPreferences != null
+                    ? sharedPreferences.getString("firmware", "1.0.0") : "1.0.0";
+            if (localFirmware != null && !localFirmware.trim().isEmpty()) {
+                string5 = localFirmware;
+            }
+        }
+        if (string5 == null || string5.trim().isEmpty()) {
+            string5 = "1.0.0";
+        }
         String string6 = sharedPreferences != null ? sharedPreferences.getString("hardware", "Lenovo Tab Pen") : "Lenovo Tab Pen";
         if (sharedPreferences == null) {
             sb = new StringBuilder("LENOVO-");

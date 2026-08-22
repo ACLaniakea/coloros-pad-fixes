@@ -670,7 +670,10 @@ monitor_screen_replay() {
         fi
         last="$state"
         echo "$state" >"$SCREEN_STATE_FILE"
-        sleep_sec 0.25
+        # This is only a fallback for the Hook's immediate screen callback.
+        # A 250 ms dumpsys loop kept a full shell busy and materially raised
+        # CPU PSI; two seconds is still well inside the delayed replay window.
+        sleep_sec 2
     done
 }
 
@@ -758,7 +761,7 @@ apply_refresh_policy() {
 }
 
 # The OEM mirrors can lag or be overridden by a stale disconnect latch. Poll
-# the actual Bluetooth stack every two seconds and republish the connection
+# the actual Bluetooth stack at low rate and republish the connection
 # mirrors so Device Space always follows the real link. If a live link appears
 # while a stale user-disconnect latch is still set, the stack has already
 # reconnected: clear the latch so the UI stops reporting "disconnected".
@@ -820,7 +823,10 @@ monitor_real_bt_state() {
             echo "[$(date '+%F %T')] real BT state mirror connected=$connected (was $current)"
             last="$connected"
         fi
-        sleep_sec 1
+        # Real ACL/GATT callbacks update the mirror immediately.  Keep this
+        # expensive full bluetooth_manager dump as a low-rate reconciliation
+        # path only, not a one-Hz permanent poll.
+        sleep_sec 5
     done
 }
 
@@ -840,7 +846,7 @@ monitor_hall_capsule() {
                     candidate="$state"
                     samples=1
                 fi
-                if [ "$samples" -ge 3 ]; then
+                if [ "$samples" -ge 2 ]; then
                     # Do not republish solely because a receiver has not yet
                     # mirrored the setting. That feedback loop generated
                     # repeated system_server broadcasts every poll interval.
@@ -877,7 +883,7 @@ monitor_hall_capsule() {
                 fi
                 ;;
         esac
-        sleep_sec 0.25
+        sleep_sec 0.5
     done
 }
 
@@ -1090,7 +1096,10 @@ start_cps_gpio() {
         while [ ! -e "$CPS_DISABLED" ] && [ -r "$CPS_PEN_HALL" ] \
                 && [ "$(read_hall_state)" = 1 ]; do
             "$CPS_GPIOSET" "$CPS_GPIOCHIP" 10=1 108=1 >/dev/null 2>&1
-            sleep_sec 1
+            # gpioset is a fallback for kernels where the line-holder helper
+            # exits. The CPS state is latched; refreshing at 5 s avoids a
+            # needless one-Hz process/exec loop while the pen is docked.
+            sleep_sec 5
         done
         cleanup_cps_gpio
     ) &

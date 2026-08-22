@@ -29,7 +29,7 @@ cp releases/PenHidCtl-v1.1.0.apk pen-bridge/module/system/priv-app/aclpenhid/Pen
 
 echo "== 5/6 module zips =="
 python3 fix-module/tools/build_fix.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.1.4.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.1.5.zip
 
 echo "== 6/6 releases =="
 ls -la releases/

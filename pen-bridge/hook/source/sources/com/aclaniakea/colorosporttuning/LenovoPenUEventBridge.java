@@ -16,6 +16,8 @@ final class LenovoPenUEventBridge extends UEventObserver {
     private static volatile String lastBootOafMac = "";
     private static volatile long lastOppoWakeAt = 0;
     private static volatile String lastOppoWakeMac = "";
+    private static volatile long lastStateDispatchAt = 0;
+    private static volatile String lastStateSignature = "";
     private final Context context;
 
     private static boolean validBattery(int i) {
@@ -77,6 +79,15 @@ final class LenovoPenUEventBridge extends UEventObserver {
             zConnected = HookUtils.linkConnected(this.context) > 0 || HookUtils.bluetoothConnected(this.context, strMac);
         }
         int iPhysicalDocked = HookUtils.physicalDocked(this.context);
+        String stateSignature = strMac + '|' + iTouch + '|' + iBattery + '|'
+                + iCharging + '|' + strAttached + '|' + iPhysicalDocked + '|'
+                + (zConnected ? 1 : 0);
+        long now = SystemClock.uptimeMillis();
+        if (stateSignature.equals(lastStateSignature) && now - lastStateDispatchAt < 30000L) {
+            return;
+        }
+        lastStateSignature = stateSignature;
+        lastStateDispatchAt = now;
         HookUtils.log("PEN_FRAMEWORK uevent touch=" + iTouch + " battery=" + iBattery + " level=" + iLevel + " charging=" + iCharging + " rawCharging=" + strRawCharging + " attached=" + strAttached + " physicalDocked=" + iPhysicalDocked + " mac=" + (zMacValid ? strMac : "unknown") + " info=" + strInfo);
         if (!zMacValid) {
             HookUtils.log("PEN_FRAMEWORK placeholder ignored: no hardware MAC");

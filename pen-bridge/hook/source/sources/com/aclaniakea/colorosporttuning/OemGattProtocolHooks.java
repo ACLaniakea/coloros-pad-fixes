@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
+import android.os.SystemClock;
 import android.provider.Settings;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -193,6 +194,7 @@ final class OemGattProtocolHooks {
                     HookUtils.log("IPe OEM s0 service discovery kept settings disconnect latch");
                 }
                 final Session sessionSessionFor = sessionFor(obj, bluetoothGatt);
+                sessionSessionFor.controlContext = context.getApplicationContext();
                 if (!sessionSessionFor.configured) {
                     sessionSessionFor.configured = true;
                     queueLenovoOperations(sessionSessionFor, services);
@@ -608,7 +610,15 @@ final class OemGattProtocolHooks {
                 if (zWriteSuccess) {
                     session.busy = true;
                     session.active = operationPeekFirst;
+                    session.activeStartedAt = SystemClock.uptimeMillis();
                     HookUtils.log("Lenovo OEM GATT started " + operationPeekFirst.describe());
+                    final Operation startedOperation = operationPeekFirst;
+                    HANDLER.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            OemGattProtocolHooks.recoverTimedOutOperation(session, startedOperation);
+                        }
+                    }, 1800L);
                 } else {
                     operationPeekFirst.retries++;
                     if (operationPeekFirst.retries <= 5) {
@@ -631,6 +641,41 @@ final class OemGattProtocolHooks {
                 }
             }
         }
+    }
+
+    private static void recoverTimedOutOperation(final Session session, Operation operation) {
+        if (session == null || operation == null) {
+            return;
+        }
+        boolean recovered = false;
+        synchronized (session) {
+            if (session.busy && session.active == operation
+                    && SystemClock.uptimeMillis() - session.activeStartedAt >= 1750L) {
+                session.busy = false;
+                session.active = null;
+                session.activeStartedAt = 0L;
+                if (!session.operations.isEmpty() && session.operations.peekFirst() == operation) {
+                    session.operations.pollFirst();
+                }
+                operation.retries++;
+                recovered = true;
+            }
+        }
+        if (!recovered) {
+            return;
+        }
+        // A live process is not proof of a live BluetoothGatt callback path.
+        // Stop forwarding new commands to this wedged OEM session; the system
+        // process will use its direct Lenovo GATT transport on the next event.
+        setOemControlReady(session.controlContext, false);
+        HookUtils.log("Lenovo OEM GATT callback timeout; transport invalidated "
+                + operation.describe() + " retry=" + operation.retries);
+        HANDLER.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                OemGattProtocolHooks.drain(session);
+            }
+        }, 50L);
     }
 
     /* JADX INFO: Access modifiers changed from: private */
@@ -668,6 +713,7 @@ final class OemGattProtocolHooks {
                 }
                 session.active = null;
                 session.busy = false;
+                session.activeStartedAt = 0L;
                 if (!session.operations.isEmpty() && session.operations.peekFirst() == operation) {
                     session.operations.pollFirst();
                 }
@@ -894,7 +940,17 @@ final class OemGattProtocolHooks {
                     if (FIRMWARE.equals(strUuid)) {
                         String strAscii = ascii(value);
                         if (strAscii.length() > 0) {
-                            IpeManagerHooks.publishHardwareMetadata(context, obj, null, strAscii, null, null, "ipe_oem_device_info");
+                            // 0x2A28 is Software Revision, not Firmware
+                            // Revision. Publishing both 2A28 and 2A26 into the
+                            // same UI field made the displayed version change
+                            // as the asynchronous reads completed.
+                            PenState current = HookUtils.state(context);
+                            if (current.firmware.length() == 0 || "1.0.0".equals(current.firmware)) {
+                                IpeManagerHooks.publishHardwareMetadata(context, obj, null,
+                                        strAscii, null, null, "ipe_oem_software_revision_fallback");
+                            } else {
+                                HookUtils.log("IPe OEM software revision observed=" + strAscii);
+                            }
                             return;
                         }
                         return;
@@ -1257,8 +1313,10 @@ final class OemGattProtocolHooks {
 
     private static final class Session {
         Operation active;
+        long activeStartedAt;
         boolean busy;
         boolean configured;
+        Context controlContext;
         final BluetoothGatt gatt;
         int notifications;
         int reads;

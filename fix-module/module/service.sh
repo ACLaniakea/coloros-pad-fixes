@@ -368,5 +368,7 @@ fi
 # 64MB is only 0.8% of RAM and restores the previously validated tuning value.
 # It wakes kswapd before a UI allocation falls into direct reclaim/allocstall.
 echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
+echo 20 >/proc/sys/vm/watermark_scale_factor 2>/dev/null
+echo 0 >/proc/sys/vm/watermark_boost_factor 2>/dev/null
 
-log_msg "tuning ready: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null) inactive=$(cat /dev/memcg/apps/inactive/memory.swappiness 2>/dev/null)"
+log_msg "tuning ready: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null) inactive=$(cat /dev/memcg/apps/inactive/memory.swappiness 2>/dev/null)"

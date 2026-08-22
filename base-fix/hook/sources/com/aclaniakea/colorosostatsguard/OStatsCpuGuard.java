@@ -17,6 +17,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class OStatsCpuGuard implements IXposedHookLoadPackage {
     private static final AtomicBoolean REPORTED = new AtomicBoolean(false);
     private static final AtomicBoolean THERMAL_RECOVERY_REPORTED = new AtomicBoolean(false);
+    private static final AtomicBoolean SOCD_BRIDGE_REPORTED = new AtomicBoolean(false);
+    private static final AtomicBoolean SOCD_RECOVERY_REPORTED = new AtomicBoolean(false);
+    private static final AtomicBoolean HBM_BRIDGE_REPORTED = new AtomicBoolean(false);
     private static final String TAG = "ColorOSRuntimeFix";
 
     /*
@@ -33,7 +36,9 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
     private static final int TEMPERATURE_TYPE_SKIN = 3;
     private static final int THROTTLING_SEVERE = 3;
     private static final int THROTTLING_NONE = 0;
+    private static final float SOCD_SEVERE_CLEAR_MAX_CLUSTER_C = 80.0f;
     private static volatile String physicalSkinTempPath;
+    private static volatile String[] cpuClusterTempPaths;
 
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         if (DeviceGate.isSupported() && "android".equals(loadPackageParam.packageName) && "android".equals(loadPackageParam.processName)) {
@@ -47,6 +52,7 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
                 XposedBridge.log(th);
             }
             installStaleSkinStatusRecovery();
+            installSocdTemperatureBridge(loadPackageParam.classLoader);
             try {
                 XposedHelpers.findAndHookMethod("com.android.server.hans.ostats.calc.CpuCalc", loadPackageParam.classLoader, "calculatePower", new Object[]{long[].class, new XC_MethodHook() { // from class: com.aclaniakea.colorosostatsguard.OStatsCpuGuard.1
                     protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
@@ -72,11 +78,37 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
     private static void installStaleSkinStatusRecovery() {
         try {
             Class<?> temperatureClass = XposedHelpers.findClass("android.os.Temperature", null);
+            /*
+             * ThermalManagerService reads the parcelable fields while handling
+             * the HAL callback and caches that object. Hooking only getStatus()
+             * therefore protects later clients but cannot stop a stale SEVERE
+             * value entering the service cache. Sanitize each newly-created
+             * Temperature before the callback consumer sees it as well.
+             */
+            XposedBridge.hookAllConstructors(temperatureClass, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    sanitizeTemperatureObject(param.thisObject);
+                }
+            });
             XposedHelpers.findAndHookMethod(temperatureClass, "getStatus", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     Object result = param.getResult();
                     if (!(result instanceof Integer) || ((Integer) result).intValue() < THROTTLING_SEVERE) {
+                        return;
+                    }
+                    Object nameObject = XposedHelpers.callMethod(param.thisObject, "getName");
+                    if ("socd".equals(nameObject)) {
+                        float maxCluster = readMaxCpuClusterTemperatureC();
+                        if (!Float.isNaN(maxCluster)
+                                && maxCluster <= SOCD_SEVERE_CLEAR_MAX_CLUSTER_C) {
+                            param.setResult(Integer.valueOf(THROTTLING_NONE));
+                            if (SOCD_RECOVERY_REPORTED.compareAndSet(false, true)) {
+                                XposedBridge.log(TAG + ": cleared phantom socd thermal status, maxCluster="
+                                        + maxCluster + "C");
+                            }
+                        }
                         return;
                     }
                     int type = ((Integer) XposedHelpers.callMethod(param.thisObject, "getType")).intValue();
@@ -104,6 +136,153 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
         } catch (Throwable th) {
             XposedBridge.log(TAG + ": stale skin thermal-status recovery failed");
             XposedBridge.log(th);
+        }
+    }
+
+    private static void sanitizeTemperatureObject(Object temperature) {
+        try {
+            String name = (String) XposedHelpers.callMethod(temperature, "getName");
+            // Read the raw field: getStatus() is itself hooked below and may
+            // already present a corrected value to callers.
+            int status = XposedHelpers.getIntField(temperature, "mStatus");
+            if ("hbm".equals(name)) {
+                float physicalSkin = readPhysicalSkinTemperatureC();
+                if (!Float.isNaN(physicalSkin)) {
+                    XposedHelpers.setFloatField(temperature, "mValue", physicalSkin);
+                    if (HBM_BRIDGE_REPORTED.compareAndSet(false, true)) {
+                        XposedBridge.log(TAG + ": bridged disabled hbm surface reading to skin="
+                                + physicalSkin + "C");
+                    }
+                }
+                return;
+            }
+            if ("socd".equals(name)) {
+                float maxCluster = readMaxCpuClusterTemperatureC();
+                if (Float.isNaN(maxCluster)) {
+                    return;
+                }
+                XposedHelpers.setFloatField(temperature, "mValue", maxCluster);
+                if (status >= THROTTLING_SEVERE
+                        && maxCluster <= SOCD_SEVERE_CLEAR_MAX_CLUSTER_C) {
+                    XposedHelpers.setIntField(temperature, "mStatus", THROTTLING_NONE);
+                    if (SOCD_RECOVERY_REPORTED.compareAndSet(false, true)) {
+                        XposedBridge.log(TAG + ": sanitized phantom socd thermal event, maxCluster="
+                                + maxCluster + "C");
+                    }
+                }
+                return;
+            }
+            int type = ((Integer) XposedHelpers.callMethod(temperature, "getType")).intValue();
+            if (type != TEMPERATURE_TYPE_SKIN || status < THROTTLING_SEVERE) {
+                return;
+            }
+            float physicalValue = readPhysicalSkinTemperatureC();
+            if (!Float.isNaN(physicalValue) && physicalValue <= PHYSICAL_SKIN_CLEAR_C) {
+                XposedHelpers.setIntField(temperature, "mStatus", THROTTLING_NONE);
+                if (THERMAL_RECOVERY_REPORTED.compareAndSet(false, true)) {
+                    float virtualValue = ((Float) XposedHelpers.callMethod(temperature, "getValue"))
+                            .floatValue();
+                    XposedBridge.log(TAG + ": sanitized stale skin thermal event, virtual="
+                            + virtualValue + "C physical=" + physicalValue + "C");
+                }
+            }
+        } catch (Throwable ignored) {
+            // Preserve the HAL object unchanged if this ROM changes its fields.
+        }
+    }
+
+    /*
+     * The phone HAL exposes a virtual "socd" value in whole degrees. On this
+     * tablet it remains around 92-94 while all four physical cpuss sensors are
+     * tens of degrees cooler, so Android clients see a permanent SEVERE BCL
+     * temperature. Bridge that one exact virtual name to the maximum physical
+     * cluster temperature. If physical data is unavailable, preserve the OEM
+     * value/status; never invent a fallback temperature.
+     */
+    private static void installSocdTemperatureBridge(ClassLoader cl) {
+        try {
+            Class<?> temperatureClass = XposedHelpers.findClass("android.os.Temperature", cl);
+            XposedHelpers.findAndHookMethod(temperatureClass, "getValue", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Object nameObj = XposedHelpers.callMethod(param.thisObject, "getName");
+                    if (!(nameObj instanceof String)) {
+                        return;
+                    }
+                    if ("hbm".equals(nameObj)) {
+                        float physicalSkin = readPhysicalSkinTemperatureC();
+                        if (!Float.isNaN(physicalSkin)) {
+                            param.setResult(Float.valueOf(physicalSkin));
+                            if (HBM_BRIDGE_REPORTED.compareAndSet(false, true)) {
+                                XposedBridge.log(TAG + ": bridged disabled hbm surface reading to skin="
+                                        + physicalSkin + "C");
+                            }
+                        }
+                        return;
+                    }
+                    if (!"socd".equals(nameObj)) {
+                        return;
+                    }
+                    float maxCluster = readMaxCpuClusterTemperatureC();
+                    if (Float.isNaN(maxCluster)) {
+                        return;
+                    }
+                    param.setResult(Float.valueOf(maxCluster));
+                    if (SOCD_BRIDGE_REPORTED.compareAndSet(false, true)) {
+                        XposedBridge.log(TAG + ": bridged phantom socd temp to maxCluster="
+                                + maxCluster + "C");
+                    }
+                }
+            });
+            XposedBridge.log(TAG + ": socd temperature bridge installed");
+        } catch (Throwable th) {
+            XposedBridge.log(TAG + ": socd temperature bridge failed");
+            XposedBridge.log(th);
+        }
+    }
+
+    private static float readMaxCpuClusterTemperatureC() {
+        try {
+            String[] paths = cpuClusterTempPaths;
+            if (paths == null) {
+                File thermalRoot = new File("/sys/class/thermal");
+                File[] zones = thermalRoot.listFiles();
+                if (zones == null) {
+                    return Float.NaN;
+                }
+                java.util.ArrayList<String> found = new java.util.ArrayList<>();
+                for (File zone : zones) {
+                    if (!zone.getName().startsWith("thermal_zone")) {
+                        continue;
+                    }
+                    String type = readFirstLine(new File(zone, "type"));
+                    if (type != null && type.matches("cpuss-[0-3]")) {
+                        found.add(new File(zone, "temp").getAbsolutePath());
+                    }
+                }
+                if (found.isEmpty()) {
+                    return Float.NaN;
+                }
+                paths = found.toArray(new String[0]);
+                cpuClusterTempPaths = paths;
+            }
+            float max = Float.NaN;
+            for (String path : paths) {
+                String raw = readFirstLine(new File(path));
+                if (raw == null) {
+                    continue;
+                }
+                float value = Float.parseFloat(raw) / 1000.0f;
+                if (value < 0.0f || value > 125.0f) {
+                    continue;
+                }
+                if (Float.isNaN(max) || value > max) {
+                    max = value;
+                }
+            }
+            return max;
+        } catch (Throwable ignored) {
+            return Float.NaN;
         }
     }
 
