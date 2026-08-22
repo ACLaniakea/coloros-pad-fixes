@@ -22,18 +22,38 @@ MODDIR=${0%/*}
 #   7) 允许 Dolby Bridge 后台运行，避免原厂控制页仍在前台时服务被 app-idle
 #      回收，导致 UI 仅写入设置但没有实时下发 DAP；
 #   8) 清理已合并的旧 AON 独立包；启动 horae/gameopt；
-#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：稳定态普通后台 20、
-#      冷后台 40、活跃 UI 10、system_server 5，并保留 64MB 水位；
+#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：稳定态普通后台 10、
+#      冷后台 20，活跃 UI 与 system_server 禁止匿名页换出，并保留 64MB 水位；
 #  10) 按需执行应用建议协议修复与序列号补齐。
 # ============================================================================
 
 until [ "$(getprop sys.boot_completed)" = 1 ]; do sleep 2; done
-sleep 8
 log_msg "late service start"
 
 if ! is_supported_device; then
     log_msg "unsupported device; skipped Lenovo Pad Pro GT service fixes"
     exit 0
+fi
+
+# AOSP/ColorOS protects excessive cached processes for ten minutes after the
+# first user unlock. The 12 GB source phone can absorb that burst, but on the
+# 8 GB tablet it keeps the whole CE restore set resident while kswapd and AMS
+# compete for roughly a minute. Newer AOSP defaults this grace period to zero.
+# Apply that upstream behavior only to <=9 GB variants; 12 GB devices retain
+# the stock ten-minute cache warmth and normal Android process semantics.
+ram_kb=$(awk '/MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
+case "$ram_kb" in ''|*[!0-9]*) ram_kb=0 ;; esac
+if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
+    cache_grace=$(device_config get activity_manager \
+        no_kill_cached_processes_post_boot_completed_duration_millis 2>/dev/null)
+    if [ "$cache_grace" != 0 ]; then
+        device_config put activity_manager \
+            no_kill_cached_processes_post_boot_completed_duration_millis 0 \
+            >/dev/null 2>&1
+    fi
+    log_msg "8GB cache trim policy active: post-unlock grace=0ms"
+else
+    log_msg "12GB-class cache trim policy preserved"
 fi
 
 # PackageManager may rewrite LSPosed's module path after an APK update.  Pin it
@@ -223,16 +243,17 @@ ensure_voice_wakeup() {
     # service and the genuine OVoice manager.  Starting OVoice directly from
     # this late service bypasses that bind and triggers Android's foreground
     # service timeout.
-    if am force-stop com.oplus.ovoicemanager.wakeup >/dev/null 2>&1; then
-        log_msg "voice wake service reset package=com.oplus.ovoicemanager.wakeup"
-    fi
-    cmd package unstop --user 0 com.oplus.ovoicemanager.wakeup >/dev/null 2>&1
-    if am broadcast --user 0 \
-        -a android.intent.action.BOOT_COMPLETED \
-        -n com.oplus.ovoicemanager.wakeup/.service.OVSBootupReceiver >/dev/null 2>&1; then
-        log_msg "voice wake stock BootReceiver re-entered; ExSystem bind delegated"
+    if pidof com.oplus.ovoicemanager.wakeup >/dev/null 2>&1; then
+        log_msg "voice wake process already running; stock boot lifecycle preserved"
     else
-        log_msg "voice wake stock BootReceiver request failed"
+        cmd package unstop --user 0 com.oplus.ovoicemanager.wakeup >/dev/null 2>&1
+        if am broadcast --user 0 \
+            -a android.intent.action.BOOT_COMPLETED \
+            -n com.oplus.ovoicemanager.wakeup/.service.OVSBootupReceiver >/dev/null 2>&1; then
+            log_msg "voice wake process absent; stock BootReceiver re-entered"
+        else
+            log_msg "voice wake stock BootReceiver request failed"
+        fi
     fi
 }
 
@@ -282,12 +303,17 @@ else
     echo $! >"$MODDIR/app-suggestion.pid"
 fi
 
-# OVoice 小核省电守护：熄屏待听时把唤醒线程限制在 little+中核 (0,3-4)，
-# 亮屏/唤醒后恢复全核 (0-5)；进程出现 60 秒内不强切，避免 FGS 超时崩溃。
-if [ -f "$MODDIR/bin/voice-power-guard.sh" ]; then
+# Preserve the original screen-off OVoice power policy with an events-log
+# subscription. It blocks between real screen/process edges and therefore
+# makes no periodic shell -> system_server IPC calls.
+if [ -r "$MODDIR/voice-power-guard.pid" ]; then
+    kill "$(cat "$MODDIR/voice-power-guard.pid" 2>/dev/null)" 2>/dev/null
+    rm -f "$MODDIR/voice-power-guard.pid"
+fi
+if [ -x "$MODDIR/bin/voice-power-guard.sh" ]; then
     "$MODDIR/bin/voice-power-guard.sh" "$MODDIR" &
     echo $! >"$MODDIR/voice-power-guard.pid"
-    log_msg "voice power guard started"
+    log_msg "event-driven voice power guard started"
 fi
 
 log_msg "identity=$(getprop ro.product.brand)/$(getprop ro.product.name)/$(getprop ro.product.device)/$(getprop ro.product.model)"
@@ -300,8 +326,9 @@ log_msg "late service end"
 # 进程会让 system_server 进入反复崩溃/重启，结果是所有 Hook（不仅是环境光）
 # 一起失效。若本次冷启动未注入，应保留证据，交给下一次完整重启或手动诊断。
 # ============================================================================
-cmd package compile -m speed -f com.aclaniakea.colorosostatsguard >/dev/null 2>&1
-log_msg "hook apk dexopt refreshed for next boot"
+# Hook dexopt is performed once by customize.sh at installation. Recompiling
+# the registered package on every boot needlessly wakes PackageManager and
+# dex2oat while Launcher is still restoring its working set.
 
 sleep 8
 latest_verbose=$(ls -t /data/adb/lspd/log/verbose_*.log 2>/dev/null | head -1)
@@ -316,8 +343,21 @@ fi
 # 实机发现合并版只写 active/systemserver，apps 根分组和每个应用子分组仍为
 # swappiness=100，导致 Launcher/SystemUI/常用应用累计数百 MB Swap。交互切换
 # 实测证明普通=20 + OSense 主动换出会产生换页风暴，因此稳定态收敛为普通=10、
-# inactive=20、active/systemserver=5；保留按需 ZRAM，又不使用 0/1 极端值。
+# inactive=20；active/systemserver=0。0 只用于不会随熄屏离开 active 的关键
+# 交互进程，普通和冷后台仍可按需使用 ZRAM。
 # ============================================================================
+# post-fs-data already applies the final 0/10/20 split and keeps clamping newly
+# created first-unlock groups. Retain a bounded overlap before handoff so late
+# CE groups cannot regain ColorOS' high defaults; no all-zero phase remains.
+log_msg "tuning settle window start: maintaining split memcg policy for 90s"
+sleep 90
+
+# Release post-fs-data's bounded first-unlock guard before publishing the
+# stable child values. A short edge wait prevents the two one-shot scripts
+# from racing; no functionality is delayed by this memory-only handoff.
+touch "$MODDIR/.memcg_settle_ready" 2>/dev/null
+sleep 2
+
 wait_count=0
 while [ ! -w /dev/memcg/apps/memory.swappiness ] &&
       [ "$wait_count" -lt 60 ]; do
@@ -331,10 +371,10 @@ for memcg_file in /dev/memcg/apps/memory.swappiness \
     [ -w "$memcg_file" ] || continue
     case "$memcg_file" in
         */active/memory.swappiness)
-            echo 5 >"$memcg_file" 2>/dev/null
+            echo 0 >"$memcg_file" 2>/dev/null
             ;;
         */systemserver/memory.swappiness)
-            echo 5 >"$memcg_file" 2>/dev/null
+            echo 0 >"$memcg_file" 2>/dev/null
             ;;
         */inactive/memory.swappiness)
             echo 20 >"$memcg_file" 2>/dev/null
@@ -355,7 +395,7 @@ fi
     attempt=0
     while [ "$attempt" -lt 120 ]; do
         if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
-            echo 5 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
+            echo 0 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
             log_msg "late systemserver memcg protected from swap"
             exit 0
         fi

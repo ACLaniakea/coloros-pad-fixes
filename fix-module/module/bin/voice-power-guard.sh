@@ -8,7 +8,8 @@
 #         亮屏/唤醒 -> 恢复全核 (0-5)，保证响应速度。
 #       进程出现后 GRACE_SEC 秒内不强切，避免启动期前台服务超时崩溃。
 # 实现：taskset 线程级亲和性（toybox 掩码按十六进制解析，不接受 0x 前缀），
-#       由 AMS 管理的 cpuset 不会覆盖线程亲和性，比整进程迁移更稳。
+#       亮灭屏与 OVoice 重启均来自 events log 的阻塞订阅；不轮询
+#       dumpsys/pidof，不再每十秒唤醒 system_server。
 # ============================================================================
 
 MODDIR=$1
@@ -37,11 +38,7 @@ pin() {
     taskset -ap "$mask" "$newpid" >/dev/null 2>&1
 }
 
-pid=
-pid_since=0
-last_state=
-
-while :; do
+track_process() {
     newpid=$(pidof "$PKG" 2>/dev/null | awk '{print $1}')
     if [ -n "$newpid" ] && [ "$newpid" != "$pid" ]; then
         pid=$newpid
@@ -49,19 +46,26 @@ while :; do
         last_state=
         log_msg "ovoice pid=$pid tracked"
     fi
+}
 
+apply_current_state() {
+    track_process
     if [ -z "$pid" ]; then
-        sleep 10
-        continue
+        return 0
     fi
-
     now=$(date +%s)
     if screen_is_off; then
-        if [ $((now - pid_since)) -ge "$GRACE_SEC" ]; then
-            if pin "$SAVE_MASK"; then
-                [ "$last_state" != off ] && log_msg "screen off: ovoice pinned to $SAVE_MASK"
-                last_state=off
-            fi
+        remaining=$((GRACE_SEC - now + pid_since))
+        if [ "$remaining" -gt 0 ]; then
+            sleep "$remaining"
+            # A screen-on event can occur during the grace sleep. Read once
+            # before applying the save mask; this is event-edge verification,
+            # not a periodic poll.
+            screen_is_off || return 0
+        fi
+        if pin "$SAVE_MASK"; then
+            [ "$last_state" != off ] && log_msg "screen off: ovoice pinned to $SAVE_MASK"
+            last_state=off
         fi
     else
         if pin "$FULL_MASK"; then
@@ -69,5 +73,31 @@ while :; do
             last_state=on
         fi
     fi
-    sleep 10
+}
+
+pid=
+pid_since=0
+last_state=
+track_process
+apply_current_state
+
+# screen_toggled is tag 70000 on this ROM. am_proc_start lets a restarted
+# OVoice process receive the current policy without periodic pidof checks.
+while :; do
+    logcat -b events -v raw -T 1 \
+        -s screen_toggled:I am_proc_start:I '*:S' 2>/dev/null |
+    while IFS= read -r event; do
+        case "$event" in
+            0|1)
+                apply_current_state
+                ;;
+            *",$PKG,"*)
+                pid=
+                track_process
+                apply_current_state
+                ;;
+        esac
+    done
+    log_msg "event stream ended; restarting"
+    sleep 1
 done

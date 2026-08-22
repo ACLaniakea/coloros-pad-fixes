@@ -54,17 +54,17 @@ fi
 
 # ============================================================================
 # 调优部分（原 coloros_port_tuning）：post-fs-data 阶段
-#   1) 开机阶段把系统根 swappiness 暂设为 5：zygote 进程迁入最终 memcg 前若仍为
-#      ROM 默认 100，会把 system_server/launcher/systemui 也压进 zram；
-#      此时先降全局，后续创建的 app cgroup 也会继承较低基线。
+#   1) 开机阶段即使用实测折中值 10；普通 app 子组=10、冷后台=20，只有
+#      active/systemserver=0。首次解锁 A/B 证明全 0 会让 kswapd 持续扫描，
+#      而默认高值会产生约 1GB 换页洪峰，分层值能让回收快速结束。
 #   2) bind mount 覆盖 /my_stock 的 osense 配置：关闭主动后台换出，避免实测
 #      应用切换期间出现压缩/换入风暴；ZRAM 仍由内核在真实压力下按需使用。
 #      不创建、不扩容 ZRAM，兼容 8/12GB RAM 及未启用 ZRAM 的同型号设备。
-#   3) 开机阶段先把 apps 父 memcg 设为 5，显著压低早期换出但保留 OOM 缓冲；
-#      系统稳定后后台应用由 service 放宽到 10。
+#   3) root/apps/system 父 memcg 从启动起即为 10；有界窗口捕获首次解锁
+#      新建的子组并按类型写 0/10/20，避免 ColorOS 写回默认高值。
 # ============================================================================
 
-echo 5 >/proc/sys/vm/swappiness 2>/dev/null
+echo 10 >/proc/sys/vm/swappiness 2>/dev/null
 echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
 # The transplanted ROM can leave this at 80/120. On the 8 GB tablet that
 # keeps kswapd scanning while MemAvailable is still around 1.8 GB. A/B tests
@@ -72,12 +72,49 @@ echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
 # it is ratio-based and remains suitable for the 12 GB variant.
 echo 20 >/proc/sys/vm/watermark_scale_factor 2>/dev/null
 echo 0 >/proc/sys/vm/watermark_boost_factor 2>/dev/null
+if [ -w /dev/memcg/memory.swappiness ]; then
+    echo 10 >/dev/memcg/memory.swappiness 2>/dev/null
+fi
 if [ -w /dev/memcg/apps/memory.swappiness ]; then
-    echo 5 >/dev/memcg/apps/memory.swappiness 2>/dev/null
+    echo 10 >/dev/memcg/apps/memory.swappiness 2>/dev/null
 fi
 if [ -w /dev/memcg/system/memory.swappiness ]; then
-    echo 5 >/dev/memcg/system/memory.swappiness 2>/dev/null
+    echo 10 >/dev/memcg/system/memory.swappiness 2>/dev/null
 fi
+
+# First unlock creates CE app memcgs in a burst and ColorOS can write its high
+# defaults into each new child. Clamp new groups to the same stable 0/10/20
+# policy until service.sh publishes the handoff. This helper is bounded to four
+# minutes and always exits; it is not a resident tuning daemon.
+MEMCG_SETTLE_FLAG="$MODDIR/.memcg_settle_ready"
+rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
+(
+    attempt=0
+    while [ "$attempt" -lt 240 ] && [ ! -e "$MEMCG_SETTLE_FLAG" ]; do
+        for early_memcg in /dev/memcg/memory.swappiness \
+                /dev/memcg/system/memory.swappiness \
+                /dev/memcg/apps/memory.swappiness \
+                /dev/memcg/apps/*/memory.swappiness; do
+            [ -w "$early_memcg" ] || continue
+            case "$early_memcg" in
+                */active/memory.swappiness|*/systemserver/memory.swappiness)
+                    early_value=0
+                    ;;
+                */inactive/memory.swappiness)
+                    early_value=20
+                    ;;
+                *)
+                    early_value=10
+                    ;;
+            esac
+            [ "$(cat "$early_memcg" 2>/dev/null)" = "$early_value" ] || \
+                echo "$early_value" >"$early_memcg" 2>/dev/null
+        done
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+    log_msg "early first-unlock memcg guard finished attempts=$attempt handoff=$([ -e "$MEMCG_SETTLE_FLAG" ] && echo 1 || echo 0)"
+) &
 
 wait_count=0
 while [ ! -f /my_stock/etc/extension/sys_osense_memory_config.xml ] &&
@@ -138,17 +175,11 @@ bind_postboot_script() {
 bind_postboot_script init.qcom.post_boot.sh u:object_r:vendor_file:s0
 bind_postboot_script init.kernel.post_boot.sh u:object_r:vendor_qti_init_shell_exec:s0
 
-wait_count=0
-while [ ! -w /dev/memcg/apps/active/memory.swappiness ] &&
-      [ "$wait_count" -lt 15 ]; do
-    sleep 1
-    wait_count=$((wait_count + 1))
-done
 if [ -w /dev/memcg/apps/active/memory.swappiness ]; then
-    echo 5 >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
+    echo 0 >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
 fi
 if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
-    echo 5 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
+    echo 0 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
 fi
 log_msg "tuning early: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null)"
 

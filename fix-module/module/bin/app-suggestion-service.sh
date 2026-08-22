@@ -7,11 +7,6 @@ WAL="$DB-wal"
 CLASS=com.aclaniakea.oplusappsuggestionfix.CardProtocolPatcher
 APP_PROCESS=/system/bin/app_process64
 
-db_signature() {
-    stat -c '%Y:%s' "$DB" 2>/dev/null
-    stat -c '%Y:%s' "$WAL" 2>/dev/null
-}
-
 apply_fix() {
     output=$(CLASSPATH="$PATCHER" "$APP_PROCESS" /system/bin "$CLASS" 2>&1)
     result=$?
@@ -27,19 +22,13 @@ apply_fix() {
 
 . "$MODDIR/common.sh"
 until [ "$(getprop sys.boot_completed)" = 1 ] && [ -f "$DB" ]; do sleep 5; done
-sleep 15
-last_signature=
-ticks=0
+# The database WAL changes during ordinary Pantanal activity. Treating that as
+# a repair signal made this script launch app_process every minute forever,
+# feeding PackageManager/system_server work long after the protocol was fixed.
+# Repair once after boot, then retain a very-low-frequency cloud-rewrite
+# safety check so the original self-healing behavior is not lost.
+sleep 45
 while :; do
-    current_signature=$(db_signature)
-    ticks=$((ticks + 1))
-    if [ "$current_signature" != "$last_signature" ] || [ "$ticks" -ge 5 ]; then
-        if apply_fix; then
-            last_signature=$(db_signature)
-            ticks=0
-        else
-            last_signature=
-        fi
-    fi
-    sleep 60
+    apply_fix
+    sleep 1800
 done

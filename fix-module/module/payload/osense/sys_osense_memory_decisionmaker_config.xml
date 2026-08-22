@@ -404,9 +404,11 @@
             <rule index="2">
                 <policy name="respreload" type="camera" />
             </rule>
-            <rule index="1" tag="delay" skip="delay" offset="1800000">
-                <policy name="compress" type="screenoff" />
-            </rule>
+            <!-- Do not compress processes after 30 minutes screen-off.  This
+                 independent decision-maker rule bypassed the swap master
+                 switch and pushed SystemUI, Launcher and system_server pages
+                 into zram.  Their simultaneous refault on wake saturated all
+                 six CPUs for 10-20 seconds. -->
         </scene>
 
         <scene id="1001" name="SCENE_IDLE_RECOVER">
@@ -414,12 +416,6 @@
                 
                 <condition freemem="2" memory_scene="idle" memory="2+" sys_pressure="high" />
                 <policy name="clear" type="cached" level_scene="idle_policy_param" level="1" />
-            </rule>
-
-            <rule index="2" tag="memory" skip="memory">
-                
-                <condition freemem="2" memory_scene="idle" memory="2+" sys_pressure="low" reclaim_factor="swap_more" />
-                <policy name="compress" type="idle" level_scene="idle_policy_param" level="1" />
             </rule>
 
             <rule index="1" tag="unforbid" skip="unforbid">
@@ -514,19 +510,15 @@
                 <policy name="clear" type="cached" level_scene="idle_policy_param" level="1" />
             </rule>
 
-            <rule index="1" tag="memory" skip="memory">
-                
-                <condition freemem="2" memory_scene="idle" memory="2+" sys_pressure="low" reclaim_factor="swap_more" />
-                <policy name="compress" type="idle" level_scene="idle_policy_param" level="1" />
-            </rule>
+            <!-- Low-pressure idle must remain passive.  Kernel reclaim and
+                 lmkd still handle genuine pressure without a wake-time
+                 swap-in burst. -->
         </scene>
 		
 	    <scene id="1008" name="SCENE_MEM_RELEASED">
-            <rule index="1" tag="frag" skip="frag">
-                
-                <condition fragmented="true" freemem="1+" cpupressure="2" sys_pressure="low" />
-                <policy name="compact" type="frag" />
-            </rule>
+            <!-- Proactive whole-memory compaction competed with SurfaceFlinger
+                 immediately after wake.  High-order allocations can still
+                 invoke bounded direct compaction when actually required. -->
         </scene>
 		
         <scene id="1009" name="SCENE_RES_MEM_PSI_MULTIWINDOW">
