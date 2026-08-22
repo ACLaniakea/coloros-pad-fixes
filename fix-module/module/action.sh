@@ -8,6 +8,8 @@ echo "GameOpt 服务: $(getprop init.svc.gameopt_hal_service-1-0)"
 echo "基础修复 Hooks: $(dumpsys package com.aclaniakea.colorosostatsguard 2>/dev/null | sed -n 's/.*versionName=//p' | head -1)"
 echo "VM 状态:"
 echo "  swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null)"
+echo "  watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null)"
+echo "  KGSL reclaim/pages=$(cat /sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null)"
 ram_kb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
 swap_kb=$(awk '/^\/dev\/.*zram/{sum += $3} END{print sum+0}' /proc/swaps 2>/dev/null)
 echo "  detected RAM=${ram_kb:-0}kB active_zram_swap=${swap_kb:-0}kB (ROM-owned; module does not resize)"

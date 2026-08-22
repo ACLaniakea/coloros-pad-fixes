@@ -1,5 +1,4 @@
 com.aclaniakea.colorosostatsguard.OStatsCpuGuard
-com.aclaniakea.facepriorityguard.FaceThreadPriorityGuard
 com.aclaniakea.oplusambientcolorsensorbridge.AmbientColorSensorBridge
 com.aclaniakea.coloroscpuhealthbridge.CpuHealthInfoBridge
 com.aclaniakea.colorosocrcamerabridge.OcrScannerCameraBridge

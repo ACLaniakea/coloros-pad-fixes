@@ -27,8 +27,8 @@
 
 | 项目 | 类型 | 包名 / 模块 ID | 作用 |
 | --- | --- | --- | --- |
-| **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比；用修正 SoC-696 六核配置重载 perf HAL 并保持运行（消除 composer 每帧 AIDL 重连风暴）；取消 service 额外延后，首次解锁的新建 memcg 从创建起按 active/system_server=0、普通=10、冷后台=20 分层；8GB 机型使用 AOSP 新版解锁后立即恢复缓存裁剪，12GB 保留原厂10分钟缓存保护；小布省电绑核改用亮灭屏事件驱动，应用建议从每分钟修补降为开机+30 分钟兜底；开机一次性恢复 governor 与硬件频点；兼容 ROM 既有的 0～1×RAM ZRAM，不创建/扩容；移除长熄屏/空闲强制压缩和主动整理，普通/冷后台仍按需使用 ZRAM；全程 swappiness=10，64MB 水位；AON 挂载为零轮询事件驱动；恢复 ROMUpdate Provider |
-| **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护、移植 Thermal HAL 的 skin 状态恢复；将旧版 Megvii 人脸计算线程从异常高优先级恢复为普通优先级，避免亮屏抢占 system_server 动画链路 |
+| **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比；用修正 SoC-696 六核配置重载 perf HAL 并保持运行（消除 composer 每帧 AIDL 重连风暴）；首次解锁 memcg 按 active/system_server=0、普通=10、冷后台=20 分层；8/12GB 全局/根 memcg swappiness=10，watermark 分别10/20；KGSL 单次回收由约150MB限制为4MB，避免 kswapd/SurfaceFlinger 换页重建风暴；兼容 ROM 既有0～1×RAM ZRAM且不创建/扩容；移除长熄屏/空闲强制压缩和主动整理；保留原厂动态 boost、温控与人脸识别性能；AON 挂载零轮询；恢复 ROMUpdate Provider |
+| **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护、移植 Thermal HAL 的 skin 状态恢复 |
 | **pen-bridge 手写笔桥接** | KernelSU 模块 | `lenovo_pen_bridge` | 原厂 CoreService BLE 连接/断开、CPS 上电、真实 ACL/GATT/Hall 状态同步、PenHidCtl HID 控制（flock 单例 + 开机监控时序） |
 | **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，书写触觉直连 GATT、版本字段跨进程同步与真实 GATT 断开 |
 | **PenHidCtl** | priv-app | `com.aclaniakea.penhidctl` | HID 连接控制（纯服务、无桌面图标） |
@@ -78,7 +78,7 @@ adb reboot
 
 ## 推荐作用域
 
-安装后请在 **LSPosed 管理器 → 模块 → 作用域** 检查作用域。`FixModule` 会自动保留 BaseFix 的系统框架（`android` / 数据库中的 `system`）作用域，其余应用作用域仍请手动勾选：
+`FixModule` 会把 BaseFix 内置 `scope.list` 自动补齐到 LSPosed 白名单，包括系统框架（APK 中的 `android` / 数据库中的 `system`）与下列应用。同步只使用 `INSERT OR IGNORE` 增补必需作用域，不会删除用户额外勾选的包：
 
 **base-fix（`com.aclaniakea.colorosostatsguard`）**，见 [scope.list](base-fix/hook/resources/META-INF/xposed/scope.list)：
 
@@ -134,7 +134,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 > **OEM 二进制不随仓库分发**：`payload/aon-libs/`、`payload/voice/`、`odm/lib64/`、`zygisk/`、`libpeninput.so`、`pen-cps-gpio` 等为原厂固件/运行时，已通过 `.gitignore` 排除，可从设备已安装模块目录或原厂备份还原；`PenHidCtl.apk` 与 `bin/card-protocol-patcher.jar` 均由仓库内源码构建生成（后者由 `base-fix/module/tools/smali/` 经 `tools/build_patcher.py` 自动重编译，需 smali.jar）。
 > 修复模块内 `payload/bin/init.qcom.post_boot.sh` 与 `payload/bin/init.kernel.post_boot.sh`
-> 为高通开机脚本的一次性补丁（开机 swappiness 100→5，见 `fix-module/tools/patch_postboot.sh`），
+> 为高通开机脚本的一次性补丁（开机 swappiness 100→10，见 `fix-module/tools/patch_postboot.sh`），
 > 由原厂 `/vendor/bin/` 脚本经该工具生成，随模块 bind 覆盖，属文本补丁而非预编译二进制。
 
 ## 目录结构

@@ -6,6 +6,22 @@ import java.io.File;
 /** Pins the BaseFix LSPosed module to an early-boot-stable APK path. */
 public final class LsposedPathSync {
     private static final String MODULE = "com.aclaniakea.colorosostatsguard";
+    // LSPosed stores the Android framework scope as "system". Keep this list
+    // aligned with the APK's META-INF/xposed/scope.list. INSERT OR IGNORE only
+    // adds required scopes and never removes scopes selected by the user.
+    private static final String[] SCOPES = {
+            "system",
+            "com.android.settings",
+            "com.coloros.phonemanager",
+            "com.coloros.ocrscanner",
+            "com.inkdye.lenovopentocoloros",
+            "com.aiunit.aon",
+            "com.heytap.speechassist",
+            "com.oplus.ovoicemanager.wakeup",
+            "com.oplus.battery",
+            "com.oplus.gesture",
+            "com.coloros.findmyphone"
+    };
 
     private LsposedPathSync() {}
 
@@ -41,14 +57,16 @@ public final class LsposedPathSync {
                             + "(module_pkg_name,user_id,enabled,scope_request_blocked)"
                             + " VALUES(?,0,1,0)",
                     new Object[] {MODULE});
-            db.execSQL("INSERT OR IGNORE INTO scope(module_pkg_name,app_pkg_name,user_id)"
-                            + " VALUES(?,'system',0)",
-                    new Object[] {MODULE});
+            for (String scope : SCOPES) {
+                db.execSQL("INSERT OR IGNORE INTO scope"
+                                + "(module_pkg_name,app_pkg_name,user_id) VALUES(?,?,0)",
+                        new Object[] {MODULE, scope});
+            }
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
             db.close();
         }
-        System.out.println("BaseFix LSPosed path pinned to " + apk);
+        System.out.println("BaseFix LSPosed path/scopes pinned to " + apk);
     }
 }

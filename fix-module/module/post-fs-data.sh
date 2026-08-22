@@ -54,9 +54,12 @@ fi
 
 # ============================================================================
 # 调优部分（原 coloros_port_tuning）：post-fs-data 阶段
-#   1) 开机阶段即使用实测折中值 10；普通 app 子组=10、冷后台=20，只有
-#      active/systemserver=0。首次解锁 A/B 证明全 0 会让 kswapd 持续扫描，
-#      而默认高值会产生约 1GB 换页洪峰，分层值能让回收快速结束。
+#   1) 全局/根 memcg 使用冷启动实测折中值 10；8GB watermark=10，
+#      12GB 保留 watermark=20。
+#      普通 app 子组=10、冷后台=20，只有 active/systemserver=0。首次解锁
+#      A/B 证明全 0 会让 kswapd 持续扫描，而 10 / 20 在 8GB 上仍会形成
+#      换页抖动；全局5在热缓存下扫描较低，但冷启动后会增加
+#      direct reclaim，因此最终取10。
 #   2) bind mount 覆盖 /my_stock 的 osense 配置：关闭主动后台换出，避免实测
 #      应用切换期间出现压缩/换入风暴；ZRAM 仍由内核在真实压力下按需使用。
 #      不创建、不扩容 ZRAM，兼容 8/12GB RAM 及未启用 ZRAM 的同型号设备。
@@ -64,16 +67,30 @@ fi
 #      新建的子组并按类型写 0/10/20，避免 ColorOS 写回默认高值。
 # ============================================================================
 
-echo 10 >/proc/sys/vm/swappiness 2>/dev/null
+ram_kb=$(awk '/MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
+case "$ram_kb" in ''|*[!0-9]*) ram_kb=0 ;; esac
+vm_swappiness=10
+if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
+    vm_watermark=10
+else
+    vm_watermark=20
+fi
+
+echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
 echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
-# The transplanted ROM can leave this at 80/120. On the 8 GB tablet that
-# keeps kswapd scanning while MemAvailable is still around 1.8 GB. A/B tests
-# show 20 preserves an early reclaim margin without sustained kswapd stalls;
-# it is ratio-based and remains suitable for the 12 GB variant.
-echo 20 >/proc/sys/vm/watermark_scale_factor 2>/dev/null
+echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
 echo 0 >/proc/sys/vm/watermark_boost_factor 2>/dev/null
+# The transplanted phone script lets the KGSL shrinker reclaim 38,400 pages
+# (about 150 MB) in one call. Extended cold-boot A/B/A found that even 4,096
+# pages can retrigger multi-GB reclaim; 1,024 pages (4 MB) keeps the same total
+# reclaim limit while splitting work into animation-friendly batches.
+if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
+    echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
+fi
 if [ -w /dev/memcg/memory.swappiness ]; then
-    echo 10 >/dev/memcg/memory.swappiness 2>/dev/null
+    # On this cgroup-v1 kernel the root memcg node aliases the global value;
+    # always keep both writes identical.
+    echo "$vm_swappiness" >/dev/memcg/memory.swappiness 2>/dev/null
 fi
 if [ -w /dev/memcg/apps/memory.swappiness ]; then
     echo 10 >/dev/memcg/apps/memory.swappiness 2>/dev/null
@@ -91,12 +108,27 @@ rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
 (
     attempt=0
     while [ "$attempt" -lt 240 ] && [ ! -e "$MEMCG_SETTLE_FLAG" ]; do
+        # Several late vendor init actions overwrite the early VM values after
+        # post-fs-data (observed at boot as desired 10/10 -> 10/80). Re-apply
+        # only when a value differs during this bounded first-unlock window.
+        # This process exits at service handoff or after four minutes.
+        [ "$(cat /proc/sys/vm/swappiness 2>/dev/null)" = "$vm_swappiness" ] || \
+            echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
+        [ "$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null)" = "$vm_watermark" ] || \
+            echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
+        if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ] && \
+                [ "$(cat /sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null)" != 1024 ]; then
+            echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
+        fi
         for early_memcg in /dev/memcg/memory.swappiness \
                 /dev/memcg/system/memory.swappiness \
                 /dev/memcg/apps/memory.swappiness \
                 /dev/memcg/apps/*/memory.swappiness; do
             [ -w "$early_memcg" ] || continue
             case "$early_memcg" in
+                /dev/memcg/memory.swappiness)
+                    early_value=$vm_swappiness
+                    ;;
                 */active/memory.swappiness|*/systemserver/memory.swappiness)
                     early_value=0
                     ;;

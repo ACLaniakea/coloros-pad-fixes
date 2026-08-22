@@ -123,7 +123,7 @@ function configure_memory_parameters() {
 
 	#configure_zram_parameters
 	configure_read_ahead_kb_values
-	echo 5 > /proc/sys/vm/swappiness
+	echo 10 > /proc/sys/vm/swappiness
 
 	# Disable periodic kcompactd wakeups. We do not use THP, so having many
 	# huge pages is not as necessary.
@@ -167,7 +167,9 @@ function configure_memory_parameters() {
 
 	#Set per-app max kgsl reclaim limit and per shrinker call limit
 	if [ -f /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
-		echo 38400 > /sys/class/kgsl/kgsl/page_reclaim_per_call
+		# Bound each KGSL shrinker pass to 4 MB. The phone value (150 MB)
+		# causes kswapd/SF refault storms on the tablet's 144 Hz workload.
+		echo 1024 > /sys/class/kgsl/kgsl/page_reclaim_per_call
 	fi
 	if [ -f /sys/class/kgsl/kgsl/max_reclaim_limit ]; then
 		echo 51200 > /sys/class/kgsl/kgsl/max_reclaim_limit

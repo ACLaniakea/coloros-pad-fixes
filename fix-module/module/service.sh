@@ -43,7 +43,9 @@ fi
 # the stock ten-minute cache warmth and normal Android process semantics.
 ram_kb=$(awk '/MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
 case "$ram_kb" in ''|*[!0-9]*) ram_kb=0 ;; esac
+vm_swappiness=10
 if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
+    vm_watermark=10
     cache_grace=$(device_config get activity_manager \
         no_kill_cached_processes_post_boot_completed_duration_millis 2>/dev/null)
     if [ "$cache_grace" != 0 ]; then
@@ -53,7 +55,16 @@ if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
     fi
     log_msg "8GB cache trim policy active: post-unlock grace=0ms"
 else
+    vm_watermark=20
     log_msg "12GB-class cache trim policy preserved"
+fi
+
+# Close the gap before the bounded memcg handoff below. Vendor init may have
+# overwritten post-fs-data's VM values while Android was still starting.
+echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
+echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
+if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
+    echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
 fi
 
 # PackageManager may rewrite LSPosed's module path after an APK update.  Pin it
@@ -364,8 +375,8 @@ while [ ! -w /dev/memcg/apps/memory.swappiness ] &&
     toybox sleep 1
     wait_count=$((wait_count + 1))
 done
-echo 10 >/proc/sys/vm/swappiness 2>/dev/null
-echo 10 >/dev/memcg/memory.swappiness 2>/dev/null
+echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
+echo "$vm_swappiness" >/dev/memcg/memory.swappiness 2>/dev/null
 for memcg_file in /dev/memcg/apps/memory.swappiness \
         /dev/memcg/apps/*/memory.swappiness; do
     [ -w "$memcg_file" ] || continue
@@ -405,10 +416,13 @@ fi
     log_msg "late systemserver memcg one-shot wait timed out"
 ) &
 
-# 64MB is only 0.8% of RAM and restores the previously validated tuning value.
-# It wakes kswapd before a UI allocation falls into direct reclaim/allocstall.
+# 64MB is only 0.8% of RAM. The watermark is RAM-aware: 10 on the 8GB model
+# prevents premature background scanning, while 12GB retains the prior 20.
 echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
-echo 20 >/proc/sys/vm/watermark_scale_factor 2>/dev/null
+echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
 echo 0 >/proc/sys/vm/watermark_boost_factor 2>/dev/null
+if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
+    echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
+fi
 
-log_msg "tuning ready: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null) inactive=$(cat /dev/memcg/apps/inactive/memory.swappiness 2>/dev/null)"
+log_msg "tuning ready: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) kgsl_reclaim=$(cat /sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null) inactive=$(cat /dev/memcg/apps/inactive/memory.swappiness 2>/dev/null)"

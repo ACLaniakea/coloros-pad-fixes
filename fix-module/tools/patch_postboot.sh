@@ -4,7 +4,7 @@
 # The ColorOS/QTI boot scripts hard-code "echo 100 > /proc/sys/vm/swappiness",
 # which overrides the module's early VM baseline after every reboot. This tool
 # takes the vendor originals and produces the patched copies shipped inside
-# fix-module/module/payload/bin/, where every swappiness write is 5 instead
+# fix-module/module/payload/bin/, where every swappiness write is 10 instead
 # of 100. The module bind-mounts these copies over /vendor/bin at
 # post-fs-data, so the boot scripts themselves write 5 (root-cause fix, no
 # polling guard).
@@ -23,7 +23,7 @@ for name in init.qcom.post_boot.sh init.kernel.post_boot.sh; do
     src="$SRC_DIR/$name"
     dst="$OUT_DIR/$name"
     [ -f "$src" ] || { echo "missing vendor script: $src" >&2; exit 1; }
-    sed 's/echo 100 > \/proc\/sys\/vm\/swappiness/echo 5 > \/proc\/sys\/vm\/swappiness/g' \
+    sed 's/echo 100 > \/proc\/sys\/vm\/swappiness/echo 10 > \/proc\/sys\/vm\/swappiness/g' \
         "$src" >"$dst"
     chmod 0755 "$dst"
     echo "patched $dst"
