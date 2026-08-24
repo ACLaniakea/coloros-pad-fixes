@@ -9,8 +9,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "SM8650Q-Scene-Scheduler-v1.0.7.zip"
 EXCLUDE = {"scheduler.log"}
+
+
+def _module_version(module_dir: Path) -> str:
+    """Read version= from module.prop so the artifact name cannot drift.
+
+    It used to be a literal in this file, which meant every version bump had to
+    be made in three places (module.prop, powercfg.json, here) and a missed one
+    silently produced a zip named after the previous release.
+    """
+    for line in (module_dir / "module.prop").read_text(encoding="utf-8").splitlines():
+        if line.startswith("version="):
+            return line.split("=", 1)[1].strip()
+    raise SystemExit("module.prop has no version=")
+
+
+OUT = (ROOT.parents[1] / "releases"
+       / f"SM8650Q-Scene-Scheduler-v{_module_version(ROOT)}.zip")
 
 
 def main() -> None:

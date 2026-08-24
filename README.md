@@ -5,7 +5,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-2.0.13-orange)
+![Version](https://img.shields.io/badge/version-2.0.14-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -28,7 +28,7 @@
 | 项目 | 类型 | 包名 / 模块 ID | 作用 |
 | --- | --- | --- | --- |
 | **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比；用修正 SoC-696 六核配置重载 perf HAL 并保持运行（消除 composer 每帧 AIDL 重连风暴）；首次解锁 memcg 按 active/system_server/launcher/native-system=0、普通/冷后台=50 分层，但只迁移进程归属、不搬运已计费页面；标准 ZRAM 上提供低开销 OPlus 内存 ABI 限幅并阻止 zsmalloc 消耗显示 CMA；关闭缺少内核接口的 HybridSwap/Nirvana/HMBIRD 云控，保留预加载、LMKD、MGLRU；8GB缓存进程上限48、12GB保持原厂值；KGSL 单次回收约4MB；兼容 ROM 既有0～1×RAM ZRAM且不创建/扩容；保留原厂动态 boost、温控与人脸识别性能 |
-| **SM8650Q 专用调度（Scene）** | KernelSU 模块 / Scene 外部调度 | `sm8650q_scene_scheduler` | 按实机 `1+4+1` 容量拓扑和 `policy0/1/3/5` 四频域提供省电、均衡、性能、极速模式；Scene 负责分应用切换，无额外常驻守护；保留原厂 Power/Perf HAL、温控与动态降频 |
+| **SM8650Q 专用调度（Scene）** | KernelSU 模块 / Scene 外部调度 | `sm8650q_scene_scheduler` | 按实机 `1+4+1` 容量拓扑和 `policy0/1/3/5` 四频域提供省电、均衡、性能、极速模式；撤销源八核平台把中断压到唯一弱核 CPU0 的布局，并为 wlan0/p2p0 启用原厂只给 rmnet 配过的 RPS/RFS，实测 CPU0 网络软中断处理量下降约 94%；Scene 负责分应用切换，无额外常驻守护；保留原厂 Power/Perf HAL、温控与动态降频 |
 | **OPlus 内核兼容层** | GKI 外挂模块 / 文档 | `kernel-compat/` | 基于设备精确 GKI build 13606743 编译窄接口兼容层；首个模块恢复 Horae `/proc/shell-temp` 原厂 ABI，并由 FixModule 在 post-fs-data 一次性加载。完整 HybridSwap、zram/zsmalloc 与 OPlus 调度栈不自动加载，须按内核移植文档分阶段验证 |
 | **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护、移植 Thermal HAL 的 skin 状态恢复 |
 | **pen-bridge 手写笔桥接** | KernelSU 模块 | `lenovo_pen_bridge` | 原厂 CoreService BLE 连接/断开、CPS 上电、真实 ACL/GATT/Hall 状态同步、PenHidCtl HID 控制；内置同签名 Hook 副本供 LSPosed 冷启动稳定读取 |
@@ -67,9 +67,9 @@ adb shell su -c 'ksud module uninstall coloros_port_tuning'
 adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
-adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.13.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.14.zip'
 adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.20.zip'
-adb shell su -c 'ksud module install /sdcard/SM8650Q-Scene-Scheduler-v1.0.5.zip'
+adb shell su -c 'ksud module install /sdcard/SM8650Q-Scene-Scheduler-v1.0.8.zip'
 
 # 4. 安装 Hook APK（LSPosed）
 adb install --no-incremental BaseFix-Hook-v1.1.12.apk
@@ -119,7 +119,7 @@ com.oplus.screenshot
 
 - Android SDK build-tools（aapt2 / d8 / zipalign / apksigner）
 - Xposed API stubs
-- smali / baksmali（pen-bridge hook 由已验证 dex 重打包）
+- smali / baksmali（仅旧的 `build_hook_v1.py` dex 重打包路径需要；现役 pen-bridge Hook 由 `build_hook_source.py` 从 Java 源码 `javac --release 17` → d8 编译）
 - 签名密钥（`/tmp/aclaniakea.jks`，别名 `aclaniakea`）
 
 ```bash

@@ -11,7 +11,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "FixModule-v2.0.13.zip"
+def _module_version(module_dir: Path) -> str:
+    """Read version= from module.prop so the artifact name cannot drift."""
+    for line in (module_dir / "module.prop").read_text(encoding="utf-8").splitlines():
+        if line.startswith("version="):
+            return line.split("=", 1)[1].strip()
+    raise SystemExit("module.prop has no version=")
+
+
+OUT = ROOT.parents[1] / "releases" / f"FixModule-v{_module_version(ROOT)}.zip"
 HOOK_APK = ROOT.parents[1] / "releases" / "BaseFix-Hook-v1.1.12.apk"
 EXCLUDE = {"fix-module.log", "tuning.log", "daemon.pid", "magic.pid"}
 

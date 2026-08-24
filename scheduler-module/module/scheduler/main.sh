@@ -60,6 +60,42 @@ find_irq_by_name() {
     awk -v name="$name" '$NF == name { gsub(":", "", $1); print $1 }' /proc/interrupts 2>/dev/null
 }
 
+# WLAN 的中断名按队列枚举（pci0_wlan_ce_0..8、pci0_wlan_grp_dp_0..15），
+# 且随驱动加载时机变化，只能按前缀匹配。输出 "irq 名字" 两列。
+find_irq_by_prefix() {
+    prefix=$1
+    awk -v p="$prefix" 'index($NF, p) == 1 { gsub(":", "", $1); print $1, $NF }' \
+        /proc/interrupts 2>/dev/null
+}
+
+# 把一组同前缀的 IRQ 轮流铺到给定的 CPU 列表上。QCA 数据面每条队列的负载
+# 差了一个数量级（dp_14 约 9.5 万次，dp_13 约 6 千次），因此按 /proc/interrupts
+# 里的实际计数从多到少排序后再轮转，让最重的几条先落到不同核上。
+spread_irq_by_prefix() {
+    prefix=$1
+    shift
+    cpus="$*"
+    [ -n "$cpus" ] || return 0
+    idx=0
+    for irq in $(awk -v p="$prefix" '
+            index($NF, p) == 1 {
+                tot = 0
+                for (i = 2; i <= 7; i++) tot += $i
+                gsub(":", "", $1)
+                print tot, $1
+            }' /proc/interrupts 2>/dev/null | sort -rn | awk '{print $2}'); do
+        cpu=$(echo "$cpus" | awk -v n="$idx" '{print $((n % NF) + 1)}')
+        node="/proc/irq/$irq/smp_affinity_list"
+        [ -w "$node" ] || continue
+        before=$(cat "$node" 2>/dev/null)
+        [ "$before" = "$cpu" ] && { idx=$((idx + 1)); continue; }
+        echo "$cpu" >"$node" 2>/dev/null || continue
+        after=$(cat "/proc/irq/$irq/effective_affinity_list" 2>/dev/null)
+        log "irq=$irq prefix=$prefix cpu=$cpu effective=${after:-unknown} previous=${before:-unknown}"
+        idx=$((idx + 1))
+    done
+}
+
 set_irq_cpu() {
     cpu=$1
     name=$2
@@ -95,6 +131,62 @@ apply_irq_topology() {
     set_irq_cpu 4 240b7400.qcom,bwmon-llcc
     set_irq_cpu 4 24091000.qcom,bwmon-ddr
     set_irq_cpu 4 msm_serial_geni0
+
+    # 以上按名字静态分散的是 default_smp_affinity 覆盖不到的一部分。实机
+    # /proc/interrupts 显示真正的大户根本不在其中：WLAN 的 14 条中断把
+    # smp_affinity_list 显式钉在 0（不是默认漂移），合计约 43.6 万次全部落在
+    # 唯一弱核 CPU0；msm-vidc（硬件编解码）与两条 i2c_geni 同样有效落在 CPU0。
+    # 与此同时 CPU3/CPU4 各只有约 10 万次。投屏这类场景要同时吃 Wi-Fi 数据面
+    # 和视频编码，两者却挤在同一颗 379 容量的核上。
+    #
+    # WLAN 的 14 条中断同样全钉在 CPU0，但 QCA 驱动给它们置了 IRQ_NO_BALANCING：
+    # 实测对 irq 308/319/326 写 smp_affinity 与 smp_affinity_list 一律失败
+    # （rc=1/EIO），硬中断无法迁移，只能由 apply_net_rps 把随后的 softirq
+    # 协议栈处理转到中核。这里不再尝试，避免每次开机做十几次注定失败的写。
+
+    # 硬件编解码中断与其固件接口 hfi 同核，避免每帧跨核。
+    set_irq_cpu 2 msm-vidc
+
+    # i2c_geni 有多个实例（触控以外的传感器/PMIC 总线），统一挪到 CPU1。
+    spread_irq_by_prefix i2c_geni 1
+}
+
+# CPU1-4 掩码；Prime CPU5 不参与网络软中断，留给交互突发。
+RPS_CPUS=1e
+RPS_SOCK_FLOW_ENTRIES=32768
+RPS_FLOW_CNT=4096
+
+apply_net_rps() {
+    # 原厂 init.qcom.post_boot.sh 只给 rmnet0/rmnet_ipa0 配了 RPS，wlan 从未配置。
+    # 在源机八核上这没问题：QCA 驱动自己的 NAPI 亲和会把 CE/DP 中断铺到大核簇。
+    # 搬到本机 1+4+1 六核后，那些中断被 IRQ_NO_BALANCING 钉死在唯一弱核 CPU0
+    # （实测 WLAN 合计约 43.6 万次全部落在 CPU0），又没有 RPS 兜底，于是
+    # Wi-Fi 收包的协议栈处理与硬件编解码挤在同一颗 379 容量的核上。
+    # RPS 只搬 softirq，不触碰硬中断，属于标准内核机制，可随时清零回滚。
+    [ -d /sys/class/net ] || return 0
+
+    # rps_flow_cnt 只有在全局 rps_sock_flow_entries 非零时才允许写入，顺序不能反。
+    if [ -w /proc/sys/net/core/rps_sock_flow_entries ]; then
+        cur=$(cat /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null)
+        case "$cur" in ''|*[!0-9]*) cur=0 ;; esac
+        if [ "$cur" -lt "$RPS_SOCK_FLOW_ENTRIES" ]; then
+            write_node "$RPS_SOCK_FLOW_ENTRIES" /proc/sys/net/core/rps_sock_flow_entries
+        fi
+    fi
+
+    applied=0
+    for dev in wlan0 p2p0; do
+        [ -d "/sys/class/net/$dev" ] || continue
+        for q in /sys/class/net/"$dev"/queues/rx-*; do
+            [ -w "$q/rps_cpus" ] || continue
+            [ "$(cat "$q/rps_cpus" 2>/dev/null)" = "$RPS_CPUS" ] && continue
+            write_node "$RPS_CPUS" "$q/rps_cpus"
+            [ -w "$q/rps_flow_cnt" ] && write_node "$RPS_FLOW_CNT" "$q/rps_flow_cnt"
+            applied=$((applied + 1))
+        done
+    done
+    [ "$applied" -gt 0 ] && log "rps applied to $applied wlan/p2p rx queues cpus=$RPS_CPUS"
+    return 0
 }
 
 set_common() {
@@ -240,12 +332,18 @@ trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
 if [ "$action" = irq-init ]; then
     apply_irq_topology
+    apply_net_rps
     log "applied 1+4+1 irq topology default=$(cat /proc/irq/default_smp_affinity 2>/dev/null)"
     exit 0
 fi
 set_common
 set_mode "$mode"
 echo "$mode" >"$STATE_FILE"
+
+# wlan0/p2p0 被重建（关开 Wi-Fi、投屏建组）时 rps_cpus 会清零。Scene 每次切换
+# 模式都会调到这里，顺手补一次即可覆盖，无需常驻监听；已是目标值时直接跳过，
+# 正常情况下一次 sysfs 读、零次写。
+apply_net_rps
 
 if [ "$action" = init ]; then
     for svc in vendor.perfservice perf2-hal-1-0 oplus.performance.hal.service-1-0 performance; do

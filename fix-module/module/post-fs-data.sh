@@ -317,20 +317,83 @@ bind_over sys_mm_swap_config.xml
 bind_over sys_memory_nirvana_config.xml
 
 # ============================================================================
-# 杜比音效特性开关（一次性覆盖）：原厂 OPlus 特性配置缺少
-# oplus.software.audio.dolby_support，导致设置内“声音与振动→音效”页的
-# 杜比区域被隐藏。补上该特性后，系统自带的 DolbyMainActivity/均衡器界面
-# 恢复显示，走原生 DMS HAL 链路，无需第三方杜比 App。
+# OPlus 特性表覆盖（增量派生，不再 bind 手工快照）
+#
+# 需要两类改动：
+#   a) 补 oplus.software.audio.dolby_support —— 原厂表缺这一条，导致设置内
+#      “声音与振动→音效”页的杜比区域被隐藏；补上后走原生 DMS HAL 链路。
+#   b) 删掉四条依赖本机不存在的内核控制面的特性（Nirvana / HybridSwap 高载
+#      暂停 / OSense 压缩），以及两条源手机 PSI 主动清理策略；它们对应的
+#      OSense 场景规则已在 sys_osense_memory_decisionmaker_config.xml 置空。
+#
+# 旧实现是 bind 一份仓库内手工维护的 51 条快照。等价于把原厂表里所有未被
+# 收录的条目一并删除（原厂 52 条，快照 48 条，差额恰好是上面这 6 条的净值），
+# 且 OTA 换了原厂表之后会静默回退到旧快照、丢掉新增特性。
+# 现在改为运行时读原厂表 + 声明式增删，只动这几条，其余原样保留。
 # ============================================================================
 FEATURE_TARGET=/my_stock/etc/extension/com.oplus.oplus-feature.xml
-FEATURE_PAYLOAD="$MODDIR/payload/oplus/oplus-feature.xml"
-if [ -f "$FEATURE_PAYLOAD" ] && [ -f "$FEATURE_TARGET" ]; then
-    chown 0:0 "$FEATURE_PAYLOAD"
-    chmod 0644 "$FEATURE_PAYLOAD"
-    chcon u:object_r:system_file:s0 "$FEATURE_PAYLOAD" 2>/dev/null
-    mount --bind "$FEATURE_PAYLOAD" "$FEATURE_TARGET" 2>/dev/null && \
-        log_msg "filtered OPlus feature set with dolby_support bind mounted"
-fi
+FEATURE_RUNTIME_DIR=/dev/coloros_port_fix
+FEATURE_RUNTIME="$FEATURE_RUNTIME_DIR/com.oplus.oplus-feature.xml"
+
+# 需要补上的特性
+FEATURE_ADD='oplus.software.audio.dolby_support'
+# 需要移除的特性：缺内核接口的三条 + 源手机 PSI 主动清理两条
+FEATURE_DROP='oplus.software.memory_nirvana.enable
+oplus.software.highload_pause_hyb_swapd
+oplus.software.osense.compress.enable
+oplus.software.psi_multi_window_clean
+oplus.software.psi_miniprogram_clean'
+
+apply_feature_override() {
+    [ -f "$FEATURE_TARGET" ] || return 0
+    grep -q '</oplus-config>' "$FEATURE_TARGET" || {
+        log_msg "WARN: OPlus feature file has no </oplus-config>; override skipped"
+        return 0
+    }
+
+    mkdir -p "$FEATURE_RUNTIME_DIR" 2>/dev/null
+    if ! printf '%s\n' "$FEATURE_DROP" | awk -v add="$FEATURE_ADD" '
+        NR == FNR { if ($0 != "") drop[$0] = 1; next }
+        {
+            for (name in drop) {
+                if (index($0, "\"" name "\"") > 0) { next }
+            }
+            if ($0 ~ /<\/oplus-config>/ && !inserted) {
+                printf "\t<oplus-feature name=\"%s\"/>\n", add
+                inserted = 1
+            }
+            print
+        }
+    ' - "$FEATURE_TARGET" >"$FEATURE_RUNTIME" 2>/dev/null; then
+        rm -f "$FEATURE_RUNTIME"
+        log_msg "WARN: OPlus feature derive failed; keeping stock feature set"
+        return 0
+    fi
+
+    # 健壮性闸门：原厂表可能已经含有某几条待删项、也可能已含 dolby，
+    # 因此只校验方向与幅度，不写死数字。任一条件不满足就完全不 bind。
+    src_count=$(grep -c '<oplus-feature ' "$FEATURE_TARGET" 2>/dev/null)
+    out_count=$(grep -c '<oplus-feature ' "$FEATURE_RUNTIME" 2>/dev/null)
+    case "$src_count$out_count" in *[!0-9]*) src_count=0; out_count=0 ;; esac
+    if [ "$src_count" -lt 20 ] || [ "$out_count" -lt "$((src_count - 6))" ] ||
+       [ "$out_count" -gt "$((src_count + 1))" ] ||
+       ! grep -q "$FEATURE_ADD" "$FEATURE_RUNTIME"; then
+        rm -f "$FEATURE_RUNTIME"
+        log_msg "WARN: OPlus feature sanity check failed ($src_count -> $out_count); keeping stock"
+        return 0
+    fi
+
+    chown 0:0 "$FEATURE_RUNTIME"
+    chmod 0644 "$FEATURE_RUNTIME"
+    chcon u:object_r:system_file:s0 "$FEATURE_RUNTIME" 2>/dev/null
+    if mount --bind "$FEATURE_RUNTIME" "$FEATURE_TARGET" 2>/dev/null; then
+        log_msg "OPlus feature set derived from stock ($src_count -> $out_count entries)"
+    else
+        log_msg "WARN: OPlus feature bind failed; keeping stock feature set"
+    fi
+}
+
+apply_feature_override
 
 # ============================================================================
 # 一次性覆盖高通开机脚本的 swappiness=100：/vendor/bin/init.qcom.post_boot.sh
