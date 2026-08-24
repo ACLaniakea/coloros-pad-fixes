@@ -64,7 +64,6 @@ final class SystemStylusHooks {
      * rebuilding its votes. Replaying the pen state from SCREEN_ON here
      * used to race that restore and could leave the panel with no frame.
      */
-    private static Context screenReplayContext;
     private static boolean stateReceiverReady;
     private static long suppressNvtHotplugUntil;
     private static long suppressPenKeysUntil;
@@ -110,22 +109,15 @@ final class SystemStylusHooks {
                     this, SystemStylusHooks.screenOn ? 1000L : 5000L);
         }
     };
-    private static final Runnable SCREEN_ON_REPLAY = new Runnable() {
-        @Override
-        public void run() {
-            Context context = SystemStylusHooks.screenReplayContext;
-            if (context != null && SystemStylusHooks.screenOn && SystemStylusHooks.lastPenHall >= 0) {
-                SystemStylusHooks.applyPenHall(context, SystemStylusHooks.lastPenHall, false);
-                HookUtils.log("screen-on pen state replayed after panel settle");
-            }
-        }
-    };
     private static int lastOemPresent = -1;
     private static int lastLoggedOemPresent = -2;
     private static boolean lastPenInUseState;
     private static int lastLinkedState = -1;
     private static int lastDockedState = -1;
     private static int lastHidProfileState = -1;
+    private static long lastBtReconcileAt;
+    private static String cachedPenAddress = "";
+    private static boolean cachedHidConnected;
     private static boolean lastInputEnabled = true;
     private static Object oplusDisplayModeService;
     private static Method oplusRequestUpdate;
@@ -863,9 +855,26 @@ final class SystemStylusHooks {
             }
             // Profile 4 (Bluetooth HID Host/HOGP) is the stock connection
             // truth. ACL/GATT, bonding, Hall and cached settings can all stay
-            // present after the usable pen profile has disconnected.
-            String penAddress = HookUtils.penAddress(context);
-            boolean hidConnected = HookUtils.bluetoothConnected(context, penAddress);
+            // present after the usable pen profile has disconnected. Both
+            // penAddress() (getBondedDevices) and bluetoothConnected() (HID
+            // proxy reflection) are binder round-trips; calling them every
+            // poll second flooded the Bluetooth service and disturbed the
+            // phone-link/cast keepalive. Reconcile at most once per interval;
+            // real ACL/HID edges still arrive via the state receiver.
+            String penAddress;
+            boolean hidConnected;
+            long nowUptime = SystemClock.uptimeMillis();
+            if (cachedPenAddress.length() == 0
+                    || nowUptime - lastBtReconcileAt >= 5000L) {
+                penAddress = HookUtils.penAddress(context);
+                hidConnected = HookUtils.bluetoothConnected(context, penAddress);
+                cachedPenAddress = penAddress;
+                cachedHidConnected = hidConnected;
+                lastBtReconcileAt = nowUptime;
+            } else {
+                penAddress = cachedPenAddress;
+                hidConnected = cachedHidConnected;
+            }
             int hidState = hidConnected ? 1 : 0;
             if (hidState != lastHidProfileState) {
                 lastHidProfileState = hidState;
@@ -1128,16 +1137,13 @@ final class SystemStylusHooks {
                 HookUtils.log("user unlocked: replaying OEM pen boot wake");
             } else if ("android.intent.action.SCREEN_OFF".equals(action)) {
                 boolean unused = SystemStylusHooks.screenOn = false;
-                SystemStylusHooks.main.removeCallbacks(SystemStylusHooks.SCREEN_ON_REPLAY);
-                SystemStylusHooks.screenReplayContext = null;
                 SystemStylusHooks.releaseLong(this.val$c);
                 SystemStylusHooks.setRefreshActive(this.val$c, false);
             } else if ("android.intent.action.SCREEN_ON".equals(action)) {
                 boolean unused2 = SystemStylusHooks.screenOn = true;
-                SystemStylusHooks.screenReplayContext = this.val$c;
-                SystemStylusHooks.main.removeCallbacks(SystemStylusHooks.SCREEN_ON_REPLAY);
-                SystemStylusHooks.main.postDelayed(SystemStylusHooks.SCREEN_ON_REPLAY, 1200L);
-                HookUtils.log("screen-on pen state replay delayed until panel settles");
+                // Hall/GATT/root broadcasts are the state owners. Replaying
+                // the same Hall edge here duplicated Settings, Bluetooth and
+                // refresh-rate work during the lock-screen animation.
             } else if ("com.aclaniakea.lenovopenbridge.action.RECONNECT_PEN".equals(action)) {
                     try {
                         Settings.Global.putInt(this.val$c.getContentResolver(), "lenovo_pen_disconnect_requested", 0);

@@ -1,6 +1,6 @@
 id=coloros_port_fix
 name=联想平板 Pro GT - ColorOS 修复模块
 author=ACLaniakea
-version=2.0.11
-versionCode=2011
-description=SM8650Q/pineapple ColorOS 移植修复模块 2.0.11：兼容8/12GB RAM及ROM既有ZRAM；加入标准ZRAM低开销OPlus内存ABI兼容与启动水位复校；8GB缓存进程上限48、12GB保持原厂；保留Horae、动态boost、温控、杜比互斥、环境光、AON与BWV修复。
+version=2.0.13
+versionCode=2013
+description=SM8650Q/pineapple ColorOS 移植修复模块 2.0.13：标准ZRAM采用实测50/30/10策略并隔离zsmalloc/CMA；关闭缺失内核接口的HybridSwap、Nirvana与HMBIRD云控；兼容8/12GB RAM及ROM既有ZRAM；保留预加载、LMKD、MGLRU、动态boost、温控、杜比、环境光、AON与BWV修复。

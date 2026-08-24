@@ -14,3 +14,9 @@ ro.oplus.display.colormode.soft.renderintent=0
 # com.oplus.oplus-feature.xml 覆盖开启，这里补齐均衡器/模式支持属性。
 ro.oplus.audio.dolby.equalizer_support=true
 ro.oplus.audio.dolby.movieToMusic_support=true
+
+# The source ROM enables HMBIRD/HybridSwap cloud managers, but Lenovo's GKI
+# has neither control plane. Disable their managers at property-init time;
+# standard ZRAM, LMKD, MGLRU and the independent Scene scheduler stay active.
+sys.oplus.hmbird.manager.enable=0
+persist.sys.oplus.nandswap=false

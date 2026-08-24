@@ -59,11 +59,11 @@ if ! grep -q '^oplus_mm_compat ' /proc/modules 2>/dev/null; then
 fi
 if [ -d /proc/oplus_mem ]; then
     [ -w /proc/oplus_mem/swappiness_para ] && {
-        echo 'vm_swappiness=20' >/proc/oplus_mem/swappiness_para 2>/dev/null
+        echo 'vm_swappiness=50' >/proc/oplus_mem/swappiness_para 2>/dev/null
         echo 'direct_swappiness=10' >/proc/oplus_mem/swappiness_para 2>/dev/null
     }
     [ -w /proc/oplus_mem/dynamic_swappiness ] && \
-        echo '20 1024 10 512' >/proc/oplus_mem/dynamic_swappiness 2>/dev/null
+        echo '50 1024 30 512' >/proc/oplus_mem/dynamic_swappiness 2>/dev/null
     [ -w /proc/oplus_mem/alloc_adjust_ctrl ] && \
         echo 0 >/proc/oplus_mem/alloc_adjust_ctrl 2>/dev/null
     [ -w /proc/oplus_mem/kswapd_debug ] && \
@@ -97,22 +97,22 @@ fi
 
 # ============================================================================
 # 调优部分（原 coloros_port_tuning）：post-fs-data 阶段
-#   1) 全局/根 memcg 使用冷启动实测折中值 10；8GB watermark=10，
+#   1) 全局/根 memcg 使用 CMA 修复后交叉实测最优值 50；8GB watermark=10，
 #      12GB 保留 watermark=20。
-#      普通/冷后台 app 子组=10，只有 active/systemserver=0。首次解锁
-#      A/B 证明全 0 会让 kswapd 持续扫描，而 10 / 20 在 8GB 上仍会形成
-#      换页抖动；全局5在热缓存下扫描较低，但冷启动后会增加
-#      direct reclaim，因此最终取10。
+#      普通/冷后台 app 子组=50，只有 active/systemserver/launcher=0。修正 zsmalloc
+#      消耗 CMA 后，实机 40/50/60 交叉测试证明50可保留适量冷匿名页，减少EROFS
+#      文件页回填和direct reclaim；60会重新放大压缩、换入与扫描，兼容层
+#      因此把kswapd硬上限固定为50，direct swappiness仍限在10。
 #   2) bind mount 覆盖 /my_stock 的 osense 配置：关闭主动后台换出，避免实测
 #      应用切换期间出现压缩/换入风暴；ZRAM 仍由内核在真实压力下按需使用。
 #      不创建、不扩容 ZRAM，兼容 8/12GB RAM 及未启用 ZRAM 的同型号设备。
-#   3) root/apps 父 memcg 从启动起即为10，native system/active/systemserver=0；
-#      有界窗口捕获首次解锁新建的子组并按类型写0/10，避免 ColorOS 写回默认高值。
+#   3) root/apps 父 memcg 从启动起即为50，native system/active/systemserver/
+#      launcher=0；有界窗口捕获首次解锁新建的子组并按类型写0/50。
 # ============================================================================
 
 ram_kb=$(awk '/MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
 case "$ram_kb" in ''|*[!0-9]*) ram_kb=0 ;; esac
-vm_swappiness=10
+vm_swappiness=50
 if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
     vm_watermark=10
 else
@@ -159,7 +159,7 @@ if [ -d /dev/memcg ]; then
     done
 fi
 if [ -w /dev/memcg/apps/memory.swappiness ]; then
-    echo 10 >/dev/memcg/apps/memory.swappiness 2>/dev/null
+    echo "$vm_swappiness" >/dev/memcg/apps/memory.swappiness 2>/dev/null
 fi
 if [ -w /dev/memcg/system/memory.swappiness ]; then
     # SurfaceFlinger and native framework daemons never enter the app active
@@ -168,7 +168,7 @@ if [ -w /dev/memcg/system/memory.swappiness ]; then
 fi
 
 # First unlock creates CE app memcgs in a burst and ColorOS can write its high
-# defaults into each new child. Clamp new groups to the same stable 0/10
+# defaults into each new child. Clamp new groups to the same stable 0/50
 # policy until service.sh publishes the handoff. This helper is bounded to four
 # minutes and always exits; it is not a resident tuning daemon.
 MEMCG_SETTLE_FLAG="$MODDIR/.memcg_settle_ready"
@@ -249,7 +249,7 @@ rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
             fi
         fi
         # Several late vendor init actions overwrite the early VM values after
-        # post-fs-data (observed at boot as desired 10/10 -> 10/80). Re-apply
+        # post-fs-data (observed at boot as an unwanted late overwrite). Re-apply
         # only when a value differs during this bounded first-unlock window.
         # This process exits at service handoff or after four minutes.
         [ "$(cat /proc/sys/vm/swappiness 2>/dev/null)" = "$vm_swappiness" ] || \
@@ -278,10 +278,10 @@ rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
                     early_value=0
                     ;;
                 */inactive/memory.swappiness)
-                    early_value=10
+                    early_value=$vm_swappiness
                     ;;
                 *)
-                    early_value=10
+                    early_value=$vm_swappiness
                     ;;
             esac
             [ "$(cat "$early_memcg" 2>/dev/null)" = "$early_value" ] || \
@@ -312,6 +312,9 @@ bind_over() {
 bind_over sys_osense_memory_config.xml
 bind_over sys_osense_io_decisionmaker_config.xml
 bind_over sys_osense_memory_decisionmaker_config.xml
+bind_over sys_osense_feature_common_config.xml
+bind_over sys_mm_swap_config.xml
+bind_over sys_memory_nirvana_config.xml
 
 # ============================================================================
 # 杜比音效特性开关（一次性覆盖）：原厂 OPlus 特性配置缺少
@@ -326,14 +329,14 @@ if [ -f "$FEATURE_PAYLOAD" ] && [ -f "$FEATURE_TARGET" ]; then
     chmod 0644 "$FEATURE_PAYLOAD"
     chcon u:object_r:system_file:s0 "$FEATURE_PAYLOAD" 2>/dev/null
     mount --bind "$FEATURE_PAYLOAD" "$FEATURE_TARGET" 2>/dev/null && \
-        log_msg "oplus feature dolby_support bind mounted"
+        log_msg "filtered OPlus feature set with dolby_support bind mounted"
 fi
 
 # ============================================================================
 # 一次性覆盖高通开机脚本的 swappiness=100：/vendor/bin/init.qcom.post_boot.sh
 # 与 init.kernel.post_boot.sh 会在开机阶段把全局 swappiness 硬编码写回 100，
 # 覆盖 post-fs-data 早期的写入。把补丁版 bind 到原路径，开机脚本
-# 实际执行时写的就是 10，属于源头修复而非事后轮询。
+# 实际执行时写的就是 50，属于源头修复而非事后轮询。
 # ============================================================================
 bind_postboot_script() {
     name="$1"

@@ -22,7 +22,7 @@ MODDIR=${0%/*}
 #   7) 允许 Dolby Bridge 后台运行，避免原厂控制页仍在前台时服务被 app-idle
 #      回收，导致 UI 仅写入设置但没有实时下发 DAP；
 #   8) 清理已合并的旧 AON 独立包；启动 horae/gameopt；
-#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：普通/冷后台 10，
+#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：普通/冷后台 50，
 #      活跃 UI、system_server 与 native system 禁止匿名页换出，并保留64MB水位；
 #  10) 按需执行应用建议协议修复与序列号补齐。
 # ============================================================================
@@ -35,6 +35,12 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# Reassert once after Android property services are available. Both source-ROM
+# managers target kernel facilities absent on this device and otherwise retry
+# or fall back to cache killing. This is not a resident watcher.
+setprop sys.oplus.hmbird.manager.enable 0
+setprop persist.sys.oplus.nandswap false
+
 # AOSP/ColorOS protects excessive cached processes for ten minutes after the
 # first user unlock. The 12 GB source phone can absorb that burst, but on the
 # 8 GB tablet it keeps the whole CE restore set resident while kswapd and AMS
@@ -43,7 +49,18 @@ fi
 # the stock ten-minute cache warmth and normal Android process semantics.
 ram_kb=$(awk '/MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
 case "$ram_kb" in ''|*[!0-9]*) ram_kb=0 ;; esac
-vm_swappiness=10
+vm_swappiness=50
+configure_oplus_memory_compat() {
+    [ -d /proc/oplus_mem ] || return 0
+    if [ -w /proc/oplus_mem/swappiness_para ]; then
+        echo 'vm_swappiness=50' >/proc/oplus_mem/swappiness_para 2>/dev/null
+        echo 'direct_swappiness=10' >/proc/oplus_mem/swappiness_para 2>/dev/null
+    fi
+    [ -w /proc/oplus_mem/dynamic_swappiness ] && \
+        echo '50 1024 30 512' >/proc/oplus_mem/dynamic_swappiness 2>/dev/null
+    [ -w /proc/oplus_mem/alloc_adjust_ctrl ] && \
+        echo 0 >/proc/oplus_mem/alloc_adjust_ctrl 2>/dev/null
+}
 if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
     vm_watermark=10
     cache_grace=$(device_config get activity_manager \
@@ -62,6 +79,7 @@ fi
 # Close the gap before the bounded memcg handoff below. Vendor init may have
 # overwritten post-fs-data's VM values while Android was still starting.
 echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
+configure_oplus_memory_compat
 echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
 echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
 if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
@@ -355,15 +373,22 @@ fi
 # 实机发现合并版只写 active/systemserver，apps 根分组和每个应用子分组仍为
 # swappiness=100，导致 Launcher/SystemUI/常用应用累计数百 MB Swap。长待机
 # 现场进一步确认 system_server/SystemUI/SurfaceFlinger 分别已有约243/154/43MB
-# Swap，唤醒时集中重大缺页。稳定态因此收敛为普通/冷后台=10，
+# Swap，唤醒时集中重大缺页。修正zsmalloc/CMA争抢后，稳定态收敛为普通/冷后台=50，
 # active/systemserver/native-system=0；缓存进程上限由 system_server Hook 在
 # 8GB 机型从源手机的96压到48，12GB机型保持原值。
 # ============================================================================
-# post-fs-data already applies the final 0/10 split and keeps clamping newly
+# post-fs-data already applies the final 0/50 split and keeps clamping newly
 # created first-unlock groups. Retain a bounded overlap before handoff so late
 # CE groups cannot regain ColorOS' high defaults; no all-zero phase remains.
 log_msg "tuning settle window start: maintaining split memcg policy for 90s"
 sleep 90
+
+# OSense may publish its phone defaults after boot_completed. Reassert the
+# tested standard-zram caps once at handoff; the kernel hard ceiling remains
+# effective afterwards, so no resident policy watcher is needed.
+configure_oplus_memory_compat
+setprop sys.oplus.hmbird.manager.enable 0
+setprop persist.sys.oplus.nandswap false
 
 # Do not terminate post-fs-data's bounded guard merely because Android has
 # been up for 90 seconds. The user may perform the first unlock later; the
@@ -389,10 +414,10 @@ for memcg_file in /dev/memcg/apps/memory.swappiness \
             echo 0 >"$memcg_file" 2>/dev/null
             ;;
         */inactive/memory.swappiness)
-            echo 10 >"$memcg_file" 2>/dev/null
+            echo "$vm_swappiness" >"$memcg_file" 2>/dev/null
             ;;
         *)
-            echo 10 >"$memcg_file" 2>/dev/null
+            echo "$vm_swappiness" >"$memcg_file" 2>/dev/null
             ;;
     esac
 done

@@ -7,7 +7,7 @@ ui_print "- 修正 AON QNN 生命周期、环境光自适应与屏幕常亮关�
 ui_print "- 恢复小布 BWV 语音唤醒链路与 HAL 级录音增益"
 ui_print "- 绑定显示色域映射与混音器配置"
 ui_print "- 修复 Tango 32 位兼容、序列号空项与性能 HAL 冲突"
-ui_print "- 调优：8/12GB 全局/根10，watermark 分别10/20；普通/冷后台10，关键系统组0"
+ui_print "- 调优：8/12GB 全局/根50，watermark分别10/20；普通/冷后台50，关键系统组0；direct swappiness限10"
 ui_print "- 8GB缓存进程上限48，12GB保持原厂值；避免长待机唤醒集中换入"
 ui_print "- KGSL 单次回收限制为4MB，避免 kswapd/SurfaceFlinger 换页风暴"
 ui_print "- 内置精确 GKI ABI 的 shell-temp 与标准 ZRAM 兼容模块；不伪装 HybridSwap"

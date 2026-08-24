@@ -14,18 +14,19 @@ OPlus memory control plane on top of the existing standard GKI `zram` backend:
 
 - `/proc/oplus_mem/swappiness_para` and `dynamic_swappiness` accept the OPlus
   parameter format, but only clamp the reclaim decision. They never raise the
-  kernel/cgroup-selected swappiness. Safety ceilings are 40 for kswapd and 20
+  kernel/cgroup-selected swappiness. Safety ceilings are 50 for kswapd and 20
   for direct reclaim, preventing a ColorOS policy intended for full
   HybridSwap from forcing standard zram to swappiness 160/200.
 - `kswapd_debug` and `kswapd_load_stat` report real slow-path, wake and runtime
   counters from GKI tracepoints. Their hooks default to completely unregistered
   and are installed only while the corresponding proc control contains `1`, so
   production reclaim does not pay an atomic-counter cost.
-- `alloc_adjust_ctrl` exposes the OPlus high-order allocation optimization but
-  defaults to `0`; its allocation hooks are likewise unregistered at `0`.
-  Device testing observed frequent order-9 slow paths, so this control must
-  remain off: masking reclaim could turn display/GPU pressure into allocation
-  failure.
+- `alloc_adjust_ctrl` accepts the OPlus ABI writes but keeps the source-ROM
+  high-order reclaim suppression disabled. A separate kprobe at the exported
+  `zs_malloc(pool, size, gfp)` boundary removes `CMA` only from zsmalloc calls,
+  preventing compressed swap from draining the display reserve without
+  changing unrelated page, DMA, display or camera allocations.
+  `compat_status` reports the guard state and its hit counter.
 - `compat_status` explicitly reports `backend=standard_zram` and
   `hybridswap=0`. No fake HybridSwap or zram-writeback node is created.
 

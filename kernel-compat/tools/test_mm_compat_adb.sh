@@ -38,12 +38,12 @@ case "$ACTION" in
             echo "vm_swappiness=160" >/proc/oplus_mem/swappiness_para
             echo "direct_swappiness=200" >/proc/oplus_mem/swappiness_para
             echo "160 1024 160 512" >/proc/oplus_mem/dynamic_swappiness
-            test "$(sed -n "s/^vm_swappiness: //p" /proc/oplus_mem/swappiness_para)" = 40
+            test "$(sed -n "s/^vm_swappiness: //p" /proc/oplus_mem/swappiness_para)" = 50
             test "$(sed -n "s/^direct_swappiness: //p" /proc/oplus_mem/swappiness_para)" = 20
-            test "$(cat /proc/oplus_mem/dynamic_swappiness)" = "40 1024 40 512"
-            echo "vm_swappiness=20" >/proc/oplus_mem/swappiness_para
+            test "$(cat /proc/oplus_mem/dynamic_swappiness)" = "50 1024 50 512"
+            echo "vm_swappiness=50" >/proc/oplus_mem/swappiness_para
             echo "direct_swappiness=10" >/proc/oplus_mem/swappiness_para
-            echo "20 1024 10 512" >/proc/oplus_mem/dynamic_swappiness
+            echo "50 1024 30 512" >/proc/oplus_mem/dynamic_swappiness
             test "$(cat /proc/oplus_mem/alloc_adjust_ctrl)" = 0
         '
         status

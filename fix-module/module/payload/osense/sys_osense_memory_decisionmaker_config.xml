@@ -522,48 +522,18 @@
         </scene>
 		
         <scene id="1009" name="SCENE_RES_MEM_PSI_MULTIWINDOW">
-            <rule index="1" tag="memory" skip="memory">
-                <condition memory_scene="multiWindowPSI" memory="1" bglimit="2+" />
-                <policy name="clear" type="multi-window" level_scene="multiWindowPSI" level="1" />
-            </rule>
-            <rule index="1" tag="memory" skip="memory">
-                <condition memory_scene="multiWindowPSI" memory="1" />
-                <policy name="clear" type="cached" level_scene="multiWindowPSI" level="1" />
-            </rule>
+            <!-- Source-phone multi-window PSI cleanup is disabled. It killed
+                 cache while this 8 GiB port was already handling ZRAM I/O. -->
         </scene>
 
         <scene id="1010" name="SCENE_RES_MEM_PSI_KSWAPD_HIGHLOAD">
-            <rule index="4" tag="memory" skip="memory">
-                <condition qbmode="2" memory_scene="lowmem_qb" memory="3" />
-                <policy name="clear" type="kswapd-highload" level_scene="lowmem_qb" level="3" />
-            </rule>
-            <rule index="3" tag="memory" skip="memory">
-                <condition qbmode="2" memory_scene="lowmem_qb" memory="2" />
-                <policy name="clear" type="kswapd-highload" level_scene="lowmem_qb" level="2" />
-            </rule>
-            <rule index="2" tag="memory" skip="memory">
-                <condition qbmode="1" memory_scene="kswapdHighLoad" memory="2" />
-                <policy name="clear" type="kswapd-highload" level_scene="kswapdHighLoad" level="2" />
-            </rule>
-            <rule index="1" tag="memory" skip="memory">
-                <condition qbmode="1" memory_scene="kswapdHighLoad" memory="1" />
-                <policy name="clear" type="kswapd-highload" level_scene="kswapdHighLoad" level="1" />
-            </rule>
+            <!-- HMBIRD/HybridSwap high-load policy requires kernel interfaces
+                 absent from Lenovo GKI. Standard reclaim remains active. -->
         </scene>
 		
         <scene id="1009" name="SCENE_RES_MEM_PSI_MINIPROGRAM">
-	        <rule index="3" tag="memory" skip="memory">
-                <condition memory_scene="miniProgramPSI" memory="2" bglimit="3+" />
-                <policy name="clear" type="mini-program" level_scene="miniProgramPSI" level="2" />
-            </rule>
-            <rule index="2" tag="memory" skip="memory">
-                <condition memory_scene="miniProgramPSI" memory="1" bglimit="1+" />
-                <policy name="clear" type="mini-program" level_scene="miniProgramPSI" level="1" />
-            </rule>
-            <rule index="1" tag="memory" skip="memory">
-                <condition memory_scene="miniProgramPSI" memory="1" />
-                <policy name="clear" type="cached" level_scene="miniProgramPSI" level="1" />
-            </rule>
+            <!-- Mini-program-specific proactive cleanup is not applicable to
+                 this tablet workload and is intentionally passive. -->
         </scene>
 
     </config>

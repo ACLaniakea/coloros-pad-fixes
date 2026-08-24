@@ -5,7 +5,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-2.0.11-orange)
+![Version](https://img.shields.io/badge/version-2.0.13-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -27,7 +27,7 @@
 
 | 项目 | 类型 | 包名 / 模块 ID | 作用 |
 | --- | --- | --- | --- |
-| **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比；用修正 SoC-696 六核配置重载 perf HAL 并保持运行（消除 composer 每帧 AIDL 重连风暴）；首次解锁 memcg 按 active/system_server/native-system=0、普通/冷后台=10 分层，但只迁移进程归属、不搬运已计费页面；8/12GB 全局/根 memcg swappiness=10，watermark 分别10/20；标准 ZRAM 上提供低开销 OPlus 内存 ABI 限幅但明确禁用完整 HybridSwap；8GB缓存进程上限48、12GB保持原厂值；KGSL 单次回收由约150MB限制为4MB；兼容 ROM 既有0～1×RAM ZRAM且不创建/扩容；保留原厂动态 boost、温控与人脸识别性能 |
+| **修复模块**（基础修复+调优合并） | KernelSU 模块 | `coloros_port_fix` | AON QNN 生命周期、环境光自适应、小布 BWV、杜比；用修正 SoC-696 六核配置重载 perf HAL 并保持运行（消除 composer 每帧 AIDL 重连风暴）；首次解锁 memcg 按 active/system_server/launcher/native-system=0、普通/冷后台=50 分层，但只迁移进程归属、不搬运已计费页面；标准 ZRAM 上提供低开销 OPlus 内存 ABI 限幅并阻止 zsmalloc 消耗显示 CMA；关闭缺少内核接口的 HybridSwap/Nirvana/HMBIRD 云控，保留预加载、LMKD、MGLRU；8GB缓存进程上限48、12GB保持原厂值；KGSL 单次回收约4MB；兼容 ROM 既有0～1×RAM ZRAM且不创建/扩容；保留原厂动态 boost、温控与人脸识别性能 |
 | **SM8650Q 专用调度（Scene）** | KernelSU 模块 / Scene 外部调度 | `sm8650q_scene_scheduler` | 按实机 `1+4+1` 容量拓扑和 `policy0/1/3/5` 四频域提供省电、均衡、性能、极速模式；Scene 负责分应用切换，无额外常驻守护；保留原厂 Power/Perf HAL、温控与动态降频 |
 | **OPlus 内核兼容层** | GKI 外挂模块 / 文档 | `kernel-compat/` | 基于设备精确 GKI build 13606743 编译窄接口兼容层；首个模块恢复 Horae `/proc/shell-temp` 原厂 ABI，并由 FixModule 在 post-fs-data 一次性加载。完整 HybridSwap、zram/zsmalloc 与 OPlus 调度栈不自动加载，须按内核移植文档分阶段验证 |
 | **base-fix 基础修复** | LSPosed Hook | `com.aclaniakea.colorosostatsguard` | AON YUV 归一化、环境光色温桥接、BWV 唤醒链路、电池健康、CPU/GPU 信息、OStats 日志防护、移植 Thermal HAL 的 skin 状态恢复 |
@@ -35,7 +35,9 @@
 | **pen-bridge 手写笔桥接** | LSPosed Hook | `com.aclaniakea.lenovopenbridge` | 手写笔状态/设置/设备空间桥接，书写触觉直连 GATT、版本字段跨进程同步与真实 GATT 断开 |
 | **PenHidCtl** | priv-app | `com.aclaniakea.penhidctl` | HID 连接控制（纯服务、无桌面图标） |
 
-详细修复清单见 [修复汇总.md](修复汇总.md)。
+详细修复清单见 [修复汇总.md](修复汇总.md)。内核层边界与后续路线见
+[内核兼容性与后续移植说明.md](内核兼容性与后续移植说明.md)；尝试启动主线内核与 Arch Linux 前，请先阅读
+[主线Linux内核与ArchLinux启动可行性说明.md](主线Linux内核与ArchLinux启动可行性说明.md)。
 
 > `base-fix/module/` 与 `port-tuning/` 目录保留为合并前的独立源码（只读参考），当前活跃模块为 `fix-module/`（`coloros_port_fix`）。
 
@@ -65,13 +67,13 @@ adb shell su -c 'ksud module uninstall coloros_port_tuning'
 adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 
 # 3. 安装新模块（KernelSU）
-adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.11.zip'
-adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.19.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.13.zip'
+adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.20.zip'
 adb shell su -c 'ksud module install /sdcard/SM8650Q-Scene-Scheduler-v1.0.5.zip'
 
 # 4. 安装 Hook APK（LSPosed）
-adb install --no-incremental BaseFix-Hook-v1.1.11.apk
-adb install --no-incremental -r PenBridge-Hook-v1.1.19.apk
+adb install --no-incremental BaseFix-Hook-v1.1.12.apk
+adb install --no-incremental -r PenBridge-Hook-v1.1.20.apk
 
 # 5. 重启
 adb reboot
@@ -138,7 +140,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 > **OEM 二进制不随仓库分发**：`payload/aon-libs/`、`payload/voice/`、`odm/lib64/`、`zygisk/`、`libpeninput.so`、`pen-cps-gpio` 等为原厂固件/运行时，已通过 `.gitignore` 排除，可从设备已安装模块目录或原厂备份还原；`PenHidCtl.apk` 与 `bin/card-protocol-patcher.jar` 均由仓库内源码构建生成（后者由 `base-fix/module/tools/smali/` 经 `tools/build_patcher.py` 自动重编译，需 smali.jar）。
 > 修复模块内 `payload/bin/init.qcom.post_boot.sh` 与 `payload/bin/init.kernel.post_boot.sh`
-> 为高通开机脚本的一次性补丁（开机 swappiness 100→10，见 `fix-module/tools/patch_postboot.sh`），
+> 为高通开机脚本的一次性补丁（开机 swappiness 100→50，见 `fix-module/tools/patch_postboot.sh`），
 > 由原厂 `/vendor/bin/` 脚本经该工具生成，随模块 bind 覆盖，属文本补丁而非预编译二进制。
 
 ## 目录结构
@@ -172,7 +174,7 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 - 小布 DSP（SoundTrigger/UIM）唤醒无开源替代方案，采用 BWV CPU 路径（识别率/延迟受 CPU 占用影响），待机耗电较高；
 - 小布说话开头偶发卡顿暂未稳定复现，待修复。
-- 手写笔连接状态与振动：v1.1.19 保留 BLE/电量/充电/触觉事件链，将 Hall、屏幕、蓝牙与缓存轮询降为事件优先的低频兜底；Provider 负责隔离 system_server，振动写入复用原厂 IPeManager 已连接的 GATT 会话，避免第二客户端抢占与首笔重启。
+- 手写笔连接状态与振动：v1.1.20 保留 BLE/电量/充电/触觉事件链，将 Hall、蓝牙与缓存轮询降为事件优先的低频兜底，并移除亮屏时 Root/Hook 双重 Hall 回放；Provider 负责隔离 system_server，振动写入复用原厂 IPeManager 已连接的 GATT 会话，避免第二客户端抢占与首笔重启。
 - 查找设备功能由于缺少RPMB内的服务器公钥，无法注册本设备，但可以查看其他设备
 
 ## 致谢与免责

@@ -11,6 +11,7 @@
 
 #include <linux/atomic.h>
 #include <linux/gfp.h>
+#include <linux/kprobes.h>
 #include <linux/ktime.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -21,13 +22,12 @@
 #include <linux/uaccess.h>
 #include <linux/vmstat.h>
 #include <trace/events/vmscan.h>
-#include <trace/hooks/iommu.h>
 #include <trace/hooks/mm.h>
 #include <trace/hooks/vmscan.h>
 
 #define INPUT_LEN 128
 #define ORDER_BUCKETS 16
-#define KSWAPD_SAFETY_CEILING 40
+#define KSWAPD_SAFETY_CEILING 50
 #define DIRECT_SAFETY_CEILING 20
 
 static struct proc_dir_entry *oplus_mem_dir;
@@ -47,12 +47,13 @@ static int threshold1_mb = 1024;
 static int threshold2_cap = 10;
 static int threshold2_mb = 512;
 
-/* Risky upstream behaviour is intentionally opt-in on this port. */
+/* Risky upstream behaviour is intentionally disabled on this port. */
 static bool alloc_adjust_enabled;
 static bool alloc_stats_enabled;
 static bool kswapd_stats_enabled;
 static DEFINE_MUTEX(hook_lock);
 
+static atomic64_t zsmalloc_cma_bypass_count;
 static atomic64_t slowpath_count[ORDER_BUCKETS];
 static atomic64_t kswapd_wake_count[ORDER_BUCKETS];
 static atomic64_t kswapd_runtime_ns[ORDER_BUCKETS];
@@ -92,11 +93,28 @@ static void tune_swappiness(void *unused, int *swappiness)
 		*swappiness = cap;
 }
 
-static void adjust_alloc_flags(void *unused, unsigned int order, gfp_t *flags)
+static int zsmalloc_pre_handler(struct kprobe *probe, struct pt_regs *regs)
 {
-	if (READ_ONCE(alloc_adjust_enabled) && order > PAGE_ALLOC_COSTLY_ORDER)
-		*flags &= ~__GFP_RECLAIM;
+	/*
+	 * AArch64 passes zs_malloc(pool, size, gfp) in x0/x1/x2. This Lenovo GKI's
+	 * zram adds __GFP_CMA to both its fast and slow zsmalloc calls, draining
+	 * the display reserve under the port's 8 GiB workload. Strip CMA at the
+	 * zsmalloc boundary; all unrelated page, DMA, display and camera
+	 * allocations remain untouched.
+	 */
+	gfp_t flags = (gfp_t)regs->regs[2];
+
+	if (flags & __GFP_CMA) {
+		regs->regs[2] = (unsigned long)(flags & ~__GFP_CMA);
+		atomic64_inc(&zsmalloc_cma_bypass_count);
+	}
+	return 0;
 }
+
+static struct kprobe zsmalloc_probe = {
+	.symbol_name = "zs_malloc",
+	.pre_handler = zsmalloc_pre_handler,
+};
 
 static void slowpath_stat(void *unused, gfp_t gfp_mask, unsigned int order,
 			  unsigned long delta)
@@ -136,36 +154,10 @@ static void kswapd_done(void *unused, int nid, unsigned int highest_zoneidx,
 
 static int set_alloc_adjust(bool enabled)
 {
-	int ret = 0;
-
-	mutex_lock(&hook_lock);
-	if (enabled == alloc_adjust_enabled)
-		goto out;
-	if (enabled) {
-		ret = register_trace_android_vh_adjust_alloc_flags(
-			adjust_alloc_flags, NULL);
-		if (ret)
-			goto out;
-		ret = register_trace_android_vh_adjust_kvmalloc_flags(
-			adjust_alloc_flags, NULL);
-		if (ret) {
-			unregister_trace_android_vh_adjust_alloc_flags(
-				adjust_alloc_flags, NULL);
-			tracepoint_synchronize_unregister();
-			goto out;
-		}
-		WRITE_ONCE(alloc_adjust_enabled, true);
-	} else {
-		WRITE_ONCE(alloc_adjust_enabled, false);
-		unregister_trace_android_vh_adjust_kvmalloc_flags(
-			adjust_alloc_flags, NULL);
-		unregister_trace_android_vh_adjust_alloc_flags(
-			adjust_alloc_flags, NULL);
-		tracepoint_synchronize_unregister();
-	}
-out:
-	mutex_unlock(&hook_lock);
-	return ret;
+	/* Accept the stock ABI write, but never enable its unsafe high-order
+	 * reclaim suppression without the complete OPlus memory stack. */
+	WRITE_ONCE(alloc_adjust_enabled, false);
+	return 0;
 }
 
 static int set_alloc_stats(bool enabled)
@@ -467,6 +459,9 @@ static int status_show(struct seq_file *m, void *v)
 	seq_printf(m, "swap_total_kb=%lu\n", si.totalswap << (PAGE_SHIFT - 10));
 	seq_printf(m, "swap_free_kb=%lu\n", si.freeswap << (PAGE_SHIFT - 10));
 	seq_printf(m, "alloc_adjust=%d\n", READ_ONCE(alloc_adjust_enabled));
+	seq_puts(m, "zsmalloc_cma_guard=1\n");
+	seq_printf(m, "zsmalloc_cma_bypass=%lld\n",
+		   atomic64_read(&zsmalloc_cma_bypass_count));
 	return 0;
 }
 
@@ -541,9 +536,15 @@ static int __init oplus_mm_compat_init(void)
 	ret = register_trace_android_vh_tune_swappiness(tune_swappiness, NULL);
 	if (ret)
 		goto err_proc;
+	ret = register_kprobe(&zsmalloc_probe);
+	if (ret)
+		goto err_swappiness;
 
-	pr_info("loaded: standard-zram backend, clamp-only reclaim policy\n");
+	pr_info("loaded: standard-zram backend, clamp-only reclaim policy, zsmalloc CMA guard\n");
 	return 0;
+err_swappiness:
+	unregister_trace_android_vh_tune_swappiness(tune_swappiness, NULL);
+	tracepoint_synchronize_unregister();
 err_proc:
 	remove_proc_entries();
 	return ret;
@@ -553,7 +554,7 @@ static void __exit oplus_mm_compat_exit(void)
 {
 	set_kswapd_stats(false);
 	set_alloc_stats(false);
-	set_alloc_adjust(false);
+	unregister_kprobe(&zsmalloc_probe);
 	unregister_trace_android_vh_tune_swappiness(tune_swappiness, NULL);
 	tracepoint_synchronize_unregister();
 	remove_proc_entries();

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the pen-bridge LSPosed Hook APK from Java source (ACLaniakea 1.1.19).
+"""Build the pen-bridge LSPosed Hook APK from Java source (ACLaniakea 1.1.20).
 
 The hook now compiles directly from pen-bridge/hook/source/sources so every
 behavior change lives in source:
@@ -53,7 +53,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "PenBridge-Hook-v1.1.19.apk"
+OUT_APK = OUT_DIR / "PenBridge-Hook-v1.1.20.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -85,7 +85,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1119", "--version-name", "1.1.19"])
+             "--version-code", "1120", "--version-name", "1.1.20"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
         run(["javac", "--release", "17",

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<filter-conf>
+    <version>2026082401</version>
+    <filter-name>sys_mm_swap_config</filter-name>
+
+    <!-- HybridSwap/NAND writeback nodes are absent on Lenovo GKI. Keep the
+         standard kernel-managed ZRAM device enabled outside this policy. -->
+    <switches
+        enabled="false"         nandSwap="false"           nandSupportMem="4|6|8|12"
+        adaptiveOffset="false"  workStation="false"       mmMiniPSwap="false"
+        disableHybSwapd="true" skipInactiveScrOff="true"/>
+
+    <!-- only support MemcgV2; V1 add noswap pkgs by adding them to active memcg -->
+    <noSwapPkgs>
+        <pkg name="com.android.launcher"/>
+        <pkg name="com.android.systemui"/>
+        <pkg name="com.oplus.camera"/>
+        <pkg name="com.coloros.assistantscreen"/>
+        <pkg name="com.baidu.input_oppo"/>
+        <pkg name="com.sohu.inputmethod.sogouoem"/>
+    </noSwapPkgs>
+
+    <!-- ==================== default scene ==================== -->
+    <scene name="default">
+        <cond
+            thermal="41" scrOffThermal="38" zramLoad="95" cpuLoad="90"/>
+
+        <!-- unit: KB -->
+        <limit
+            maxShrinkKb="204800" maxSwapOutKb="20480" totalShrinkLimitKb="10240000" totalSwapOutLimitKb="1024000"/>
+
+        <!-- only support MemcgV1 -->
+        <inactiveBase
+            initDelay="180000" nextDelay="60000" minZramRatioInc="2" minNandRatioInc="2"/>
+
+        <!-- only support MemcgV1; ratio arrays: level1|level2|level3 -->
+        <inactiveRatio
+            zramRatio="40|40|55" nandRatio="25|25|50" zramRatioBlo="40|55" nandRatioBlo="25|50"/>
+
+        <appBase
+            selfDevUseDef="true"
+            delayAfterFreeze="5000"  delayAfterBg="10000"   skipDelay="5000"
+            nextDelay="20000"        longNextDelay="30000"   zramRatioThd="80"
+            bgDurThd="150000"        minZramRatioInc="5"     minNandRatioInc="5"/>
+
+        <!-- ratio arrays: level1|level2|level3|level4 -->
+        <appRatio
+            zramRatio="20|40|70|90" nandRatio="0|0|20|35" outNandRatio="40"/>
+
+        <!-- UFS 4.1: only override what differs -->
+        <device ufs="0x0410">
+			<appRatio
+				zramRatio="20|40|70|90" nandRatio="0|0|20|45" outNandRatio="40"/>
+        </device>
+    </scene>
+
+    <!-- ==================== workStation scene ==================== -->
+    <scene name="workStation">
+        <cond
+            thermal="44"/>
+
+        <appRatio
+            zramRatio="50|60|70|90"/>
+    </scene>
+
+    <!-- ==================== mmMiniProgram scene ==================== -->
+    <scene name="mmMiniProgram">
+        <cond
+            thermal="44"/>
+
+        <appRatio
+            zramRatio="50|60|70|90"/>
+    </scene>
+
+    <!-- ==================== per-app overrides ==================== -->
+    <!--apps>
+        <app name="test" maxZramRatio="80" maxNandRatio="20" outNandRatio="20" totalShrinkLimitKb="40000" totalSwapOutLimitKb="20480"/>
+    </apps-->
+</filter-conf>

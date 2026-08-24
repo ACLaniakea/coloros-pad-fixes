@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "SM8650Q-Scene-Scheduler-v1.0.5.zip"
+OUT = ROOT.parents[1] / "releases" / "SM8650Q-Scene-Scheduler-v1.0.7.zip"
 EXCLUDE = {"scheduler.log"}
 
 

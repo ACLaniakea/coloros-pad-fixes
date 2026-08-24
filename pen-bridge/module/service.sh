@@ -46,7 +46,6 @@ OEM_CONNECT_ACTION=com.oplus.ipemanager.action.CONNECT_PENCIL
 OEM_DISCONNECT_ACTION=com.oplus.ipemanager.action.DISCONNECT_PENCIL
 PEN_CONNECT_DEDUP_FILE="$MODDIR/pen-connect.last"
 PEN_BOOT_READY_FILE="$MODDIR/pen-boot-ready"
-SCREEN_STATE_FILE="$MODDIR/pen-screen.state"
 HIDCTL_PERMISSION_FILE="$MODDIR/pen-hid-permissions.ready"
 BRIDGE_PERMISSION_FILE="$MODDIR/pen-bridge-permissions.ready"
 HIDCTL_LAUNCHER_FILE="$MODDIR/pen-hid-launcher.hidden"
@@ -708,50 +707,6 @@ publish_hall_state() {
     echo "[$(date '+%F %T')] real Hall state docked=$docked battery=$battery trusted=$hardware_battery charging=$charging connected=$connected mac=$mac"
 }
 
-# The old monolithic Hook called applyPenHall immediately from SCREEN_ON.
-# During panel resume that raced OplusSurfaceFlinger and could leave a lit
-# backlight with no frame. The independent Hook no longer owns this edge;
-# replay the already-read Hall/connection state only after the panel has been
-# awake for 1.2 seconds. This changes pen settings only, never brightness or
-# backlight.
-read_screen_wakefulness() {
-    dumpsys power 2>/dev/null |
-        sed -n 's/.*mWakefulness=\([^, }]*\).*/\1/p' | head -1 | tr -d '\r'
-}
-
-monitor_screen_replay() {
-    last=-1
-    while [ ! -e "$CPS_DISABLED" ]; do
-        wakefulness=$(read_screen_wakefulness)
-        case "$wakefulness" in
-            Awake) state=1 ;;
-            *) state=0 ;;
-        esac
-        if [ "$state" = 1 ] && [ "$last" != 1 ]; then
-            echo "[$(date '+%F %T')] screen-on edge observed; pen state replay delayed"
-            sleep_sec 1.2
-            if [ "$(read_screen_wakefulness)" = Awake ]; then
-                docked=$(read_hall_state)
-                case "$docked" in
-                    0|1)
-                        publish_hall_state "$docked"
-                        echo "[$(date '+%F %T')] delayed screen-on pen state replay docked=$docked"
-                        ;;
-                    *)
-                        echo "[$(date '+%F %T')] delayed screen-on replay skipped: Hall unavailable"
-                        ;;
-                esac
-            fi
-        fi
-        last="$state"
-        echo "$state" >"$SCREEN_STATE_FILE"
-        # This is only a fallback for the Hook's immediate screen callback.
-        # Avoid waking system_server with a full dumpsys every two seconds
-        # throughout standby; real SCREEN_ON callbacks remain immediate.
-        sleep_sec 10
-    done
-}
-
 monitor_battery_cache() {
     while [ ! -e "$CPS_DISABLED" ]; do
         before=$(settings get global ipe_pencil_battery_level 2>/dev/null | tr -d '\r')
@@ -1146,7 +1101,6 @@ monitor_hid_latch() {
 # found". They still start before the boot-connect retry window, preserving
 # the original boot-time state publication (connection mirrors + haptics).
 monitor_hall_capsule &
-monitor_screen_replay &
 monitor_battery_cache &
 monitor_charging_cache &
 monitor_real_bt_state &

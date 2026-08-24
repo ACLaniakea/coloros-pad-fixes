@@ -15,6 +15,9 @@ while [ "$(getprop sys.boot_completed)" != 1 ] && [ "$count" -lt 120 ]; do
 done
 sleep 15
 
+# 为启动完成后才加载的设备驱动补做一次 IRQ 拓扑，执行后退出，不常驻轮询。
+sh "$MODDIR/scheduler/main.sh" irq-init >/dev/null 2>&1
+
 # 若 Scene 已先调用某个模式，保持该模式；否则以均衡模式完成初始化。
 mode=$(cat /data/adb/sm8650q-scene-scheduler/current_mode 2>/dev/null)
 case "$mode" in
