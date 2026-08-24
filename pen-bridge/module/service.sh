@@ -796,6 +796,27 @@ apply_refresh_policy() {
 # mirrors so Device Space always follows the real link. If a live link appears
 # while a stale user-disconnect latch is still set, the stack has already
 # reconnected: clear the latch so the UI stops reporting "disconnected".
+# 用户在设置页或设备空间点「断开连接」/「立即连接」之后，真实 ACL 链路需要
+# 一到三秒才跟上。Hook 会同时写下意图目标与时间戳；在收敛窗口内对账器既不
+# 改写连接镜像，也不清 user latch。否则它会把用户半秒前刚表达的意图当成
+# 「陈旧闩锁」清掉，自动重连随即把 UI 翻回已连接，表现为反复横跳。
+PEN_USER_ACTION_GRACE=8
+
+in_user_action_window() {
+    real_state="$1"
+    ts=$(settings get global lenovo_pen_user_action_ts 2>/dev/null | tr -d '\r')
+    target=$(settings get global lenovo_pen_user_action_target 2>/dev/null | tr -d '\r')
+    case "$ts" in ''|*[!0-9]*) return 1 ;; esac
+    case "$target" in 0|1) ;; *) return 1 ;; esac
+    # 真实链路已经追上用户意图：立即退出窗口，恢复正常对账。
+    [ "$real_state" = "$target" ] && return 1
+    now=$(date '+%s' 2>/dev/null)
+    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+    # 时钟回拨时按窗口外处理，避免窗口被拉长到不确定的时间。
+    [ "$now" -lt "$ts" ] && return 1
+    [ "$((now - ts))" -lt "$PEN_USER_ACTION_GRACE" ]
+}
+
 monitor_real_bt_state() {
     last=-1
     last_oem_recovery=0
@@ -804,6 +825,13 @@ monitor_real_bt_state() {
             connected=1
         else
             connected=0
+        fi
+        # 用户刚操作过且链路尚未收敛：本轮完全不发布，只快速重采样。
+        # 这是有界的（PEN_USER_ACTION_GRACE 秒），收敛后立即回到 30 秒低频对账，
+        # 不会变成常驻 1Hz 轮询。
+        if in_user_action_window "$connected"; then
+            sleep_sec 1
+            continue
         fi
         current=$(settings get global lenovo_pen_link_connected 2>/dev/null | tr -d '\r')
         [ "$current" = 1 ] || current=0

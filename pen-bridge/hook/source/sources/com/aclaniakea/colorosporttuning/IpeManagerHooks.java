@@ -108,6 +108,7 @@ final class IpeManagerHooks {
                             Settings.Global.putInt(context.getContentResolver(), "PENCIL_CONNECT_STATE", 1);
                             Settings.Global.putInt(context.getContentResolver(), "pencil_connect_state", 1);
                         }
+                        markUserPenAction(context, 1);
                         HookUtils.log("stock CONNECT_PENCIL cleared disconnect latch");
                     } else if ("com.oplus.ipemanager.action.DISCONNECT_PENCIL".equals(intentIntentArg.getAction())) {
                         String requestedMac2 = intentIntentArg.getStringExtra("device_mac_info");
@@ -118,6 +119,18 @@ final class IpeManagerHooks {
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 1);
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_refresh_active", 0);
                         Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 0);
+                        // The ACL link needs one to three seconds to actually
+                        // drop. Publish the disconnected mirrors now so Device
+                        // Space stops showing "connected" while the stack is
+                        // still tearing down; the low-rate reconciler in
+                        // service.sh honours the user-action window and will
+                        // not fight these writes.
+                        Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_link_connected", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_connect_state", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_connection_state", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "PENCIL_CONNECT_STATE", 0);
+                        Settings.Global.putInt(context.getContentResolver(), "pencil_connect_state", 0);
+                        markUserPenAction(context, 0);
                         IpeManagerHooks.invokeOriginalGattDisconnect(context, intentIntentArg.getStringExtra("device_mac_info"));
                         HookUtils.log("stock DISCONNECT_PENCIL armed disconnect latch");
                     }
@@ -1227,6 +1240,31 @@ final class IpeManagerHooks {
             strTrim = sb.toString();
         }
         return isMac(strTrim) ? strTrim : "";
+    }
+
+    /**
+     * Record that the user just asked for a pen connect (target 1) or
+     * disconnect (target 0) from the settings page or Device Space.
+     *
+     * The reconciler in the Root module polls the real Bluetooth stack at a
+     * low rate and republishes the connection mirrors. Without this marker it
+     * cannot tell a stale mirror from an intent the user expressed half a
+     * second ago, so it would overwrite the optimistic state and - worse -
+     * clear the freshly armed disconnect latch, letting auto-reconnect flip
+     * the UI straight back. The reconciler stays quiet until the real link
+     * matches the target or the window expires.
+     */
+    static void markUserPenAction(Context context, int target) {
+        if (context == null) {
+            return;
+        }
+        try {
+            Settings.Global.putInt(context.getContentResolver(),
+                    "lenovo_pen_user_action_target", target);
+            Settings.Global.putLong(context.getContentResolver(),
+                    "lenovo_pen_user_action_ts", System.currentTimeMillis() / 1000L);
+        } catch (Throwable unused) {
+        }
     }
 
     private static boolean isMac(String str) {
