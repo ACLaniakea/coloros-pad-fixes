@@ -15,6 +15,7 @@ import android.provider.Settings;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import java.lang.reflect.Field;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.charset.Charset;
 import java.util.ArrayDeque;
@@ -68,6 +69,14 @@ final class OemGattProtocolHooks {
     private static final Handler HANDLER = new Handler(Looper.getMainLooper());
     private static final Map<BluetoothGatt, Session> SESSIONS = new IdentityHashMap();
     private static final Map<Object, Session> MANAGER_SESSIONS = new IdentityHashMap();
+    private static String pendingContinuousOp;
+    private static String pendingContinuousMac;
+    private static byte[] pendingContinuousPayload;
+    private static long pendingContinuousAt;
+    private static String pendingImpactOp;
+    private static String pendingImpactMac;
+    private static byte[] pendingImpactPayload;
+    private static long pendingImpactAt;
 
     static void install(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         if (installed) {
@@ -216,6 +225,17 @@ final class OemGattProtocolHooks {
                         enqueueWrite(sessionSessionFor, switchChar, new byte[]{1});
                         HookUtils.log("IPe OEM haptic switch re-applied after s0 ready");
                     }
+                    // The pen's haptic engine also needs the init write the
+                    // direct GATT path sends: {1} to the request characteristic
+                    // (00000002). The OEM s0 session only re-applied the switch,
+                    // so impact/continuous writes were acknowledged by the stack
+                    // but never actually drove the haptic motor.
+                    BluetoothGattCharacteristic requestChar = findCharacteristic(sessionSessionFor, LENOVO_HAPTIC_REQUEST);
+                    if (requestChar != null) {
+                        enqueueWrite(sessionSessionFor, requestChar, new byte[]{1});
+                        HookUtils.log("IPe OEM haptic request re-applied after s0 ready");
+                    }
+                    flushPendingControls(sessionSessionFor);
                 }
                 return;
             }
@@ -376,16 +396,22 @@ final class OemGattProtocolHooks {
         String stringExtra = intent.getStringExtra("op");
         String stringExtra2 = intent.getStringExtra("mac");
         byte[] byteArrayExtra = intent.getByteArrayExtra("payload");
+        if ("feedback_start".equals(stringExtra) || "feedback_stop".equals(stringExtra)) {
+            return invokeStockWritingFeedback(context,
+                    "feedback_start".equals(stringExtra), stringExtra2);
+        }
         Session sessionFindSession = findSession(stringExtra2);
         if (sessionFindSession == null) {
-            HookUtils.log("OEM control dropped: no active s0 session op=" + stringExtra + " address=" + stringExtra2);
+            rememberPendingControl(stringExtra, stringExtra2, byteArrayExtra);
+            HookUtils.log("OEM control deferred: no active s0 session op=" + stringExtra + " address=" + stringExtra2);
             setOemControlReady(context, false);
-            return false;
+            return true;
         }
         if (sessionFindSession.gatt == null) {
+            rememberPendingControl(stringExtra, stringExtra2, byteArrayExtra);
             setOemControlReady(context, false);
-            HookUtils.log("OEM control transport unusable; fall back to direct GATT op=" + stringExtra + " address=" + stringExtra2);
-            return false;
+            HookUtils.log("OEM control deferred: s0 transport unavailable op=" + stringExtra + " address=" + stringExtra2);
+            return true;
         }
         if ("impact".equals(stringExtra) || "brush".equals(stringExtra)) {
             bluetoothGattCharacteristicFindCharacteristic = findCharacteristic(sessionFindSession, LENOVO_HAPTIC_IMPACT);
@@ -416,6 +442,121 @@ final class OemGattProtocolHooks {
             HookUtils.log("OEM control queued op=" + stringExtra + " uuid=" + uuid(bluetoothGattCharacteristicFindCharacteristic.getUuid()) + " value=" + hex(byteArrayExtra) + " address=" + sessionAddress(sessionFindSession.gatt));
         }
         return zEnqueueWrite;
+    }
+
+    /** Invoke IPeManager's own g0 feedback method in its :ble process. */
+    private static boolean invokeStockWritingFeedback(Context context, boolean start,
+            String mac) {
+        Object manager = null;
+        synchronized (OemGattProtocolHooks.class) {
+            for (Map.Entry<Object, Session> entry : MANAGER_SESSIONS.entrySet()) {
+                Object candidate = entry.getKey();
+                Session session = entry.getValue();
+                if (candidate != null && S0.equals(candidate.getClass().getName())
+                        && (mac == null || mac.isEmpty() || addressMatches(session, mac))) {
+                    manager = candidate;
+                    break;
+                }
+            }
+        }
+        if (manager != null) {
+            try {
+                Class<?> sdk = Class.forName("com.oplus.ipemanager.btadsorb.ble.g0",
+                        true, manager.getClass().getClassLoader());
+                Object bridge = null;
+                for (Constructor<?> constructor : sdk.getDeclaredConstructors()) {
+                    Class<?>[] types = constructor.getParameterTypes();
+                    if (types.length == 1 && types[0].isAssignableFrom(manager.getClass())) {
+                        constructor.setAccessible(true);
+                        bridge = constructor.newInstance(manager);
+                        break;
+                    }
+                }
+                if (bridge != null) {
+                    Method method = sdk.getMethod(start ? "startFeedBackVibration"
+                            : "stopFeedBackVibration");
+                    method.invoke(bridge);
+                    HookUtils.log("IPe stock writing feedback "
+                            + (start ? "start" : "stop") + " invoked");
+                    return true;
+                }
+            } catch (Throwable th) {
+                HookUtils.log("IPe stock writing feedback invoke failed: " + th);
+            }
+        }
+        // During the short s0 reconstruction window use the exact OEM node
+        // call, but execute it inside IPe rather than system_server.
+        try {
+            Class<?> nodeClass = Class.forName("com.oplus.touchnode.OplusTouchNodeManager");
+            Object node = nodeClass.getMethod("getInstance").invoke(null);
+            Object result = nodeClass.getMethod("writeNodeFileByDevice", Integer.TYPE,
+                    Integer.TYPE, String.class).invoke(node, 0, 38, start ? "3" : "2");
+            boolean accepted = !(result instanceof Boolean) || ((Boolean) result);
+            HookUtils.log("IPe OEM writing feedback node38 "
+                    + (start ? "start" : "stop") + " accepted=" + accepted);
+            return accepted;
+        } catch (Throwable th) {
+            HookUtils.log("IPe OEM writing feedback unavailable: " + th);
+            return false;
+        }
+    }
+
+    private static synchronized void rememberPendingControl(String op, String mac, byte[] payload) {
+        long now = SystemClock.uptimeMillis();
+        if ("continuous".equals(op)) {
+            pendingContinuousOp = op;
+            pendingContinuousMac = mac;
+            pendingContinuousPayload = payload == null ? null : payload.clone();
+            pendingContinuousAt = now;
+        } else if ("stop".equals(op)) {
+            // If the stroke ended before s0 became ready, never replay a stale
+            // start command later. There is no active OEM haptic to stop yet.
+            pendingContinuousOp = null;
+            pendingContinuousMac = null;
+            pendingContinuousPayload = null;
+            pendingContinuousAt = 0L;
+        } else if ("impact".equals(op) || "brush".equals(op)) {
+            pendingImpactOp = op;
+            pendingImpactMac = mac;
+            pendingImpactPayload = payload == null ? null : payload.clone();
+            pendingImpactAt = now;
+        }
+    }
+
+    private static synchronized void flushPendingControls(Session session) {
+        long now = SystemClock.uptimeMillis();
+        if (pendingContinuousOp != null && now - pendingContinuousAt <= 5000L
+                && addressMatches(session, pendingContinuousMac)) {
+            BluetoothGattCharacteristic characteristic = findCharacteristic(
+                    session, LENOVO_HAPTIC_CONTINUOUS);
+            if (characteristic != null && pendingContinuousPayload != null) {
+                enqueueWrite(session, characteristic, pendingContinuousPayload);
+                HookUtils.log("OEM deferred continuous haptic replayed after s0 ready");
+            }
+        }
+        if (pendingImpactOp != null && now - pendingImpactAt <= 1200L
+                && addressMatches(session, pendingImpactMac)) {
+            BluetoothGattCharacteristic characteristic = findCharacteristic(
+                    session, LENOVO_HAPTIC_IMPACT);
+            if (characteristic != null && pendingImpactPayload != null) {
+                enqueueWrite(session, characteristic, pendingImpactPayload);
+                HookUtils.log("OEM deferred impact haptic replayed after s0 ready");
+            }
+        }
+        pendingContinuousOp = null;
+        pendingContinuousMac = null;
+        pendingContinuousPayload = null;
+        pendingContinuousAt = 0L;
+        pendingImpactOp = null;
+        pendingImpactMac = null;
+        pendingImpactPayload = null;
+        pendingImpactAt = 0L;
+    }
+
+    private static boolean addressMatches(Session session, String mac) {
+        String expected = normalizeAddress(mac);
+        return expected.length() == 0
+                || expected.equals(normalizeAddress(sessionAddress(session.gatt)));
     }
 
     private static Session findSession(String str) {
@@ -875,9 +1016,39 @@ final class OemGattProtocolHooks {
         }
         if (context != null && S0.equals(str)) {
             setOemControlReady(context, false);
-            HookUtils.setLinkConnected(context, false);
-            IpeManagerHooks.publishHardwareDisconnected(context, obj, "ipe_ble_gatt_disconnected");
-            HookUtils.log("IPe OEM s0 GATT disconnected; hardware samples invalidated");
+            final Context app = context.getApplicationContext();
+            final String address = HookUtils.penAddress(context);
+            if (HookUtils.bluetoothConnected(context, address) && !HookUtils.disconnectRequested(context)) {
+                // s0 is the OEM control/haptic GATT, not the HID connection
+                // itself. Keep Device Space connected while HOGP is live and
+                // ask the original CoreService to restore only its session.
+                HookUtils.setLinkConnected(context, true);
+                PenState current = HookUtils.state(context);
+                PenState live = new PenState(true, current.address, current.name, current.battery,
+                        current.charging, current.type, current.firmware, current.hardware,
+                        current.serial, "ipe_control_recovering", System.currentTimeMillis());
+                PenStateStore.write(context, live);
+                IpeManagerHooks.sendHardwareUpdate(context, live, live.source, live.battery >= 0);
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!HookUtils.disconnectRequested(app) && HookUtils.bluetoothConnected(app, address)) {
+                            try {
+                                app.startService(new Intent("com.oplus.ipemanager.action.CONNECT_PENCIL")
+                                        .putExtra("device_mac_info", address)
+                                        .setClassName("com.oplus.ipemanager", "com.oplus.ipemanager.btadsorb.CoreService"));
+                                HookUtils.log("IPe OEM control GATT recovery requested mac=" + address);
+                            } catch (Throwable error) {
+                                HookUtils.log("IPe OEM control GATT recovery failed: " + error);
+                            }
+                        }
+                    }
+                }, 650L);
+                HookUtils.log("IPe OEM s0 GATT disconnected while HID remains live");
+            } else {
+                IpeManagerHooks.publishHardwareDisconnected(context, obj, "ipe_ble_gatt_disconnected");
+                HookUtils.log("IPe OEM s0 GATT disconnected with HID offline");
+            }
             return;
         }
         if (context == null || !acceptManager(context, obj)) {

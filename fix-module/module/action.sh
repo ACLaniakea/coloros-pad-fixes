@@ -19,6 +19,14 @@ echo "  apps root memcg swappiness=$(cat /dev/memcg/apps/memory.swappiness 2>/de
 echo "  active memcg swappiness=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null)"
 echo "  systemserver memcg swappiness=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null)"
 echo "  zram 已用: $(awk '{printf "%.1fGB", $1/1073741824}' /sys/block/zram0/mm_stat 2>/dev/null)"
+echo "内核兼容模块:"
+grep -E '^(oplus_shell_temp_compat|oplus_mm_compat) ' /proc/modules 2>/dev/null || echo "  未加载"
+if [ -r /proc/oplus_mem/compat_status ]; then
+    sed 's/^/  /' /proc/oplus_mem/compat_status
+fi
+if [ -r /proc/oplus_mem/swappiness_para ]; then
+    echo "  swappiness_para=$(tr '\n' ' ' </proc/oplus_mem/swappiness_para)"
+fi
 echo "PSI:"
 cat /proc/pressure/cpu /proc/pressure/memory /proc/pressure/io 2>/dev/null
 tail -40 "$MODDIR/fix-module.log" 2>/dev/null

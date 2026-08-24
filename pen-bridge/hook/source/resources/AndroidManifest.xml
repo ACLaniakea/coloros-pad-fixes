@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="1106"
-    android:versionName="1.1.6"
+    android:versionCode="1119"
+    android:versionName="1.1.19"
     android:compileSdkVersion="36"
     android:compileSdkVersionCodename="16"
     package="com.aclaniakea.lenovopenbridge"
@@ -62,7 +62,13 @@
                 <action android:name="android.bluetooth.device.action.BOND_STATE_CHANGED"/>
                 <action android:name="android.bluetooth.device.action.BATTERY_LEVEL_CHANGED"/>
                 <action android:name="android.bluetooth.adapter.action.STATE_CHANGED"/>
+                <action android:name="com.aclaniakea.lenovopenbridge.action.HAPTIC_TRANSPORT"/>
             </intent-filter>
         </receiver>
+        <provider
+            android:name="com.aclaniakea.colorosporttuning.PenStateProvider"
+            android:authorities="com.aclaniakea.lenovopenbridge.penstate"
+            android:exported="true"
+            android:directBootAware="true"/>
     </application>
 </manifest>

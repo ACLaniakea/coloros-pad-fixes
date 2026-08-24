@@ -18,7 +18,8 @@ MODDIR=${0%/*}
 #   6) 屏幕唤醒后延迟回放真实 Hall/连接状态，避免唤醒瞬间写入 DSI/panel
 #      节点导致黑屏；pen_wakeup_* 节点只在开机按需写一次；
 #   7) 刷新率策略由 post-fs-data 绑定，本服务不管理亮度/背光/屏幕电源。
-# 仅适用于 SM8650Q / pineapple 平台；LSPosed Hook APK 独立安装。
+# 仅适用于 SM8650Q / pineapple 平台；Hook 仍独立安装，模块内签名副本
+# 仅用于 LSPosed 在 PackageManager 恢复 /data/app 前稳定读取。
 # ============================================================================
 
 LOGFILE="$MODDIR/pen-bridge.log"
@@ -47,6 +48,7 @@ PEN_CONNECT_DEDUP_FILE="$MODDIR/pen-connect.last"
 PEN_BOOT_READY_FILE="$MODDIR/pen-boot-ready"
 SCREEN_STATE_FILE="$MODDIR/pen-screen.state"
 HIDCTL_PERMISSION_FILE="$MODDIR/pen-hid-permissions.ready"
+BRIDGE_PERMISSION_FILE="$MODDIR/pen-bridge-permissions.ready"
 HIDCTL_LAUNCHER_FILE="$MODDIR/pen-hid-launcher.hidden"
 PEN_USER_DISCONNECT_KEY=lenovo_pen_user_disconnect_requested
 
@@ -209,6 +211,7 @@ normalize_disconnect_latch
 # GATT fallback.  The Hook writes the live owner PID after service discovery.
 settings put global lenovo_pen_oem_control_ready 0 >/dev/null 2>&1
 settings put global lenovo_pen_oem_control_pid 0 >/dev/null 2>&1
+settings put global lenovo_pen_oem_haptic_forward 1 >/dev/null 2>&1
 echo "[$(date '+%F %T')] stale OEM haptic transport session cleared"
 apply_pen_wake
 reset_pen_state_mirror
@@ -238,6 +241,44 @@ grant_hidctl_bluetooth_permissions() {
     fi
 }
 
+# The haptic transport deliberately lives in the standalone bridge process so
+# a vendor Bluetooth failure cannot restart system_server. Package updates can
+# revoke nearby-device runtime grants, so make the isolation path self-healing.
+grant_bridge_bluetooth_permissions() {
+    [ -f "$BRIDGE_PERMISSION_FILE" ] && return 0
+    if [ -z "$(pm path com.aclaniakea.lenovopenbridge 2>/dev/null)" ]; then
+        echo "[$(date '+%F %T')] bridge permission grant skipped: Hook APK unavailable"
+        return 0
+    fi
+    failed=0
+    for permission in \
+            android.permission.BLUETOOTH_CONNECT \
+            android.permission.BLUETOOTH_SCAN; do
+        if ! pm grant --user 0 com.aclaniakea.lenovopenbridge "$permission" >/dev/null 2>&1; then
+            failed=1
+            echo "[$(date '+%F %T')] bridge permission grant failed permission=$permission"
+        fi
+    done
+    if [ "$failed" = 0 ]; then
+        : >"$BRIDGE_PERMISSION_FILE"
+        echo "[$(date '+%F %T')] bridge Bluetooth runtime permissions granted"
+    fi
+}
+
+# The bridge Hook APK has no launcher component, so a package (re)install or
+# force-stop leaves it in the stopped state. A stopped app's ContentProvider is
+# not resolvable from system_server, which silently drops every haptic dispatch
+# with "Failed to find provider info". Keep it un-stopped so the provider (and
+# therefore the writing haptic) is always reachable.
+unstop_bridge() {
+    if [ -z "$(pm path com.aclaniakea.lenovopenbridge 2>/dev/null)" ]; then
+        return 0
+    fi
+    if pm unstop --user 0 com.aclaniakea.lenovopenbridge >/dev/null 2>&1; then
+        echo "[$(date '+%F %T')] bridge Hook APK un-stopped (haptic provider reachable)"
+    fi
+}
+
 hide_hidctl_launcher() {
     [ -f "$HIDCTL_LAUNCHER_FILE" ] && return 0
     if [ -z "$(pm path com.aclaniakea.penhidctl 2>/dev/null)" ]; then
@@ -257,7 +298,9 @@ retry_hidctl_setup() {
     while [ "$attempt" -le 12 ] && [ ! -e "$CPS_DISABLED" ]; do
         hide_hidctl_launcher
         grant_hidctl_bluetooth_permissions
-        [ -f "$HIDCTL_PERMISSION_FILE" ] && return 0
+        grant_bridge_bluetooth_permissions
+        unstop_bridge
+        [ -f "$HIDCTL_PERMISSION_FILE" ] && [ -f "$BRIDGE_PERMISSION_FILE" ] && return 0
         sleep_sec 5
         attempt=$((attempt + 1))
     done
@@ -266,11 +309,13 @@ retry_hidctl_setup() {
 
 hide_hidctl_launcher
 grant_hidctl_bluetooth_permissions
+grant_bridge_bluetooth_permissions
+unstop_bridge
 retry_hidctl_setup &
 
 # The LSPosed Hook is a separate package now. This Root service deliberately
 # does not call pm install and never copies an APK into /data/app.
-echo "[$(date '+%F %T')] independent LSPosed Hook package expected"
+echo "[$(date '+%F %T')] stable LSPosed Pen Hook payload expected"
 
 # The ported OplusBatteryManager reports wirelessPenPresent=0 even when the
 # real Hall pair is 0/1 (pen docked).  That makes the bridge's Java poller
@@ -654,10 +699,8 @@ publish_hall_state() {
         --ei chargingState "$charging" \
         --ei charging "$charging" \
         --ei physicalDocked "$docked" \
-        --ei connected "$connected" \
-        --es present "$connected" \
         --es macAddr "$mac" \
-        --es name "Lenovo Tab Pen" \
+        --es name "Lenovo Tab Pen Pro" \
         --es source hardware_hall \
         --ez hardware_battery "$hardware_battery" \
         --ez hardware_identity_known true >/dev/null 2>&1
@@ -703,9 +746,9 @@ monitor_screen_replay() {
         last="$state"
         echo "$state" >"$SCREEN_STATE_FILE"
         # This is only a fallback for the Hook's immediate screen callback.
-        # A 250 ms dumpsys loop kept a full shell busy and materially raised
-        # CPU PSI; two seconds is still well inside the delayed replay window.
-        sleep_sec 2
+        # Avoid waking system_server with a full dumpsys every two seconds
+        # throughout standby; real SCREEN_ON callbacks remain immediate.
+        sleep_sec 10
     done
 }
 
@@ -725,7 +768,7 @@ monitor_battery_cache() {
                     ;;
             esac
         fi
-        sleep_sec 5
+        sleep_sec 10
     done
 }
 
@@ -753,7 +796,7 @@ monitor_charging_cache() {
                 esac
                 ;;
         esac
-        sleep_sec 5
+        sleep_sec 10
     done
 }
 
@@ -767,13 +810,14 @@ real_bt_connected() {
     case "$tail" in
         *[!0-9A-Fa-f:]*|'') return 1 ;;
     esac
-    dump=$(dumpsys bluetooth_manager 2>/dev/null | tr 'A-Z' 'a-z')
     tail=$(printf '%s' "$tail" | tr 'A-Z' 'a-z')
-    case "$dump" in
-        *"$tail"*"hogp connection state=2"*) return 0 ;;
-        *"hogp connection state=2"*"$tail"*) return 0 ;;
-    esac
-    return 1
+    # Match one current profile-summary line only. The bluetooth dump also
+    # contains connection history; matching the MAC and state independently
+    # across the whole dump made a disconnected pen look connected whenever
+    # an old "HOGP connection state=2" record was still present.
+    dumpsys bluetooth_manager 2>/dev/null \
+        | tr 'A-Z' 'a-z' \
+        | grep -E "$tail .*hogp connection state=2" >/dev/null 2>&1
 }
 
 # Refresh-rate policy: the pen counts as "in use" only while it is connected
@@ -799,6 +843,7 @@ apply_refresh_policy() {
 # reconnected: clear the latch so the UI stops reporting "disconnected".
 monitor_real_bt_state() {
     last=-1
+    last_oem_recovery=0
     while [ ! -e "$CPS_DISABLED" ]; do
         if real_bt_connected; then
             connected=1
@@ -855,10 +900,25 @@ monitor_real_bt_state() {
             echo "[$(date '+%F %T')] real BT state mirror connected=$connected (was $current)"
             last="$connected"
         fi
+        if [ "$connected" = 1 ] \
+                && [ "$(settings get global lenovo_pen_oem_control_ready 2>/dev/null | tr -d '\r')" != 1 ] \
+                && [ "$(settings get global lenovo_pen_disconnect_requested 2>/dev/null | tr -d '\r')" != 1 ]; then
+            now=$(date '+%s' 2>/dev/null)
+            case "$now:$last_oem_recovery" in
+                *[!0-9:]*|:*) ;;
+                *)
+                    if [ "$now" -ge "$last_oem_recovery" ] && [ "$((now - last_oem_recovery))" -ge 30 ]; then
+                        last_oem_recovery="$now"
+                        request_oem_pen_action "$OEM_CONNECT_ACTION"
+                        echo "[$(date '+%F %T')] live HOGP missing OEM haptic session; recovery requested"
+                    fi
+                    ;;
+            esac
+        fi
         # Real ACL/GATT callbacks update the mirror immediately.  Keep this
         # expensive full bluetooth_manager dump as a low-rate reconciliation
         # path only, not a one-Hz permanent poll.
-        sleep_sec 5
+        sleep_sec 30
     done
 }
 
@@ -921,7 +981,7 @@ monitor_hall_capsule() {
                 fi
                 ;;
         esac
-        sleep_sec 0.5
+        sleep_sec 1
     done
 }
 
@@ -1004,6 +1064,28 @@ request_pen_connect() {
     run_hidctl connect
 }
 
+# The Settings reconnect button must remain a bounded user action, but a
+# single HID request can race the OEM GATT service while the pen is waking.
+# Retry HID Host only (the original CoreService session stays authoritative)
+# and stop immediately when the current HOGP summary reports state 2.
+request_pen_connect_bounded() {
+    request_pen_connect
+    (
+        retry=1
+        while [ "$retry" -le 3 ] && [ ! -e "$CPS_DISABLED" ]; do
+            sleep_sec 3
+            if real_bt_connected; then
+                echo "[$(date '+%F %T')] explicit pen reconnect confirmed by HOGP attempt=$retry"
+                exit 0
+            fi
+            run_hidctl connect
+            echo "[$(date '+%F %T')] explicit pen HID retry attempt=$retry"
+            retry=$((retry + 1))
+        done
+        echo "[$(date '+%F %T')] explicit pen reconnect window ended without HOGP"
+    ) &
+}
+
 request_pen_disconnect() {
     request_oem_pen_action "$OEM_DISCONNECT_ACTION"
     run_hidctl disconnect
@@ -1023,7 +1105,6 @@ monitor_hid_latch() {
     repeat=0
     while [ ! -e "$CPS_DISABLED" ]; do
         requested=$(settings get global lenovo_pen_disconnect_requested 2>/dev/null | tr -d '\r')
-        connected=$(settings get global lenovo_pen_link_connected 2>/dev/null | tr -d '\r')
         case "$requested" in
             1)
                 if [ "$last" != 1 ]; then
@@ -1038,10 +1119,10 @@ monitor_hid_latch() {
                     user_requested=$(settings get global lenovo_pen_user_disconnect_requested 2>/dev/null | tr -d '\r')
                     if [ "$user_requested" = 1 ]; then
                         echo "[$(date '+%F %T')] explicit pen connect skipped: user disconnect choice is active"
-                    elif [ "$connected" = 1 ]; then
+                    elif real_bt_connected; then
                         echo "[$(date '+%F %T')] explicit pen connect already has a real link"
                     else
-                        request_pen_connect
+                        request_pen_connect_bounded
                     fi
                     repeat=0
                 else
@@ -1054,7 +1135,7 @@ monitor_hid_latch() {
                 ;;
         esac
         last="$requested"
-        sleep_sec 2
+        sleep_sec 5
     done
 }
 

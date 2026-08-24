@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-ui_print "- 联想手写笔桥接 Root 服务 1.1.6（ACLaniakea）"
+ui_print "- 联想手写笔桥接 Root 服务 1.1.19（ACLaniakea）"
 ui_print "- 开机按已绑定手写笔地址直接调用原厂 CoreService BLE 连接"
 ui_print "- 设置页断开同时执行原厂 CoreService、GATT/HID 实际断开"
 ui_print "- 统一 Hall/CPS/BLE 硬件充电状态与 ColorOS 设置页热切换"
@@ -14,7 +14,7 @@ ui_print "- 设备空间手写笔存在状态仅跟随真实蓝牙连接"
 ui_print "- Root 仅在开机一次性写入 pen_wakeup 节点，避免 system_server 权限失败"
 ui_print "- 连接状态只接受真实 ACL/GATT/Hall/CPS 事件，拒绝强制已连接回放"
 ui_print "- 刷新率策略统一绑定：笔场景锁 120Hz，其余场景最高 144Hz"
-ui_print "- LSPosed Hook APK 独立安装，不再由 Root 模块携带或同步"
+ui_print "- 内置签名 Hook 副本并固定 LSPosed 早期路径，消除冷启动随机路径竞态"
 ui_print "- 仅适用于 SM8650Q / pineapple 平台"
 
 # An older revision may have embedded the Hook APK in this same module.
@@ -39,6 +39,24 @@ set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
 set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 [ -f "$MODPATH/bin/pen-cps-gpio" ] && set_perm "$MODPATH/bin/pen-cps-gpio" 0 0 0755
+[ -f "$MODPATH/bin/lsposed-path-sync.jar" ] && set_perm "$MODPATH/bin/lsposed-path-sync.jar" 0 0 0644
+[ -f "$MODPATH/hook/PenBridge-Hook.apk" ] && set_perm "$MODPATH/hook/PenBridge-Hook.apk" 0 0 0644
+
+if [ -f /data/adb/lspd/config/modules_config.db ] && \
+        [ -f "$MODPATH/bin/lsposed-path-sync.jar" ] && \
+        [ -f "$MODPATH/hook/PenBridge-Hook.apk" ]; then
+    chcon u:object_r:system_file:s0 "$MODPATH/bin/lsposed-path-sync.jar" \
+        "$MODPATH/hook/PenBridge-Hook.apk" 2>/dev/null
+    CLASSPATH="$MODPATH/bin/lsposed-path-sync.jar" app_process /system/bin \
+        com.aclaniakea.tools.LsposedPathSync \
+        /data/adb/lspd/config/modules_config.db \
+        "$MODPATH/hook/PenBridge-Hook.apk" \
+        com.aclaniakea.lenovopenbridge \
+        system com.coloros.note com.oplus.exsystemservice \
+        com.oplus.healthservice com.heytap.mydevices com.oplus.ipemanager \
+        com.oplus.wirelesssettings com.oplus.screenshot >/dev/null 2>&1 && \
+        ui_print "- Pen Hook 路径与原厂作用域已固定，system_server 冷启动直接加载"
+fi
 
 # Remove the legacy kernel bridge from an existing module update as well as
 # from a fresh package. The normal CPS/Hall and BLE paths remain intact.

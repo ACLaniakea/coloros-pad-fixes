@@ -22,8 +22,8 @@ MODDIR=${0%/*}
 #   7) 允许 Dolby Bridge 后台运行，避免原厂控制页仍在前台时服务被 app-idle
 #      回收，导致 UI 仅写入设置但没有实时下发 DAP；
 #   8) 清理已合并的旧 AON 独立包；启动 horae/gameopt；
-#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：稳定态普通后台 10、
-#      冷后台 20，活跃 UI 与 system_server 禁止匿名页换出，并保留 64MB 水位；
+#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：普通/冷后台 10，
+#      活跃 UI、system_server 与 native system 禁止匿名页换出，并保留64MB水位；
 #  10) 按需执行应用建议协议修复与序列号补齐。
 # ============================================================================
 
@@ -62,6 +62,7 @@ fi
 # Close the gap before the bounded memcg handoff below. Vendor init may have
 # overwritten post-fs-data's VM values while Android was still starting.
 echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
+echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
 echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
 if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
     echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
@@ -352,22 +353,22 @@ fi
 # ============================================================================
 # 调优部分（原 coloros_port_tuning）：service 阶段
 # 实机发现合并版只写 active/systemserver，apps 根分组和每个应用子分组仍为
-# swappiness=100，导致 Launcher/SystemUI/常用应用累计数百 MB Swap。交互切换
-# 实测证明普通=20 + OSense 主动换出会产生换页风暴，因此稳定态收敛为普通=10、
-# inactive=20；active/systemserver=0。0 只用于不会随熄屏离开 active 的关键
-# 交互进程，普通和冷后台仍可按需使用 ZRAM。
+# swappiness=100，导致 Launcher/SystemUI/常用应用累计数百 MB Swap。长待机
+# 现场进一步确认 system_server/SystemUI/SurfaceFlinger 分别已有约243/154/43MB
+# Swap，唤醒时集中重大缺页。稳定态因此收敛为普通/冷后台=10，
+# active/systemserver/native-system=0；缓存进程上限由 system_server Hook 在
+# 8GB 机型从源手机的96压到48，12GB机型保持原值。
 # ============================================================================
-# post-fs-data already applies the final 0/10/20 split and keeps clamping newly
+# post-fs-data already applies the final 0/10 split and keeps clamping newly
 # created first-unlock groups. Retain a bounded overlap before handoff so late
 # CE groups cannot regain ColorOS' high defaults; no all-zero phase remains.
 log_msg "tuning settle window start: maintaining split memcg policy for 90s"
 sleep 90
 
-# Release post-fs-data's bounded first-unlock guard before publishing the
-# stable child values. A short edge wait prevents the two one-shot scripts
-# from racing; no functionality is delayed by this memory-only handoff.
-touch "$MODDIR/.memcg_settle_ready" 2>/dev/null
-sleep 2
+# Do not terminate post-fs-data's bounded guard merely because Android has
+# been up for 90 seconds. The user may perform the first unlock later; the
+# helper exits by itself after four minutes，覆盖较晚发生的首次解锁；它只改变
+# 进程后续分配的 memcg 归属，不批量搬运已经计费的页面，也不常驻。
 
 wait_count=0
 while [ ! -w /dev/memcg/apps/memory.swappiness ] &&
@@ -381,14 +382,14 @@ for memcg_file in /dev/memcg/apps/memory.swappiness \
         /dev/memcg/apps/*/memory.swappiness; do
     [ -w "$memcg_file" ] || continue
     case "$memcg_file" in
-        */active/memory.swappiness)
+        */active/memory.swappiness|*/launcher/memory.swappiness)
             echo 0 >"$memcg_file" 2>/dev/null
             ;;
         */systemserver/memory.swappiness)
             echo 0 >"$memcg_file" 2>/dev/null
             ;;
         */inactive/memory.swappiness)
-            echo 20 >"$memcg_file" 2>/dev/null
+            echo 10 >"$memcg_file" 2>/dev/null
             ;;
         *)
             echo 10 >"$memcg_file" 2>/dev/null
@@ -396,7 +397,7 @@ for memcg_file in /dev/memcg/apps/memory.swappiness \
     esac
 done
 if [ -w /dev/memcg/system/memory.swappiness ]; then
-    echo 10 >/dev/memcg/system/memory.swappiness 2>/dev/null
+    echo 0 >/dev/memcg/system/memory.swappiness 2>/dev/null
 fi
 
 # On this port /dev/memcg/apps/systemserver may be created only after the first

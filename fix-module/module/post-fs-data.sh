@@ -30,6 +30,49 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# OPD2513 Horae publishes its three calculated shell temperatures through the
+# official /proc/shell-temp ABI.  Lenovo's otherwise matching GKI omits only
+# that small OPlus module, causing a failed open every five seconds.  Load the
+# exact-build compatibility module once, before Horae starts; no userspace
+# watchdog is needed.  The module has been built against GKI build 13606743
+# and all CONFIG_MODVERSIONS CRCs are checked during the repository build.
+SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
+if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
+    if [ -f "$SHELL_TEMP_KO" ] && insmod "$SHELL_TEMP_KO" 2>>"$LOGFILE"; then
+        log_msg "OPlus Horae shell-temp compatibility loaded"
+    else
+        log_msg "WARN: OPlus Horae shell-temp compatibility load failed"
+    fi
+fi
+
+# Restore only the externally supportable part of the OPlus memory ABI on this
+# exact Lenovo GKI. This reports the real standard-zram backend and clamps
+# OPlus tuning requests to values proven safe on the 8 GB tablet. It does not
+# claim HybridSwap/writeback support; optional hooks stay disabled normally.
+MM_COMPAT_KO="$MODDIR/bin/oplus_mm_compat.ko"
+if ! grep -q '^oplus_mm_compat ' /proc/modules 2>/dev/null; then
+    if [ -f "$MM_COMPAT_KO" ] && insmod "$MM_COMPAT_KO" 2>>"$LOGFILE"; then
+        log_msg "OPlus standard-zram memory compatibility loaded"
+    else
+        log_msg "WARN: OPlus memory compatibility load failed"
+    fi
+fi
+if [ -d /proc/oplus_mem ]; then
+    [ -w /proc/oplus_mem/swappiness_para ] && {
+        echo 'vm_swappiness=20' >/proc/oplus_mem/swappiness_para 2>/dev/null
+        echo 'direct_swappiness=10' >/proc/oplus_mem/swappiness_para 2>/dev/null
+    }
+    [ -w /proc/oplus_mem/dynamic_swappiness ] && \
+        echo '20 1024 10 512' >/proc/oplus_mem/dynamic_swappiness 2>/dev/null
+    [ -w /proc/oplus_mem/alloc_adjust_ctrl ] && \
+        echo 0 >/proc/oplus_mem/alloc_adjust_ctrl 2>/dev/null
+    [ -w /proc/oplus_mem/kswapd_debug ] && \
+        echo 0 >/proc/oplus_mem/kswapd_debug 2>/dev/null
+    [ -w /proc/oplus_mem/kswapd_load_stat ] && \
+        echo 0 >/proc/oplus_mem/kswapd_load_stat 2>/dev/null
+    log_msg "OPlus memory compatibility configured with all optional hooks disabled"
+fi
+
 # LSPosed starts parsing enabled modules before PackageManager has restored the
 # random /data/app path on this ROM.  Keep a signed copy inside the KernelSU
 # module and atomically pin LSPosed to that stable, early-visible path before
@@ -56,15 +99,15 @@ fi
 # 调优部分（原 coloros_port_tuning）：post-fs-data 阶段
 #   1) 全局/根 memcg 使用冷启动实测折中值 10；8GB watermark=10，
 #      12GB 保留 watermark=20。
-#      普通 app 子组=10、冷后台=20，只有 active/systemserver=0。首次解锁
+#      普通/冷后台 app 子组=10，只有 active/systemserver=0。首次解锁
 #      A/B 证明全 0 会让 kswapd 持续扫描，而 10 / 20 在 8GB 上仍会形成
 #      换页抖动；全局5在热缓存下扫描较低，但冷启动后会增加
 #      direct reclaim，因此最终取10。
 #   2) bind mount 覆盖 /my_stock 的 osense 配置：关闭主动后台换出，避免实测
 #      应用切换期间出现压缩/换入风暴；ZRAM 仍由内核在真实压力下按需使用。
 #      不创建、不扩容 ZRAM，兼容 8/12GB RAM 及未启用 ZRAM 的同型号设备。
-#   3) root/apps/system 父 memcg 从启动起即为 10；有界窗口捕获首次解锁
-#      新建的子组并按类型写 0/10/20，避免 ColorOS 写回默认高值。
+#   3) root/apps 父 memcg 从启动起即为10，native system/active/systemserver=0；
+#      有界窗口捕获首次解锁新建的子组并按类型写0/10，避免 ColorOS 写回默认高值。
 # ============================================================================
 
 ram_kb=$(awk '/MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
@@ -92,22 +135,119 @@ if [ -w /dev/memcg/memory.swappiness ]; then
     # always keep both writes identical.
     echo "$vm_swappiness" >/dev/memcg/memory.swappiness 2>/dev/null
 fi
+# Create the standard ColorOS app groups before zygote/system_server. Without
+# this, the port creates systemserver roughly 25 seconds after Android is up;
+# its pages are charged to swappable root in the meantime and mode=0 cannot
+# undo that existing swap later. Match the OEM ownership and modes exactly.
+if [ -d /dev/memcg ]; then
+    if [ ! -d /dev/memcg/apps ]; then
+        mkdir /dev/memcg/apps 2>/dev/null
+        chown system:system /dev/memcg/apps 2>/dev/null
+        chmod 0755 /dev/memcg/apps 2>/dev/null
+    fi
+    for protected_group in active systemserver launcher; do
+        protected_path="/dev/memcg/apps/$protected_group"
+        if [ ! -d "$protected_path" ]; then
+            mkdir "$protected_path" 2>/dev/null
+            chown system:system "$protected_path" 2>/dev/null
+            chmod 0700 "$protected_path" 2>/dev/null
+        fi
+        [ -w "$protected_path/memory.swappiness" ] && \
+            echo 0 >"$protected_path/memory.swappiness" 2>/dev/null
+        [ -w "$protected_path/memory.move_charge_at_immigrate" ] && \
+            echo 0 >"$protected_path/memory.move_charge_at_immigrate" 2>/dev/null
+    done
+fi
 if [ -w /dev/memcg/apps/memory.swappiness ]; then
     echo 10 >/dev/memcg/apps/memory.swappiness 2>/dev/null
 fi
 if [ -w /dev/memcg/system/memory.swappiness ]; then
-    echo 10 >/dev/memcg/system/memory.swappiness 2>/dev/null
+    # SurfaceFlinger and native framework daemons never enter the app active
+    # group. Keep their wake-critical anonymous pages resident as well.
+    echo 0 >/dev/memcg/system/memory.swappiness 2>/dev/null
 fi
 
 # First unlock creates CE app memcgs in a burst and ColorOS can write its high
-# defaults into each new child. Clamp new groups to the same stable 0/10/20
+# defaults into each new child. Clamp new groups to the same stable 0/10
 # policy until service.sh publishes the handoff. This helper is bounded to four
 # minutes and always exits; it is not a resident tuning daemon.
 MEMCG_SETTLE_FLAG="$MODDIR/.memcg_settle_ready"
 rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
 (
     attempt=0
+    assigned_system_server=0
+    assigned_surfaceflinger=0
+    assigned_systemui=0
+    assigned_launcher=0
     while [ "$attempt" -lt 240 ] && [ ! -e "$MEMCG_SETTLE_FLAG" ]; do
+        # On this port AMS creates active/systemserver tens of seconds after
+        # system_server starts. By then hundreds of MB can already be swapped
+        # from first-unlock code. Create the stock-named groups as soon as the
+        # apps parent exists, with the same ownership/mode as ColorOS, so the
+        # later allocations are charged directly to the protected group.
+        if [ -d /dev/memcg/apps ]; then
+            for protected_group in active systemserver launcher; do
+                protected_path="/dev/memcg/apps/$protected_group"
+                if [ ! -d "$protected_path" ]; then
+                    mkdir "$protected_path" 2>/dev/null
+                    chown system:system "$protected_path" 2>/dev/null
+                    chmod 0700 "$protected_path" 2>/dev/null
+                fi
+                [ -w "$protected_path/memory.swappiness" ] && \
+                    echo 0 >"$protected_path/memory.swappiness" 2>/dev/null
+            done
+        fi
+        # Assign wake-critical processes to protected groups as soon as they
+        # appear, but deliberately DO NOT migrate pages already charged to the
+        # root memcg.  memory.move_charge_at_immigrate is deprecated upstream
+        # and moving several hundred MB of existing charges during first unlock
+        # caused a kswapd/swap-in storm on this port's incomplete OPlus memory
+        # stack.  Future allocations inherit the protected group without that
+        # one-time bulk page migration.
+        if [ "$assigned_system_server" -eq 0 ] && \
+                [ -w /dev/memcg/apps/systemserver/cgroup.procs ]; then
+            critical_pid=$(pidof system_server 2>/dev/null | awk '{print $1}')
+            if [ -n "$critical_pid" ]; then
+                echo 0 >/dev/memcg/apps/systemserver/memory.move_charge_at_immigrate 2>/dev/null
+                echo "$critical_pid" >/dev/memcg/apps/systemserver/cgroup.procs 2>/dev/null
+                grep -q 'memory:/apps/systemserver$' "/proc/$critical_pid/cgroup" 2>/dev/null && \
+                    assigned_system_server=1
+            fi
+        fi
+        if [ "$assigned_surfaceflinger" -eq 0 ] && \
+                [ -w /dev/memcg/system/cgroup.procs ]; then
+            critical_pid=$(pidof surfaceflinger 2>/dev/null | awk '{print $1}')
+            if [ -n "$critical_pid" ]; then
+                echo 0 >/dev/memcg/system/memory.move_charge_at_immigrate 2>/dev/null
+                echo "$critical_pid" >/dev/memcg/system/cgroup.procs 2>/dev/null
+                grep -q 'memory:/system$' "/proc/$critical_pid/cgroup" 2>/dev/null && \
+                    assigned_surfaceflinger=1
+            fi
+        fi
+        if [ "$assigned_systemui" -eq 0 ] && \
+                [ -w /dev/memcg/apps/active/cgroup.procs ]; then
+            critical_pid=$(pidof com.android.systemui 2>/dev/null | awk '{print $1}')
+            if [ -n "$critical_pid" ]; then
+                echo 0 >/dev/memcg/apps/active/memory.move_charge_at_immigrate 2>/dev/null
+                echo "$critical_pid" >/dev/memcg/apps/active/cgroup.procs 2>/dev/null
+                grep -q 'memory:/apps/active$' "/proc/$critical_pid/cgroup" 2>/dev/null && \
+                    assigned_systemui=1
+            fi
+        fi
+        # ColorOS leaves Launcher in the root memory cgroup even when
+        # SystemUI/system_server are protected.  On the 8 GB tablet it had
+        # accumulated heavy swap after standby. Put future allocations in its
+        # protected group without bulk-moving existing charges at unlock.
+        if [ "$assigned_launcher" -eq 0 ] && \
+                [ -w /dev/memcg/apps/launcher/cgroup.procs ]; then
+            critical_pid=$(pidof com.android.launcher 2>/dev/null | awk '{print $1}')
+            if [ -n "$critical_pid" ]; then
+                echo 0 >/dev/memcg/apps/launcher/memory.move_charge_at_immigrate 2>/dev/null
+                echo "$critical_pid" >/dev/memcg/apps/launcher/cgroup.procs 2>/dev/null
+                grep -q 'memory:/apps/launcher$' "/proc/$critical_pid/cgroup" 2>/dev/null && \
+                    assigned_launcher=1
+            fi
+        fi
         # Several late vendor init actions overwrite the early VM values after
         # post-fs-data (observed at boot as desired 10/10 -> 10/80). Re-apply
         # only when a value differs during this bounded first-unlock window.
@@ -116,6 +256,8 @@ rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
             echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
         [ "$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null)" = "$vm_watermark" ] || \
             echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
+        [ "$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null)" = 65536 ] || \
+            echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
         if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ] && \
                 [ "$(cat /sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null)" != 1024 ]; then
             echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
@@ -129,11 +271,14 @@ rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
                 /dev/memcg/memory.swappiness)
                     early_value=$vm_swappiness
                     ;;
-                */active/memory.swappiness|*/systemserver/memory.swappiness)
+                /dev/memcg/system/memory.swappiness)
+                    early_value=0
+                    ;;
+                */active/memory.swappiness|*/systemserver/memory.swappiness|*/launcher/memory.swappiness)
                     early_value=0
                     ;;
                 */inactive/memory.swappiness)
-                    early_value=20
+                    early_value=10
                     ;;
                 *)
                     early_value=10
@@ -145,7 +290,7 @@ rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
         sleep 1
         attempt=$((attempt + 1))
     done
-    log_msg "early first-unlock memcg guard finished attempts=$attempt handoff=$([ -e "$MEMCG_SETTLE_FLAG" ] && echo 1 || echo 0)"
+    log_msg "early first-unlock guard finished attempts=$attempt handoff=$([ -e "$MEMCG_SETTLE_FLAG" ] && echo 1 || echo 0) assigned=system_server:$assigned_system_server,surfaceflinger:$assigned_surfaceflinger,systemui:$assigned_systemui,launcher:$assigned_launcher"
 ) &
 
 wait_count=0
@@ -188,7 +333,7 @@ fi
 # 一次性覆盖高通开机脚本的 swappiness=100：/vendor/bin/init.qcom.post_boot.sh
 # 与 init.kernel.post_boot.sh 会在开机阶段把全局 swappiness 硬编码写回 100，
 # 覆盖 post-fs-data 早期的写入。把补丁版 bind 到原路径，开机脚本
-# 实际执行时写的就是 5，属于源头修复而非事后轮询。
+# 实际执行时写的就是 10，属于源头修复而非事后轮询。
 # ============================================================================
 bind_postboot_script() {
     name="$1"
@@ -207,6 +352,9 @@ bind_postboot_script() {
 bind_postboot_script init.qcom.post_boot.sh u:object_r:vendor_file:s0
 bind_postboot_script init.kernel.post_boot.sh u:object_r:vendor_qti_init_shell_exec:s0
 
+if [ -w /dev/memcg/system/memory.swappiness ]; then
+    echo 0 >/dev/memcg/system/memory.swappiness 2>/dev/null
+fi
 if [ -w /dev/memcg/apps/active/memory.swappiness ]; then
     echo 0 >/dev/memcg/apps/active/memory.swappiness 2>/dev/null
 fi

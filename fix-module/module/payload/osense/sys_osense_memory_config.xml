@@ -108,13 +108,18 @@
 
 	<policy name="dynaZram">
         <config name="dynaZramConfig" type="bundle">
-			<item name="switch" type="bool" value="true"/>
+			<!-- The Lenovo kernel exposes a fixed ROM-owned zram device but not
+			     the complete OPlus HybridSwap control plane. Dynamic management
+			     only produces empty bootCompress passes on this port. -->
+			<item name="switch" type="bool" value="false"/>
         </config>
     </policy>
 
 	<policy name="cMem">
         <config name="cMemConfig" type="bundle">
-			<item name="switch" type="bool" value="true"/>
+			<!-- Leave reclaim to the kernel and lmkd. Periodic OPlus compressed-
+			     memory passes depend on source-device hooks missing here. -->
+			<item name="switch" type="bool" value="false"/>
 			<item name="pollingInv" type="long" value="60000"/>
 			<item name="enterAvailMemThdStr" type="string" value="2|600-3|600-4|600-6|800-8|1200-12|1600-16|2000-24|2800"/>
 			<item name="exitAvailMemThdStr" type="string" value="2|800-3|800-4|800-6|1000-8|1500-12|2000-16|2400-24|3200"/>

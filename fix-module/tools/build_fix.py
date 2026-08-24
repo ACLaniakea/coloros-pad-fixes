@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
-OUT = ROOT.parents[1] / "releases" / "FixModule-v2.0.6.zip"
-HOOK_APK = ROOT.parents[1] / "releases" / "BaseFix-Hook-v1.1.8.apk"
+OUT = ROOT.parents[1] / "releases" / "FixModule-v2.0.11.zip"
+HOOK_APK = ROOT.parents[1] / "releases" / "BaseFix-Hook-v1.1.11.apk"
 EXCLUDE = {"fix-module.log", "tuning.log", "daemon.pid", "magic.pid"}
 
 
@@ -38,7 +38,8 @@ def main() -> None:
                 continue
             info = zipfile.ZipInfo(rel, date_time=(2026, 8, 17, 0, 0, 0))
             info.create_system = 3
-            info.external_attr = (stat.S_IMODE(path.stat().st_mode) & 0xFFFF) << 16
+            mode = 0o644 if path.suffix == ".ko" else stat.S_IMODE(path.stat().st_mode)
+            info.external_attr = (mode & 0xFFFF) << 16
             info.compress_type = (
                 zipfile.ZIP_STORED
                 if path.suffix in {".apk", ".jar", ".so", ".bin", ".uim", ".zip"}

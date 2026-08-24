@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.input.InputManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -18,6 +19,7 @@ import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.net.Uri;
 import android.view.Choreographer;
 import android.view.InputDevice;
 import android.view.InputEvent;
@@ -101,7 +103,11 @@ final class SystemStylusHooks {
                 SystemStylusHooks.pollPenHall(context);
                 SystemStylusHooks.updateRefreshFromState(context);
             }
-            SystemStylusHooks.pollHandler.postDelayed(this, 250L);
+            // Real Hall/GATT/root broadcasts are the primary path. This poll
+            // is only reconciliation; 4 Hz consumed minutes of system_server
+            // CPU during long standby and amplified wake refault pressure.
+            SystemStylusHooks.pollHandler.postDelayed(
+                    this, SystemStylusHooks.screenOn ? 1000L : 5000L);
         }
     };
     private static final Runnable SCREEN_ON_REPLAY = new Runnable() {
@@ -119,6 +125,7 @@ final class SystemStylusHooks {
     private static boolean lastPenInUseState;
     private static int lastLinkedState = -1;
     private static int lastDockedState = -1;
+    private static int lastHidProfileState = -1;
     private static boolean lastInputEnabled = true;
     private static Object oplusDisplayModeService;
     private static Method oplusRequestUpdate;
@@ -341,7 +348,7 @@ final class SystemStylusHooks {
             }
         } catch (Throwable unused) {
         }
-        PenHapticGatt.pulse(context, HookUtils.state(context).address);
+        dispatchHaptic(context, "pulse", HookUtils.state(context).address, 0, true);
     }
 
     private static void sendAll(Context context, Intent intent, String str) {
@@ -393,17 +400,17 @@ final class SystemStylusHooks {
             HookUtils.invalidateOemCharging(context);
             enableKernelPenWake();
             LenovoPenUEventBridge.start(context);
-            registerTouchscreen(context);
-            registerHapticControl(context);
-            registerStateSync(context);
-            registerMagneticAttachListener(context);
-            LenovoConsumerGestureReader.start(context);
             if (!pollThread.isAlive()) {
                 pollThread.start();
             }
             if (pollHandler == null) {
                 pollHandler = new Handler(pollThread.getLooper());
             }
+            registerTouchscreen(context);
+            registerHapticControl(context);
+            registerStateSync(context);
+            registerMagneticAttachListener(context);
+            LenovoConsumerGestureReader.start(context);
             Handler handler = pollHandler;
             Runnable runnable = POLL_PEN_HALL;
             handler.removeCallbacks(runnable);
@@ -731,6 +738,20 @@ final class SystemStylusHooks {
         } else {
             return;
         }
+        // Fast undock: re-enable the pen input the moment the hall pair reads
+        // 1:1 (detached). The 3-sample debounce below guards the dock edge so
+        // dock-orientation flicker cannot disable input; holding that same
+        // debounce on the undock edge left a ~2-3s window where the disabled
+        // NVTCapacitivePen swallowed every stroke right after the pen left the
+        // magnetic dock.
+        if (i == 1 && lastPenHall == 0) {
+            hallCandidate = i;
+            hallCandidateSamples = 3;
+            lastPenHall = i;
+            HookUtils.log("Lenovo pen hall fast undock raw=" + i3 + "," + i4);
+            applyPenHall(context, i, true);
+            return;
+        }
         if (i != hallCandidate) {
             hallCandidate = i;
             hallCandidateSamples = 1;
@@ -799,7 +820,7 @@ final class SystemStylusHooks {
         suppressPenKeysUntil = Math.max(suppressPenKeysUntil, SystemClock.uptimeMillis() + 1200);
         if (z2) {
             releaseLong(context);
-            PenHapticGatt.disconnect();
+            dispatchHaptic(context, "disconnect", HookUtils.state(context).address, 0, false);
             setPenTouchpadEnabled(context, false);
             if (z) {
                 main.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda20
@@ -840,12 +861,32 @@ final class SystemStylusHooks {
             } else {
                 iDocked = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_physical_docked", 0);
             }
-            // A settings-page "disconnect" must actually stop the pen input,
-            // not just the GATT link. The stock disconnect only tears down
-            // s0/BLE, while the HID input device stays live, so gate the input
-            // on the explicit disconnect latch as well as the magnetic dock.
+            // Profile 4 (Bluetooth HID Host/HOGP) is the stock connection
+            // truth. ACL/GATT, bonding, Hall and cached settings can all stay
+            // present after the usable pen profile has disconnected.
+            String penAddress = HookUtils.penAddress(context);
+            boolean hidConnected = HookUtils.bluetoothConnected(context, penAddress);
+            int hidState = hidConnected ? 1 : 0;
+            if (hidState != lastHidProfileState) {
+                lastHidProfileState = hidState;
+                HookUtils.setLinkConnected(context, hidConnected);
+                if (!hidConnected) {
+                    releaseLong(context);
+                    stopWriting();
+                }
+                // The profile broadcast is not reliable on this port. Publish
+                // only the real profile edge so IPe's stock panel callbacks,
+                // Device Space and the input gate consume one common state.
+                PenBridgeReceiver.publishCurrentHardwareState(
+                        context, "hid_profile_reconcile");
+                HookUtils.log("stock HID profile reconciled connected=" + hidConnected);
+            }
+
+            // A Bluetooth settings disconnect must stop NVT input as well as
+            // the OEM GATT session. Require the real stock HID profile in
+            // addition to the explicit settings latch and magnetic position.
             boolean zDisconnected = HookUtils.disconnectRequested(context);
-            boolean zPenInUse = iDocked == 0 && !zDisconnected;
+            boolean zPenInUse = iDocked == 0 && !zDisconnected && hidConnected;
             setRefreshActive(context, zPenInUse);
             // OPlusRefreshRatePolicyImpl reads settings_enable_oppo_pencil as
             // isIPEPencilConnected and votes ipePencilRateId (120 Hz) while 1.
@@ -863,11 +904,13 @@ final class SystemStylusHooks {
             if (iDocked != lastDockedState) {
                 lastDockedState = iDocked;
             }
-            boolean zInputEnabled = iDocked == 0 && !zDisconnected;
+            boolean zInputEnabled = iDocked == 0 && !zDisconnected && hidConnected;
             if (zInputEnabled != lastInputEnabled) {
                 lastInputEnabled = zInputEnabled;
                 setPenInputEnabled(context, zInputEnabled);
-                HookUtils.log("pen input gate -> " + zInputEnabled + " (docked=" + iDocked + " disconnect=" + zDisconnected + ")");
+                HookUtils.log("pen input gate -> " + zInputEnabled + " (docked="
+                        + iDocked + " disconnect=" + zDisconnected + " hid="
+                        + hidConnected + ")");
             }
         } catch (Throwable th) {
             HookUtils.log("pen refresh state update: " + th);
@@ -1134,6 +1177,33 @@ final class SystemStylusHooks {
                 }
             } else if ("android.bluetooth.device.action.ACL_DISCONNECTED".equals(action)) {
                 SystemStylusHooks.releaseLong(this.val$c);
+            } else if ("android.bluetooth.input.profile.action.CONNECTION_STATE_CHANGED".equals(action)) {
+                BluetoothDevice device = null;
+                try {
+                    android.os.Parcelable parcelable = intent.getParcelableExtra("android.bluetooth.device.extra.DEVICE");
+                    if (parcelable instanceof BluetoothDevice) {
+                        device = (BluetoothDevice) parcelable;
+                    }
+                } catch (Throwable ignored) {
+                }
+                String name = device == null ? "" : String.valueOf(device.getName());
+                String address = device == null ? "" : String.valueOf(device.getAddress());
+                PenState pen = HookUtils.state(this.val$c);
+                boolean knownPen = name.toLowerCase().contains("pen")
+                        || (address.length() > 0 && address.equalsIgnoreCase(pen.address));
+                if (knownPen) {
+                    int profileState = intent.getIntExtra("android.bluetooth.profile.extra.STATE", -1);
+                    if (profileState == 0) {
+                        SystemStylusHooks.releaseLong(this.val$c);
+                        SystemStylusHooks.setPenInputEnabled(this.val$c, false);
+                        SystemStylusHooks.lastInputEnabled = false;
+                        SystemStylusHooks.setRefreshActive(this.val$c, false);
+                        HookUtils.log("real HID disconnected: pen input disabled");
+                    } else if (profileState == 2 && !HookUtils.disconnectRequested(this.val$c)) {
+                        SystemStylusHooks.updateRefreshFromState(this.val$c);
+                        HookUtils.log("real HID connected: pen input gate restored");
+                    }
+                }
             }
             Handler handler6 = SystemStylusHooks.main;
             final Context context6 = this.val$c;
@@ -1161,6 +1231,7 @@ final class SystemStylusHooks {
             intentFilter.addAction("android.bluetooth.device.action.ACL_CONNECTED");
             intentFilter.addAction("android.bluetooth.device.action.ACL_DISCONNECTED");
             intentFilter.addAction("android.bluetooth.device.action.BATTERY_LEVEL_CHANGED");
+            intentFilter.addAction("android.bluetooth.input.profile.action.CONNECTION_STATE_CHANGED");
             intentFilter.addAction("android.bluetooth.adapter.action.STATE_CHANGED");
             if (Build.VERSION.SDK_INT >= 33) {
                 context.registerReceiver(anonymousClass6, intentFilter, 2);
@@ -1216,7 +1287,7 @@ final class SystemStylusHooks {
                         return;
                     }
                     boolean booleanExtra = intent.getBooleanExtra("enabled", Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_global_writing_haptic", 1) != 0);
-                    PenHapticGatt.setWritingEnabled(context, HookUtils.state(context).address, booleanExtra);
+                    dispatchHaptic(context, "enable", HookUtils.state(context).address, 0, booleanExtra);
                     if (!booleanExtra) {
                         SystemStylusHooks.stopWriting();
                     }
@@ -1231,7 +1302,7 @@ final class SystemStylusHooks {
             }
             hapticControlReady = true;
             if (Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_global_writing_haptic", 1) != 0) {
-                PenHapticGatt.setWritingEnabled(context, HookUtils.state(context).address, true);
+                dispatchHaptic(context, "enable", HookUtils.state(context).address, 0, true);
             }
         } catch (Throwable th) {
             HookUtils.log("haptic control receiver: " + th);
@@ -1312,9 +1383,17 @@ final class SystemStylusHooks {
     }
 
     private static boolean onMotion(Context context, MotionEvent motionEvent) {
-        // This monitor exists specifically to observe the real Lenovo stylus.
-        // An old duplicate-input guard returned here for that exact device,
-        // making the writing-haptic state machine unreachable on hardware.
+        // The BLE accessory exposes an auxiliary mouse collection, while the
+        // real pressure/tilt stream comes from NVTCapacitivePen. Ignore only
+        // that duplicate mouse stream so hover events cannot start/stop the
+        // writing feedback state machine ahead of the real stylus event.
+        InputDevice device = motionEvent.getDevice();
+        String deviceName = device == null || device.getName() == null
+                ? "" : device.getName().toLowerCase();
+        if (deviceName.contains("lenovo tab pen")
+                && (device.getSources() & 8194) != 0) {
+            return false;
+        }
         for (int i = 0; i < motionEvent.getPointerCount(); i++) {
             int toolType = motionEvent.getToolType(i);
             if (toolType == 2 || toolType == HID_HOST_PROFILE) {
@@ -1352,7 +1431,8 @@ final class SystemStylusHooks {
                     main.removeCallbacks(STOP_WRITING);
                     if (!writing) {
                         writing = true;
-                        PenHapticGatt.startWriting(context, HookUtils.state(context).address, motionEvent.getToolType(0));
+                        dispatchHaptic(context, "start", HookUtils.state(context).address,
+                                motionEvent.getToolType(0), true);
                         HookUtils.log("start writing haptic pressure=" + motionEvent.getPressure());
                     }
                 } else if (actionMasked == 1 || actionMasked == 3 || writing) {
@@ -1457,9 +1537,73 @@ final class SystemStylusHooks {
         main.removeCallbacks(STOP_WRITING);
         if (writing) {
             writing = false;
-            PenHapticGatt.stopWriting();
+            dispatchHaptic(refreshContext, "stop", HookUtils.state(refreshContext).address,
+                    0, false);
             HookUtils.log("stop writing haptic");
         }
+    }
+
+    private static void dispatchHaptic(Context context, String op, String address,
+            int toolType, boolean enabled) {
+        if (context == null) {
+            return;
+        }
+        Handler worker = pollHandler;
+        if (worker == null) {
+            return;
+        }
+        final Context appContext = context;
+        final String operation = op;
+        final String penAddress = address == null ? "" : address;
+        worker.post(new Runnable() {
+            @Override
+            public void run() {
+                // Dispatch the haptic command directly. The earlier isolated
+                // ContentProvider indirection was silently dropped here by
+                // OplusAppStartupManager ("prevent start ... by contentprovider
+                // callingUid 1000"), because the bridge APK has no launcher
+                // component and never leaves the background start allowlist.
+                // With lenovo_pen_oem_haptic_forward=1 the commands below only
+                // send an OEM broadcast (no GATT is opened in system_server),
+                // so the direct path is safe and restores the pre-1.1.10 haptic
+                // behavior that actually vibrated the pen.
+                try {
+                    if ("start".equals(operation)) {
+                        // Keep the stock touch-node path, then bridge the
+                        // missing port-specific node->BLE leg through IPe's
+                        // already-open OEM GATT session.
+                        setOemWritingFeedback(true);
+                        PenHapticGatt.startWriting(appContext, penAddress, toolType);
+                    } else if ("stop".equals(operation)) {
+                        setOemWritingFeedback(false);
+                        PenHapticGatt.stopWriting();
+                    } else if ("pulse".equals(operation)) {
+                        PenHapticGatt.pulse(appContext, penAddress);
+                    } else if ("enable".equals(operation)) {
+                        PenHapticGatt.setWritingEnabled(appContext, penAddress, enabled);
+                    } else if ("disconnect".equals(operation)) {
+                        PenHapticGatt.disconnect();
+                    }
+                } catch (Throwable th) {
+                    HookUtils.log("haptic dispatch " + operation + ": " + th);
+                }
+            }
+        });
+    }
+
+    /**
+     * Follow IPeManager's stock g0.start/stopFeedBackVibration implementation.
+     * Node 38 is the vendor pen-feedback control: "3" starts feedback and "2"
+     * stops it. The touch HAL owns the timing and transport to the pen; direct
+     * BLE writes are only a fallback for ROMs without this Oplus API.
+     */
+    private static boolean setOemWritingFeedback(boolean start) {
+        Context context = refreshContext;
+        String address = context == null ? "" : HookUtils.state(context).address;
+        boolean forwarded = PenHapticGatt.stockWritingFeedback(context, address, start);
+        HookUtils.log("OEM writing feedback " + (start ? "start" : "stop")
+                + " forwarded-to-IPe=" + forwarded);
+        return forwarded;
     }
 
     private SystemStylusHooks() {

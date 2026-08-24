@@ -1,6 +1,5 @@
 package com.aclaniakea.colorosporttuning;
 
-import android.app.ActivityManager;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
@@ -16,7 +15,6 @@ import android.provider.Settings;
 import com.aclaniakea.colorosporttuning.PenHapticGatt;
 import de.robv.android.xposed.XposedBridge;
 import java.util.ArrayDeque;
-import java.util.List;
 import java.util.UUID;
 
 /* loaded from: classes.dex */
@@ -114,6 +112,11 @@ final class PenHapticGatt {
         if (bluetoothGattCharacteristic != null) {
             enqueue(bluetoothGattCharacteristic, continuousPayload);
         }
+    }
+
+    static boolean stockWritingFeedback(Context context, String address, boolean start) {
+        return sendOemControl(context, address,
+                start ? "feedback_start" : "feedback_stop", null);
     }
 
     static synchronized void stopWriting() {
@@ -399,26 +402,20 @@ final class PenHapticGatt {
                 if (str != null && !str.trim().isEmpty()) {
                     address = str;
                 }
-                // The ported IPe process can advertise a live OEM session but
-                // silently drop this custom broadcast before it reaches the
-                // hooked queue. A sent broadcast is not a hardware ACK. Keep
-                // the OEM route available for explicit compatibility testing,
-                // but use the direct GATT path (which has write callbacks) by
-                // default for actual writing haptics.
+                // The stock :ble process owns the pen's only BLE link; a second
+                // connectGatt() from the bridge APK cannot acquire the pen, so
+                // the direct GATT path produces no vibration at all. Forward
+                // through the OEM broadcast (the live s0 session) by default.
                 if (Settings.Global.getInt(context.getContentResolver(),
-                        "lenovo_pen_oem_haptic_forward", 0) != 1) {
+                        "lenovo_pen_oem_haptic_forward", 1) != 1) {
                     return false;
                 }
-                if (Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0) != 1) {
-                    return false;
-                }
-                int ownerPid = Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_oem_control_pid", 0);
-                if (!isIpeManagerSessionAlive(context, ownerPid)) {
-                    Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_ready", 0);
-                    Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_oem_control_pid", 0);
-                    log("OEM transport owner missing; using direct GATT", null);
-                    return false;
-                }
+                // Always hand the command to the stock IPeManager transport.
+                // ready=0 is a normal undock/resume window, not permission to
+                // open a second GATT from system_server.  The OEM receiver
+                // coalesces the command until its s0 session is ready.
+                int readyState = Settings.Global.getInt(context.getContentResolver(),
+                        "lenovo_pen_oem_control_ready", 0);
                 Intent intentPutExtra = new Intent("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL")
                         .setPackage("com.oplus.ipemanager")
                         .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
@@ -427,37 +424,12 @@ final class PenHapticGatt {
                     str = "";
                 }
                 context.sendBroadcast(intentPutExtra.putExtra("mac", str).putExtra("payload", bArr));
-                log("OEM forward op=" + str2 + " value=" + bytes(bArr), null);
+                log("OEM forward op=" + str2 + " ready=" + readyState
+                        + " value=" + bytes(bArr), null);
                 return true;
             } catch (Throwable th) {
                 log("OEM forward " + str2, th);
             }
-        }
-        return false;
-    }
-
-    private static boolean isIpeManagerSessionAlive(Context context, int ownerPid) {
-        if (context == null || ownerPid <= 0) {
-            return false;
-        }
-        try {
-            ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-            List<ActivityManager.RunningAppProcessInfo> processes = manager == null
-                    ? null : manager.getRunningAppProcesses();
-            if (processes == null) {
-                return false;
-            }
-            for (ActivityManager.RunningAppProcessInfo process : processes) {
-                if (process != null && process.pid == ownerPid) {
-                    String processName = process.processName;
-                    if ("com.oplus.ipemanager".equals(processName)
-                            || (processName != null && processName.startsWith("com.oplus.ipemanager:"))) {
-                        return true;
-                    }
-                }
-            }
-        } catch (Throwable th) {
-            log("OEM transport owner check", th);
         }
         return false;
     }

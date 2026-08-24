@@ -8,6 +8,6 @@
 - `PenHidCtl.apk`（priv-app，无启动器）HID 控制辅助；
 - TB710FU 刷新率策略 bind mount（post-fs-data）；
 - 屏幕唤醒后 1.2 秒延迟状态回放，`pen_wakeup_*` 节点只在开机按需写一次；
-- 本模块不包含 Hook APK、不执行 `pm install`、不覆盖 `/data/app`。
+- 模块内含与独立安装包同签名的 Hook 副本，只用于 LSPosed 的早期稳定读取；不执行 `pm install`、不覆盖 `/data/app`。
 
 作用域：`com.oplus.ipemanager`、`com.heytap.mydevices` 等（见 `scope.list`），由用户手动勾选。

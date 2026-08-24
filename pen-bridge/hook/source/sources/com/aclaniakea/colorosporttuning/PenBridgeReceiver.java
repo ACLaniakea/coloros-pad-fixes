@@ -13,6 +13,8 @@ import android.view.InputDevice;
 
 /* loaded from: classes.dex */
 public final class PenBridgeReceiver extends BroadcastReceiver {
+    static final String ACTION_HAPTIC_TRANSPORT =
+            "com.aclaniakea.lenovopenbridge.action.HAPTIC_TRANSPORT";
     private static volatile long lastBondedAt = 0;
     private static volatile String lastBondedMac = "";
 
@@ -56,14 +58,17 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
                 strTrim = penState.address;
             }
             String str2 = strTrim;
-            int iLastValidBattery = penState.battery >= 0 ? penState.battery : HookUtils.lastValidBattery(context);
             PenHapticGatt.disconnect();
             HookUtils.invalidateHardwareBattery(context);
             try {
                 HookUtils.setLinkConnected(context, false);
             } catch (Throwable unused) {
             }
-            PenState penState2 = new PenState(false, str2, penState.name, iLastValidBattery, 0, penState.type, penState.firmware, penState.hardware, penState.serial, "settings_disconnect", System.currentTimeMillis());
+            // A disconnected card must not carry the previous session's
+            // battery.  ColorOS caches BATTERY_NOTIFY independently from the
+            // connection state; forwarding 100 here leaves the lock/control
+            // center widget at 100% until another real battery sample arrives.
+            PenState penState2 = new PenState(false, str2, penState.name, -1, 0, penState.type, penState.firmware, penState.hardware, penState.serial, "settings_disconnect", System.currentTimeMillis());
             PenStateStore.write(context, penState2);
             broadcastColorOs(context, penState2, "settings_disconnect", false);
             HookUtils.log("Lenovo pen disconnected through stock settings: " + str2);
@@ -77,6 +82,10 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
         int i2;
         InputDevice inputDeviceFindLivePen;
         if (!DeviceGate.supported() || intent == null) {
+            return;
+        }
+        if (ACTION_HAPTIC_TRANSPORT.equals(intent.getAction())) {
+            handleHapticTransport(context, intent);
             return;
         }
         PenState penState = PenStateStore.read(context);
@@ -157,7 +166,10 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
                 i2 = -1;
             } else {
                 if (zContains2) {
-                    HookUtils.setLinkConnected(context, true);
+                    // ACL/GATT comes up before HOGP and can survive after HID
+                    // has failed. Only publish connected once HID Host is up.
+                    z2 = HookUtils.bluetoothConnected(context, strFirst2);
+                    HookUtils.setLinkConnected(context, z2);
                 } else {
                     if (!strValueOf.contains("VERSION") && !strValueOf.contains("_SN")) {
                         int iIntExtra3 = intExtra(intent, Integer.MIN_VALUE, "connected", "state", "connectState", "status");
@@ -171,7 +183,6 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
                     i = iChargingExtra;
                     i2 = iIntExtra;
                 }
-                z2 = true;
                 i = iChargingExtra;
                 i2 = iIntExtra;
             }
@@ -200,7 +211,11 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
                         if (bondedName != null && !bondedName.trim().isEmpty()) {
                             strFirst3 = bondedName;
                         }
-                        z2 = true;
+                        // Bonding identifies the pen but does not prove a live
+                        // ACL/HOGP link.  Treating every bonded pen as connected
+                        // resurrected stale battery state at boot and after a
+                        // Bluetooth restart.
+                        z2 = HookUtils.bluetoothConnected(context, strFirst2);
                     }
                 }
             }
@@ -216,7 +231,8 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
             if (strFirst5.length() == 0) {
                 strFirst5 = penState.serial;
             }
-            PenState penState2 = new PenState(z3, str, str2, i2 < 0 ? penState.battery : i2, i, penState.type, str3, penState.hardware.length() == 0 ? "Lenovo Tab Pen" : penState.hardware, strFirst5, strFirst.length() == 0 ? strValueOf : strFirst, System.currentTimeMillis());
+            int resolvedBattery = z3 ? (i2 < 0 ? penState.battery : i2) : -1;
+            PenState penState2 = new PenState(z3, str, str2, resolvedBattery, z3 ? i : 0, penState.type, str3, penState.hardware.length() == 0 ? "Lenovo Tab Pen" : penState.hardware, strFirst5, strFirst.length() == 0 ? strValueOf : strFirst, System.currentTimeMillis());
             PenStateStore.write(context, penState2);
             if (strFirst.length() != 0) {
                 strValueOf = strFirst;
@@ -302,6 +318,37 @@ public final class PenBridgeReceiver extends BroadcastReceiver {
         }
         HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", penState.charging);
         HookUtils.setIpePreferenceInt(context, "pencil_sp_battery_level", penState.battery);
+    }
+
+    /**
+     * Keep BluetoothGatt ownership in the bridge APK process.  Input events
+     * are observed inside system_server, but opening/writing a vendor GATT
+     * session from that critical process can turn a Bluetooth/vendor failure
+     * into a full Android userspace restart.
+     */
+    static void handleHapticTransport(Context context, Intent intent) {
+        String op = String.valueOf(intent.getStringExtra("op"));
+        String address = String.valueOf(intent.getStringExtra("address"));
+        if ("null".equals(address) || address.trim().isEmpty()) {
+            address = HookUtils.penAddress(context);
+        }
+        try {
+            if ("start".equals(op)) {
+                PenHapticGatt.startWriting(context, address,
+                        intent.getIntExtra("toolType", 2));
+            } else if ("stop".equals(op)) {
+                PenHapticGatt.stopWriting();
+            } else if ("pulse".equals(op)) {
+                PenHapticGatt.pulse(context, address);
+            } else if ("enable".equals(op)) {
+                PenHapticGatt.setWritingEnabled(context, address,
+                        intent.getBooleanExtra("enabled", true));
+            } else if ("disconnect".equals(op)) {
+                PenHapticGatt.disconnect();
+            }
+        } catch (Throwable th) {
+            HookUtils.log("isolated haptic transport " + op + ": " + th);
+        }
     }
 
     private static void startColorOsService(Context context, Intent intent) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the base-fix LSPosed Hook APK from source (ACLaniakea 1.1.8).
+"""Build the base-fix LSPosed Hook APK from source (ACLaniakea 1.1.11).
 
 Produces a signed APK for com.aclaniakea.colorosostatsguard:
   javac (android.jar + Xposed stubs) -> d8 -> classes.dex
@@ -43,12 +43,13 @@ def _android_jar(sdk: Path) -> Path:
 
 ANDROID_JAR = _android_jar(SDK)
 STUBS = Path(os.environ.get("XPOSED_STUBS", "/tmp/acdb/stubs"))
+STUB_PATCHES = ROOT / "stub-patches"
 KEYSTORE = Path(os.environ.get("ACL_KS", "/tmp/aclaniakea.jks"))
 KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "BaseFix-Hook-v1.1.8.apk"
+OUT_APK = OUT_DIR / "BaseFix-Hook-v1.1.11.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -81,12 +82,20 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1108", "--version-name", "1.1.8"])
+             "--version-code", "1111", "--version-name", "1.1.11"])
         # 2. compile java
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
+        # The tiny historical stub set used by this source tree omits several
+        # standard Xposed API signatures. Compile project-owned declarations
+        # into a separate classpath layer. They are never passed to D8 and are
+        # therefore not packaged; LSPosed remains the sole runtime provider.
+        (tmp / "stub-classes").mkdir(parents=True, exist_ok=True)
+        run(["javac", "--release", "17", "-classpath", str(STUBS),
+             "-d", tmp / "stub-classes"] +
+            [str(p) for p in sorted(STUB_PATCHES.rglob("*.java"))])
         run(["javac", "--release", "17",
-             "-classpath", f"{ANDROID_JAR}:{STUBS}:{tmp / 'gen'}",
+             "-classpath", f"{ANDROID_JAR}:{tmp / 'stub-classes'}:{STUBS}:{tmp / 'gen'}",
              "-d", tmp / "classes"] +
             [str(p) for p in sorted(SOURCES.rglob("*.java"))])
         # 3. dex

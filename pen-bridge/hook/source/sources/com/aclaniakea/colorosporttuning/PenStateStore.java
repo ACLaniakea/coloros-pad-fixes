@@ -1,5 +1,7 @@
 package com.aclaniakea.colorosporttuning;
 
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.provider.Settings;
@@ -29,6 +31,23 @@ final class PenStateStore {
         if (sharedPreferences != null) {
             string3 = sharedPreferences.getString("name", string3);
         }
+        // Device Space's title is the stock Bluetooth alias, not the firmware
+        // hardware-revision field. Hall broadcasts used to overwrite the Pro
+        // alias with the generic hardware name after every magnetic attach.
+        try {
+            if (str != null && !str.isEmpty()) {
+                BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                BluetoothDevice device = adapter == null ? null : adapter.getRemoteDevice(str);
+                String alias = device == null ? null : device.getAlias();
+                if (alias == null || alias.trim().isEmpty()) {
+                    alias = device == null ? null : device.getName();
+                }
+                if (alias != null && !alias.trim().isEmpty()) {
+                    string3 = alias;
+                }
+            }
+        } catch (Throwable unused) {
+        }
         String str2 = string3;
         boolean z = HookUtils.linkConnected(context) > 0;
         try {
@@ -39,7 +58,7 @@ final class PenStateStore {
         }
         boolean z2 = z;
         int iHardwareBattery = HookUtils.hardwareBattery(context);
-        if (iHardwareBattery < 0) {
+        if (iHardwareBattery < 0 && z2) {
             int iLastValidBattery = HookUtils.lastValidBattery(context);
             if (iLastValidBattery >= 0) {
                 iHardwareBattery = iLastValidBattery;
@@ -83,13 +102,15 @@ final class PenStateStore {
             effectiveCharging = 0;
         }
         int iStoredBattery = penState.battery;
-        if (iStoredBattery < 0) {
+        if (iStoredBattery < 0 && penState.connected) {
             iStoredBattery = HookUtils.lastValidBattery(context);
         }
         try {
             SharedPreferences.Editor editorPutLong = context.getSharedPreferences(PREF, 0).edit().putBoolean("connected", penState.connected).putString("address", penState.address).putString("name", penState.name).putInt("charging", effectiveCharging).putString("type", penState.type).putString("firmware", penState.firmware).putString("hardware", penState.hardware).putString("serial", penState.serial).putString("source", penState.source).putLong("updated", penState.updatedAt);
             if (iStoredBattery >= 0) {
                 editorPutLong.putInt("battery", iStoredBattery).putInt("last_valid_battery", iStoredBattery);
+            } else {
+                editorPutLong.putInt("battery", -1);
             }
             editorPutLong.apply();
         } catch (Throwable unused) {
@@ -101,11 +122,15 @@ final class PenStateStore {
             if (iStoredBattery >= 0) {
                 Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_battery_level", iStoredBattery);
                 Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_last_valid_battery", iStoredBattery);
+            } else if (!penState.connected) {
+                Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_battery_level", -1);
             }
             Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_charging_state", effectiveCharging);
             HookUtils.setIpePreferenceInt(context, "pencil_sp_charging_state", effectiveCharging);
             if (iStoredBattery >= 0) {
                 HookUtils.setIpePreferenceInt(context, "pencil_sp_battery_level", iStoredBattery);
+            } else if (!penState.connected) {
+                HookUtils.setIpePreferenceInt(context, "pencil_sp_battery_level", -1);
             }
             // Device Space uses these two keys to decide whether the pen card
             // and its detail activity exist. They describe the live Bluetooth

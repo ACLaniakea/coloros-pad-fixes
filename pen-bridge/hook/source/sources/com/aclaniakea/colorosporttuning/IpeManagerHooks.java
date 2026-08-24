@@ -14,6 +14,7 @@ import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -39,6 +40,7 @@ final class IpeManagerHooks {
     private static volatile Object coreBleManager = null;
     private static volatile Object coreService = null;
     private static volatile boolean handoffReceiverInstalled = false;
+    private static Handler oemControlHandler;
     private static volatile ClassLoader ipeClassLoader = null;
     private static volatile long lastCapsuleAt = 0;
     private static volatile long lastCardRefreshAt = 0;
@@ -100,6 +102,12 @@ final class IpeManagerHooks {
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_disconnect_requested", 0);
                         Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_user_disconnect_requested", 0);
                         Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_present", 1);
+                        if (!HookUtils.bluetoothConnected(context, HookUtils.penAddress(context))) {
+                            Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_link_connected", 0);
+                            Settings.Global.putInt(context.getContentResolver(), "ipe_pencil_connection_state", 1);
+                            Settings.Global.putInt(context.getContentResolver(), "PENCIL_CONNECT_STATE", 1);
+                            Settings.Global.putInt(context.getContentResolver(), "pencil_connect_state", 1);
+                        }
                         HookUtils.log("stock CONNECT_PENCIL cleared disconnect latch");
                     } else if ("com.oplus.ipemanager.action.DISCONNECT_PENCIL".equals(intentIntentArg.getAction())) {
                         String requestedMac2 = intentIntentArg.getStringExtra("device_mac_info");
@@ -617,11 +625,7 @@ final class IpeManagerHooks {
             return;
         }
         PenState penStateState = HookUtils.state(context);
-        int iHardwareBattery = HookUtils.hardwareBattery(context);
-        if (iHardwareBattery < 0) {
-            iHardwareBattery = HookUtils.lastValidBattery(context);
-        }
-        int i = iHardwareBattery;
+        int i = -1;
         BluetoothDevice bluetoothDeviceManagerDevice = managerDevice(obj);
         String strString = HookUtils.string(bluetoothDeviceManagerDevice, "getAddress");
         if (strString.length() == 0) {
@@ -713,10 +717,6 @@ final class IpeManagerHooks {
                         }
                         if ("com.oplus.ipemanager.action.BATTERY_NOTIFY".equals(intent.getAction())) {
                             IpeManagerHooks.notifySettingsPage(context, intent);
-                        } else if ("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL".equals(intent.getAction())) {
-                            if (zEquals) {
-                                OemGattProtocolHooks.handleControl(context, intent);
-                            }
                         }
                     }
                 }
@@ -726,11 +726,28 @@ final class IpeManagerHooks {
             intentFilter.addAction("com.aclaniakea.lenovopenbridge.action.SHOW_PENCIL_CAPSULE");
             intentFilter.addAction("com.aclaniakea.lenovopenbridge.action.DISMISS_PENCIL_CAPSULE");
             intentFilter.addAction("com.oplus.ipemanager.action.BATTERY_NOTIFY");
-            intentFilter.addAction("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL");
             if (Build.VERSION.SDK_INT >= 33) {
                 context.registerReceiver(broadcastReceiver, intentFilter, 2);
             } else {
                 context.registerReceiver(broadcastReceiver, intentFilter);
+            }
+            if (zEquals) {
+                HandlerThread controlThread = new HandlerThread("LenovoPenOemControl");
+                controlThread.start();
+                oemControlHandler = new Handler(controlThread.getLooper());
+                BroadcastReceiver controlReceiver = new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context receiverContext, Intent controlIntent) {
+                        OemGattProtocolHooks.handleControl(context, controlIntent);
+                    }
+                };
+                IntentFilter controlFilter = new IntentFilter("com.aclaniakea.lenovopenbridge.action.OEM_PEN_CONTROL");
+                if (Build.VERSION.SDK_INT >= 33) {
+                    context.registerReceiver(controlReceiver, controlFilter, null, oemControlHandler, 2);
+                } else {
+                    context.registerReceiver(controlReceiver, controlFilter, null, oemControlHandler);
+                }
+                HookUtils.log("IPe OEM control receiver moved off UI thread");
             }
             handoffReceiverInstalled = true;
             HookUtils.log("IPe ColorOS state/capsule receiver installed process=" + Application.getProcessName());
@@ -757,7 +774,12 @@ final class IpeManagerHooks {
                 strFirstString2 = penStateState.name;
             }
             int intExtra2 = (isHardwareBatteryIntent(intent) && intent.hasExtra("batteryLevel")) ? intent.getIntExtra("batteryLevel", -1) : (isHardwareBatteryIntent(intent) && intent.hasExtra("battery_level")) ? intent.getIntExtra("battery_level", -1) : HookUtils.hardwareBattery(context);
-            if (intExtra2 < 0 || intExtra2 > 100) {
+            boolean connected = intent.hasExtra("connected")
+                    ? intent.getIntExtra("connected", 0) > 0
+                        && !HookUtils.disconnectRequested(context)
+                    : penStateState.connected
+                        && !HookUtils.disconnectRequested(context);
+            if ((intExtra2 < 0 || intExtra2 > 100) && connected) {
                 intExtra2 = HookUtils.lastValidBattery(context);
             }
             int iChargingExtra = chargingExtra(intent, penStateState.charging);
@@ -774,7 +796,11 @@ final class IpeManagerHooks {
             if (isHardwareBatteryIntent(intent) && intExtra2 >= 0 && intExtra2 <= 100) {
                 HookUtils.markHardwareBattery(context, intExtra2);
             }
-            PenState penState = new PenState(penStateState.connected, strFirstString, strFirstString2, intExtra2, i, penStateState.type, penStateState.firmware, penStateState.hardware, penStateState.serial, "ipemanager_handoff", System.currentTimeMillis());
+            if (!connected) {
+                intExtra2 = -1;
+                i = 0;
+            }
+            PenState penState = new PenState(connected, strFirstString, strFirstString2, intExtra2, i, penStateState.type, penStateState.firmware, penStateState.hardware, penStateState.serial, "ipemanager_handoff", System.currentTimeMillis());
             PenStateStore.write(context, penState);
             HookUtils.log("IPe state handoff delivered: battery=" + penState.battery + " charging=" + penState.charging + " connected=" + penState.connected);
         } catch (Throwable th) {
@@ -921,9 +947,6 @@ final class IpeManagerHooks {
             boolean zHardware = isHardwareBatteryIntent(intent);
             int iBattery = HookUtils.hardwareBattery(context);
             boolean zDisconnected = intent != null && intent.hasExtra("connected") && intent.getIntExtra("connected", 1) == 0;
-            if (iBattery < 0 && (HookUtils.disconnectRequested(context) || zDisconnected)) {
-                iBattery = HookUtils.lastValidBattery(context);
-            }
             if (zHardware && intent != null) {
                 if (intent.hasExtra("batteryLevel")) {
                     iBattery = intent.getIntExtra("batteryLevel", -1);
@@ -955,6 +978,14 @@ final class IpeManagerHooks {
             }
             boolean zDirect = false;
             if (objCallback != null) {
+                if (intent != null && intent.hasExtra("connected")) {
+                    boolean connected = intent.getIntExtra("connected", 0) > 0
+                            && !HookUtils.disconnectRequested(context);
+                    int connectState = connected ? 1 : 0;
+                    if (invoke(objCallback, "notifyConnectState", Integer.valueOf(connectState), penState.address)) {
+                        HookUtils.log("IPe settings connect state pushed state=" + connectState);
+                    }
+                }
                 if (iBattery >= 0) {
                     invoke(objCallback, "notifyBatteryLevel", Integer.valueOf(iBattery));
                 }
@@ -977,8 +1008,13 @@ final class IpeManagerHooks {
             if (objBle == null) {
                 objBle = coreBleManager;
             }
-            if (notifyStockHardwareCallbacks(objBle, iBattery, iCharging)) {
-                HookUtils.log("IPe OEM UI callbacks updated: battery=" + iBattery + " charging=" + iCharging);
+            boolean connected = intent != null && intent.hasExtra("connected")
+                    ? intent.getIntExtra("connected", 0) > 0
+                    : penState.connected;
+            connected = connected && !HookUtils.disconnectRequested(context);
+            if (notifyStockHardwareCallbacks(objBle, iBattery, iCharging, connected)) {
+                HookUtils.log("IPe OEM UI callbacks updated: battery=" + iBattery
+                        + " charging=" + iCharging + " connected=" + connected);
             } else if (!zDirect) {
                 HookUtils.log("IPe settings callback unavailable: battery=" + iBattery + " charging=" + iCharging);
             }
@@ -987,18 +1023,28 @@ final class IpeManagerHooks {
         }
     }
 
-    private static boolean notifyStockHardwareCallbacks(Object obj, int i, int i2) {
+    private static boolean notifyStockHardwareCallbacks(Object obj, int i, int i2,
+            boolean connected) {
         Object objField = field(obj, "S0");
         Object objField2 = field(obj, "Y0");
-        boolean zNotifyStockPanel = obj != null ? notifyStockPanel(objField2, i, i2) | notifyStockPageControl(field(obj, "B0"), i, i2) | notifyStockPageControl(fieldAny(obj, "f1982y0", "y0"), i, i2) | notifyStockPageControl(field(obj, "A0"), i, i2) | notifyStockPanel(objField, i, i2) : false;
+        boolean zNotifyStockPanel = obj != null
+                ? notifyStockPanel(objField2, i, i2, connected)
+                        | notifyStockPageControl(field(obj, "B0"), i, i2)
+                        | notifyStockPageControl(fieldAny(obj, "f1982y0", "y0"), i, i2)
+                        | notifyStockPageControl(field(obj, "A0"), i, i2)
+                        | notifyStockPanel(objField, i, i2, connected)
+                : false;
         synchronized (IpeManagerHooks.class) {
             for (Object obj2 : pencilPanelCallbacks) {
                 if (obj2 != null && obj2 != objField && obj2 != objField2) {
-                    zNotifyStockPanel |= notifyStockPanel(obj2, i, i2);
+                    zNotifyStockPanel |= notifyStockPanel(obj2, i, i2, connected);
                 }
             }
         }
-        return (zNotifyStockPanel || pencilPanelCallback == null || pencilPanelCallback == objField || pencilPanelCallback == objField2) ? zNotifyStockPanel : notifyStockPanel(pencilPanelCallback, i, i2);
+        return (zNotifyStockPanel || pencilPanelCallback == null
+                || pencilPanelCallback == objField || pencilPanelCallback == objField2)
+                ? zNotifyStockPanel
+                : notifyStockPanel(pencilPanelCallback, i, i2, connected);
     }
 
     private static boolean notifyStockPageControl(Object obj, int i, int i2) {
@@ -1012,11 +1058,17 @@ final class IpeManagerHooks {
         return zInvoke;
     }
 
-    private static boolean notifyStockPanel(Object obj, int i, int i2) {
+    private static boolean notifyStockPanel(Object obj, int i, int i2, boolean connected) {
         if (!binderAlive(obj)) {
             return false;
         }
         boolean zInvoke = i >= 0 ? invoke(obj, "onBatteryLevel", Integer.valueOf(i)) : false;
+        // IPencilPanelCallback uses the public PencilManager state constants:
+        // 0=disconnected, 1=connecting, 2=connected, 3=disconnecting.
+        // Publishing boolean 1 here left PencilPanelActivity permanently in
+        // its "connecting/not connected" state even while HOGP was online.
+        zInvoke = invoke(obj, "onConnectState", Integer.valueOf(connected ? 2 : 0)) | zInvoke;
+        zInvoke = invoke(obj, "onPencilPresentChanged", connected ? "1" : "0") | zInvoke;
         if (i2 >= 0) {
             return invoke(obj, "onChargingState", Boolean.valueOf(i2 != 0)) | zInvoke;
         }
@@ -1653,7 +1705,7 @@ final class IpeManagerHooks {
                     return;
                 }
                 int iHardwareBattery = HookUtils.hardwareBattery(context);
-                if (iHardwareBattery < 0) {
+                if (iHardwareBattery < 0 && HookUtils.state(context).connected) {
                     iHardwareBattery = HookUtils.lastValidBattery(context);
                 }
                 methodHookParam.args[0] = HookUtils.adapt(((Method) methodHookParam.method).getParameterTypes()[0], Integer.valueOf(iHardwareBattery));
@@ -1675,7 +1727,12 @@ final class IpeManagerHooks {
                 if (context == null || methodHookParam.args == null || methodHookParam.args.length == 0 || HookUtils.state(context).address.length() <= 0) {
                     return;
                 }
-                methodHookParam.args[0] = HookUtils.adapt(((Method) methodHookParam.method).getParameterTypes()[0], true);
+                // Do not acknowledge a reconnect merely because a bonded MAC
+                // exists. The stock page keeps its progress state until this
+                // callback reports the real HID Host result.
+                PenState state = HookUtils.state(context);
+                boolean ready = state.connected && !HookUtils.disconnectRequested(context);
+                methodHookParam.args[0] = HookUtils.adapt(((Method) methodHookParam.method).getParameterTypes()[0], Boolean.valueOf(ready));
             }
         });
         HookUtils.hookAll(loadPackageParam.classLoader, "w2.j", "b", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.28
@@ -1688,11 +1745,7 @@ final class IpeManagerHooks {
                 String strValueOf = String.valueOf(IpeManagerHooks.field(obj, "f5119b"));
                 PenState penStateState = HookUtils.state(context);
                 if (IpeManagerHooks.samePenAddress(penStateState.address, strValueOf)) {
-                    int iLastValidBattery = penStateState.battery;
-                    if (iLastValidBattery < 0 && !penStateState.connected) {
-                        iLastValidBattery = HookUtils.lastValidBattery(context);
-                    }
-                    IpeManagerHooks.setField(obj, "f5121d", Integer.valueOf(iLastValidBattery));
+                    IpeManagerHooks.setField(obj, "f5121d", Integer.valueOf(penStateState.battery));
                     IpeManagerHooks.setField(obj, "f5122e", Boolean.valueOf(penStateState.connected && penStateState.charging != 0));
                     if (penStateState.connected) {
                         return;
@@ -2089,13 +2142,23 @@ final class IpeManagerHooks {
                     return;
                 }
                 if (iState == 2) {
-                    HookUtils.setLinkConnected(context2, true);
+                    boolean hidConnected = HookUtils.bluetoothConnected(context2, strAddress);
+                    HookUtils.setLinkConnected(context2, hidConnected);
+                    if (!hidConnected) {
+                        HookUtils.log("IPe stock s0.V CONNECTED deferred until HID Host mac=" + strAddress);
+                        return;
+                    }
                     IpeManagerHooks.lastStockProfileMac = strAddress;
                     IpeManagerHooks.lastStockProfileConnectedAt = SystemClock.elapsedRealtime();
                     HookUtils.log("IPe stock s0.V profile CONNECTED mac=" + strAddress);
                     return;
                 }
-                HookUtils.setLinkConnected(context2, false);
+                boolean hidStillConnected = HookUtils.bluetoothConnected(context2, strAddress);
+                HookUtils.setLinkConnected(context2, hidStillConnected);
+                if (hidStillConnected && !HookUtils.disconnectRequested(context2)) {
+                    HookUtils.log("IPe stock auxiliary profile DISCONNECTED ignored while HID Host remains live mac=" + strAddress);
+                    return;
+                }
                 if (IpeManagerHooks.samePenAddress(IpeManagerHooks.lastStockProfileMac, strAddress)) {
                     IpeManagerHooks.lastStockProfileMac = "";
                     IpeManagerHooks.lastStockProfileConnectedAt = 0L;
@@ -2108,10 +2171,26 @@ final class IpeManagerHooks {
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws SecurityException {
                 Context context = HookUtils.context(methodHookParam.thisObject);
                 Intent intentIntentArg = IpeManagerHooks.intentArg(methodHookParam.args);
-                if (context == null || intentIntentArg == null || intentIntentArg.getIntExtra("android.bluetooth.profile.extra.STATE", -1) != 0) {
+                if (context == null || intentIntentArg == null) {
                     return;
                 }
-                IpeManagerHooks.publishHardwareDisconnected(context, methodHookParam.thisObject, "stock_profile_disconnected");
+                int state = intentIntentArg.getIntExtra("android.bluetooth.profile.extra.STATE", -1);
+                if (state == 0) {
+                    PenState current = HookUtils.state(context);
+                    if (!HookUtils.bluetoothConnected(context, current.address) || HookUtils.disconnectRequested(context)) {
+                        IpeManagerHooks.publishHardwareDisconnected(context, methodHookParam.thisObject, "stock_profile_disconnected");
+                    }
+                } else if (state == 2) {
+                    PenState current = HookUtils.state(context);
+                    if (HookUtils.bluetoothConnected(context, current.address) && !HookUtils.disconnectRequested(context)) {
+                        PenState connected = new PenState(true, current.address, current.name, current.battery,
+                                current.charging, current.type, current.firmware, current.hardware,
+                                current.serial, "stock_hid_connected", System.currentTimeMillis());
+                        PenStateStore.write(context, connected);
+                        IpeManagerHooks.sendHardwareUpdate(context, connected, connected.source, connected.battery >= 0);
+                        HookUtils.log("IPe real HID connected UI update sent");
+                    }
+                }
             }
         });
     }

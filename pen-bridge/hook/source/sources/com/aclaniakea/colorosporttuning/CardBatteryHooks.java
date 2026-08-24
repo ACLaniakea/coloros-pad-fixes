@@ -27,6 +27,8 @@ final class CardBatteryHooks {
     private static ClassLoader appLoader;
     private static final Object[] lastValues = new Object[3];
     private static boolean pollerStarted;
+    private static Handler pollHandler;
+    private static Runnable pollRunnable;
     private static volatile Activity topActivity;
 
     static void install(final XC_LoadPackage.LoadPackageParam loadPackageParam) {
@@ -132,6 +134,7 @@ final class CardBatteryHooks {
             protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws Throwable {
                 if (methodHookParam.thisObject instanceof Activity) {
                     CardBatteryHooks.topActivity = (Activity) methodHookParam.thisObject;
+                    CardBatteryHooks.startVisiblePolling();
                 }
             }
         });
@@ -140,13 +143,18 @@ final class CardBatteryHooks {
             protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) throws Throwable {
                 if (methodHookParam.thisObject == CardBatteryHooks.topActivity) {
                     CardBatteryHooks.topActivity = null;
+                    if (CardBatteryHooks.pollHandler != null
+                            && CardBatteryHooks.pollRunnable != null) {
+                        CardBatteryHooks.pollHandler.removeCallbacks(
+                                CardBatteryHooks.pollRunnable);
+                    }
                 }
             }
         });
         if (!pollerStarted) {
             pollerStarted = true;
-            final Handler handler = new Handler(Looper.getMainLooper());
-            handler.post(new Runnable() { // from class: com.aclaniakea.colorosporttuning.CardBatteryHooks.6
+            pollHandler = new Handler(Looper.getMainLooper());
+            pollRunnable = new Runnable() { // from class: com.aclaniakea.colorosporttuning.CardBatteryHooks.6
                 @Override // java.lang.Runnable
                 public void run() {
                     try {
@@ -154,16 +162,30 @@ final class CardBatteryHooks {
                     } catch (Throwable th) {
                         HookUtils.log("CardBatteryHooks poll: " + th);
                     }
-                    // The control-center card is refreshed by the stock
-                    // DeviceInfoManager provider callback. This fallback is
-                    // needed only while the detail activity is visible; do
-                    // not wake the MyDevices main thread 2.5 times/second in
-                    // the background.
-                    handler.postDelayed(this, CardBatteryHooks.topActivity != null ? 400L : 5000L);
+                    // The embedded control/lock-screen card is refreshed by
+                    // stock DeviceInfoManager callbacks. Poll only while the
+                    // detail page is visible; a permanent five-second main
+                    // thread wakeup kept :cards resident through standby.
+                    if (CardBatteryHooks.topActivity != null) {
+                        CardBatteryHooks.pollHandler.postDelayed(this, 1000L);
+                    }
                 }
-            });
+            };
         }
         HookUtils.log("CardBatteryHooks installed");
+    }
+
+    private static void startVisiblePolling() {
+        Handler handler = pollHandler;
+        Runnable runnable = pollRunnable;
+        if (handler == null || runnable == null) {
+            return;
+        }
+        handler.removeCallbacks(runnable);
+        lastValues[0] = null;
+        lastValues[1] = null;
+        lastValues[2] = null;
+        handler.post(runnable);
     }
 
     private static Object buildBatteryInfo(int i, boolean z) throws Exception {
@@ -259,7 +281,7 @@ final class CardBatteryHooks {
         }
         boolean changed = lastValues[0] == null || !lastValues[0].equals(Integer.valueOf(charging)) || !lastValues[1].equals(Integer.valueOf(battery)) || !lastValues[2].equals(Integer.valueOf(connected));
         Activity activity = topActivity;
-        if (activity != null) {
+        if (activity != null && changed) {
             refreshPenCard(activity, charging, battery, connected);
         }
         if (changed) {

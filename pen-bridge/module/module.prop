@@ -1,6 +1,6 @@
 id=lenovo_pen_bridge
 name=联想手写笔桥接服务
 author=ACLaniakea
-version=1.1.6
-versionCode=1106
-description=SM8650Q/pineapple ColorOS 移植手写笔桥接 Root 部分：原厂 CoreService BLE 连接/断开、CPS 开机上电、真实 ACL/GATT/Hall 状态同步、笔场景刷新率与 PenHidCtl HID 辅助。v1.1.6 延迟首次吸附弹窗至 BLE 与真实电量就绪，避免待上电占位值显示为 0%。LSPosed Hook APK 独立安装。
+version=1.1.19
+versionCode=1119
+description=SM8650Q/pineapple ColorOS 移植手写笔桥接 Root 部分：保留原厂 CoreService BLE、CPS、真实 ACL/GATT/Hall、电量/充电与触觉链路；将高频轮询降为事件优先的低频校验，并内置签名 Hook 副本固定 LSPosed 早期路径，避免冷启动触觉桥接失效。

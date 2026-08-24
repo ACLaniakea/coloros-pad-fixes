@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the pen-bridge LSPosed Hook APK from Java source (ACLaniakea 1.1.6).
+"""Build the pen-bridge LSPosed Hook APK from Java source (ACLaniakea 1.1.19).
 
 The hook now compiles directly from pen-bridge/hook/source/sources so every
 behavior change lives in source:
@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "source" / "sources"
+COMPILE_STUBS = ROOT / "source" / "stubs"
 RES = ROOT / "source" / "resources" / "res"
 MANIFEST = ROOT / "source" / "resources" / "AndroidManifest.xml"
 XPOSED_INIT = ROOT / "source" / "resources" / "assets" / "xposed_init"
@@ -52,7 +53,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "PenBridge-Hook-v1.1.6.apk"
+OUT_APK = OUT_DIR / "PenBridge-Hook-v1.1.19.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -84,13 +85,14 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1106", "--version-name", "1.1.6"])
+             "--version-code", "1119", "--version-name", "1.1.19"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
         run(["javac", "--release", "17",
              "-classpath", f"{ANDROID_JAR}:{STUBS}:{tmp / 'gen'}",
              "-d", tmp / "classes"] +
-            [str(p) for p in sorted(SOURCES.rglob("*.java"))])
+            [str(p) for p in sorted(SOURCES.rglob("*.java"))] +
+            [str(p) for p in sorted(COMPILE_STUBS.rglob("*.java"))])
         d8_cmd = ([D8] if not R8_JAR.is_file()
                   else ["java", "-cp", R8_JAR, "com.android.tools.r8.D8"])
         # Xposed API and the UEventObserver stub are provided at runtime by

@@ -15,21 +15,24 @@ export PEN_SMALI_TOOLS_DIR=${PEN_SMALI_TOOLS_DIR:-/tmp/codex-dex-tools}
 export SMALI_JAR=${SMALI_JAR:-/tmp/codex-dex-tools/smali.jar}
 export ACL_KS=${ACL_KS:-/run/media/ACLaniakea/IXUNICS/pad/keys/aclaniakea.jks}
 
-echo "== 1/6 base-fix hook APK =="
+echo "== 1/7 base-fix hook APK =="
 python3 base-fix/hook/tools/build_integrated_hook.py
 
-echo "== 2/6 pen-bridge hook APK (from Java source) =="
+echo "== 2/7 pen-bridge hook APK (from Java source) =="
 python3 pen-bridge/hook/tools/build_hook_source.py
 
-echo "== 3/6 PenHidCtl APK =="
+echo "== 3/7 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py
 
-echo "== 4/6 refresh PenHidCtl inside pen-bridge module =="
+echo "== 4/7 refresh PenHidCtl inside pen-bridge module =="
 cp releases/PenHidCtl-v1.1.0.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
-echo "== 5/6 module zips =="
+echo "== 5/7 root module zips =="
 python3 fix-module/tools/build_fix.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.1.6.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.1.19.zip
 
-echo "== 6/6 releases =="
+echo "== 6/7 SM8650Q Scene scheduler =="
+python3 scheduler-module/tools/build_scheduler.py
+
+echo "== 7/7 releases =="
 ls -la releases/

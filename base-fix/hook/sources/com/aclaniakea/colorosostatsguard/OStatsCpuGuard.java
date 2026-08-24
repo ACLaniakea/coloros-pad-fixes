@@ -10,6 +10,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /* loaded from: classes.dex */
@@ -20,6 +21,8 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
     private static final AtomicBoolean SOCD_BRIDGE_REPORTED = new AtomicBoolean(false);
     private static final AtomicBoolean SOCD_RECOVERY_REPORTED = new AtomicBoolean(false);
     private static final AtomicBoolean HBM_BRIDGE_REPORTED = new AtomicBoolean(false);
+    private static final AtomicBoolean CACHE_LIMIT_REPORTED = new AtomicBoolean(false);
+    private static final AtomicBoolean POST_BOOT_CACHE_GRACE_REPORTED = new AtomicBoolean(false);
     private static final String TAG = "ColorOSRuntimeFix";
 
     /*
@@ -53,6 +56,7 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
             }
             installStaleSkinStatusRecovery();
             installSocdTemperatureBridge(loadPackageParam.classLoader);
+            installCachedProcessLimitGuard(loadPackageParam.classLoader);
             try {
                 XposedHelpers.findAndHookMethod("com.android.server.hans.ostats.calc.CpuCalc", loadPackageParam.classLoader, "calculatePower", new Object[]{long[].class, new XC_MethodHook() { // from class: com.aclaniakea.colorosostatsguard.OStatsCpuGuard.1
                     protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
@@ -73,6 +77,120 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
                 XposedBridge.log(th2);
             }
         }
+    }
+
+    /**
+     * The source-phone framework overrides ActivityManager's cache limit to
+     * 96 processes. On the 8 GB tablet that retained 80+ processes and built
+     * a 3.8 GB ZRAM working set; wake then faulted hundreds of MB of
+     * system_server/SystemUI pages back in at once. A 64-process follow-up
+     * still produced roughly 3.45 GB swap-in and 5.1 GB swap-out in one
+     * repeatable eleven-app switch, including zsmalloc order-0 failures. Use
+     * a still-generous 48
+     * process ceiling on <=9 GB variants, while preserving lower/default
+     * limits and leaving 12 GB variants untouched. ActivityManagerConstants,
+     * not ActivityManagerService.setProcessLimit(), owns the cached-process
+     * override. The source framework also keeps a hard-coded ten-minute
+     * post-boot no-kill window. On this 8 GB target it allows nearly 300
+     * ProcessRecords and about 3 GB of ZRAM to accumulate before the first
+     * trim, producing simultaneous swap-in and kswapd spikes. Apply both
+     * corrections directly to ActivityManagerConstants after construction and
+     * after its DeviceConfig refresh paths; no resident worker is needed.
+     */
+    private static void installCachedProcessLimitGuard(ClassLoader cl) {
+        long ramKb = readPhysicalRamKb();
+        if (ramKb <= 0L || ramKb > 9437184L) {
+            XposedBridge.log(TAG + ": cached-process limit preserved for RAM=" + ramKb + "kB");
+            return;
+        }
+        try {
+            Class<?> constants = XposedHelpers.findClass(
+                    "com.android.server.am.ActivityManagerConstants", cl);
+            XC_MethodHook policyHook = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    applyEightGbCachedProcessPolicy(param.thisObject);
+                }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    applyEightGbCachedProcessPolicy(param.thisObject);
+                }
+            };
+            XposedBridge.hookAllConstructors(constants, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    applyEightGbCachedProcessPolicy(param.thisObject);
+                }
+            });
+            XposedBridge.hookAllMethods(constants, "updateMaxCachedProcesses",
+                    policyHook);
+            for (Method method : constants.getDeclaredMethods()) {
+                String name = method.getName().toLowerCase();
+                if (name.contains("nokillcached") || name.contains("no_kill_cached")) {
+                    XposedBridge.hookMethod(method, policyHook);
+                }
+            }
+            XposedBridge.log(TAG + ": 8GB cached-process and post-boot grace guard installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cached-process limit guard failed");
+            XposedBridge.log(t);
+        }
+    }
+
+    private static void applyEightGbCachedProcessPolicy(Object constants) {
+        if (constants == null) return;
+        try {
+            int requested = XposedHelpers.getIntField(
+                    constants, "mOverrideMaxCachedProcesses");
+            if (requested > 48) {
+                XposedHelpers.setIntField(constants,
+                        "mOverrideMaxCachedProcesses", 48);
+                if (CACHE_LIMIT_REPORTED.compareAndSet(false, true)) {
+                    XposedBridge.log(TAG + ": capped cached processes "
+                            + requested + " -> 48 on 8GB-class device");
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": cached-process limit field update failed");
+            XposedBridge.log(t);
+        }
+        try {
+            Field graceField = constants.getClass().getDeclaredField(
+                    "mNoKillCachedProcessesPostBootCompletedDurationMillis");
+            graceField.setAccessible(true);
+            Object oldValue = graceField.get(constants);
+            long oldMillis = oldValue instanceof Number
+                    ? ((Number) oldValue).longValue() : 0L;
+            if (oldMillis != 0L) {
+                if (graceField.getType() == Long.TYPE) {
+                    graceField.setLong(constants, 0L);
+                } else {
+                    graceField.setInt(constants, 0);
+                }
+                if (POST_BOOT_CACHE_GRACE_REPORTED.compareAndSet(false, true)) {
+                    XposedBridge.log(TAG + ": post-boot cached-process grace "
+                            + oldMillis + "ms -> 0ms on 8GB-class device");
+                }
+            }
+        } catch (NoSuchFieldException ignored) {
+            // Older framework revisions do not expose this vendor extension.
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": post-boot cached-process grace update failed");
+            XposedBridge.log(t);
+        }
+    }
+
+    private static long readPhysicalRamKb() {
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/meminfo"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.startsWith("MemTotal:")) continue;
+                String digits = line.replaceAll("[^0-9]", "");
+                return digits.length() == 0 ? 0L : Long.parseLong(digits);
+            }
+        } catch (Throwable ignored) {}
+        return 0L;
     }
 
     private static void installStaleSkinStatusRecovery() {

@@ -1,8 +1,10 @@
 package com.aclaniakea.colorosporttuning;
 
+import android.app.Application;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothProfile;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
@@ -15,6 +17,9 @@ import java.lang.reflect.Method;
 
 /* loaded from: classes.dex */
 final class HookUtils {
+    private static final int HID_HOST_PROFILE = 4;
+    private static volatile BluetoothProfile hidHostProxy;
+    private static volatile boolean hidHostProxyRequested;
     static int hookAll(ClassLoader classLoader, String str, String str2, XC_MethodHook xC_MethodHook) {
         try {
             int i = 0;
@@ -86,7 +91,14 @@ final class HookUtils {
         if (context == null) {
             return 0;
         }
-        return bluetoothConnected(context, Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr")) ? 1 : 0;
+        if (disconnectRequested(context)) {
+            return 0;
+        }
+        String process = Application.getProcessName();
+        if ("system_server".equals(process) || "android".equals(process)) {
+            return bluetoothConnected(context, Settings.Global.getString(context.getContentResolver(), "ipe_pencil_mac_addr")) ? 1 : 0;
+        }
+        return Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_link_connected", 0) == 1 ? 1 : 0;
     }
 
     static void setLinkConnected(Context context, boolean z) {
@@ -314,16 +326,51 @@ final class HookUtils {
                 if (defaultAdapter == null) {
                     return false;
                 }
-                BluetoothDevice remoteDevice = defaultAdapter.getRemoteDevice(str);
-                BluetoothManager bluetoothManager = (BluetoothManager) context.getSystemService("bluetooth");
-                if (bluetoothManager != null) {
-                    if (bluetoothManager.getConnectionState(remoteDevice, 7) == 2) {
-                        return true;
-                    }
-                    if (bluetoothManager.getConnectionState(remoteDevice, 4) == 2) {
-                        return true;
+                final BluetoothDevice remoteDevice = defaultAdapter.getRemoteDevice(str);
+                BluetoothProfile profile = hidHostProxy;
+                if (profile != null) {
+                    // BluetoothHidHost is hidden from the public SDK, but the
+                    // stock profile proxy still exposes its device-specific
+                    // getConnectionState(BluetoothDevice) implementation.
+                    Object state = call(profile, "getConnectionState", remoteDevice);
+                    if (state instanceof Number) {
+                        return ((Number) state).intValue() == BluetoothProfile.STATE_CONNECTED;
                     }
                 }
+                if (!hidHostProxyRequested) {
+                    synchronized (HookUtils.class) {
+                        if (!hidHostProxyRequested) {
+                            hidHostProxyRequested = true;
+                            boolean accepted = defaultAdapter.getProfileProxy(context,
+                                    new BluetoothProfile.ServiceListener() {
+                                        @Override
+                                        public void onServiceConnected(int profileId,
+                                                BluetoothProfile proxy) {
+                                            if (profileId == HID_HOST_PROFILE) {
+                                                hidHostProxy = proxy;
+                                            }
+                                            hidHostProxyRequested = false;
+                                        }
+
+                                        @Override
+                                        public void onServiceDisconnected(int profileId) {
+                                            if (profileId == HID_HOST_PROFILE) {
+                                                hidHostProxy = null;
+                                            }
+                                            hidHostProxyRequested = false;
+                                        }
+                                    }, HID_HOST_PROFILE);
+                            if (!accepted) {
+                                hidHostProxyRequested = false;
+                            }
+                        }
+                    }
+                }
+                // The proxy arrives asynchronously. Until then use the stock
+                // adapter's aggregate HID Host state. This is still profile 4
+                // (not ACL/GATT) and is immediately available during boot.
+                return defaultAdapter.getProfileConnectionState(HID_HOST_PROFILE)
+                        == BluetoothProfile.STATE_CONNECTED;
             } catch (Throwable unused) {
             }
         }

@@ -2,9 +2,13 @@ package com.aclaniakea.colorosporttuning;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Intent;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Binder;
+import android.os.Bundle;
+import android.os.Process;
 
 /* loaded from: classes.dex */
 public final class PenStateProvider extends ContentProvider {
@@ -41,5 +45,28 @@ public final class PenStateProvider extends ContentProvider {
     @Override // android.content.ContentProvider
     public String getType(Uri uri) {
         return "vnd.android.cursor.item/vnd.codex.penstate";
+    }
+
+    @Override
+    public Bundle call(String method, String arg, Bundle extras) {
+        Bundle result = new Bundle();
+        if (!"haptic".equals(method)) {
+            result.putBoolean("accepted", false);
+            return result;
+        }
+        int caller = Binder.getCallingUid();
+        if (caller != 0 && caller != 1000 && caller != Process.myUid()) {
+            result.putBoolean("accepted", false);
+            return result;
+        }
+        Bundle data = extras == null ? Bundle.EMPTY : extras;
+        Intent command = new Intent(PenBridgeReceiver.ACTION_HAPTIC_TRANSPORT)
+                .putExtra("op", arg == null ? "" : arg)
+                .putExtra("address", data.getString("address", ""))
+                .putExtra("toolType", data.getInt("toolType", 2))
+                .putExtra("enabled", data.getBoolean("enabled", true));
+        PenBridgeReceiver.handleHapticTransport(getContext(), command);
+        result.putBoolean("accepted", true);
+        return result;
     }
 }
