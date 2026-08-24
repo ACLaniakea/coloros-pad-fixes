@@ -45,6 +45,20 @@ write_policy() {
     write_node "$value5" "/sys/devices/system/cpu/cpufreq/policy5/$suffix"
 }
 
+# 向量的三位分别对应 CPU0->中核、中核->中核、中核->X4 三个迁移边界。
+#
+# 第一位在源系统里是 90（均衡档）。SM8850 有四颗小核可以铺开负载，等到某个
+# 任务吃满一颗小核的 90% 再上迁是合理的；本机只有 CPU0 一颗弱核（容量 379，
+# 中核 867、X4 1024），90% 意味着它必然先饱和才会开始搬运。实机确认过这个
+# 后果：空闲测试里 CPU0 忙 62% 而 X4 只有 7%。
+#
+# 交叉采样验证（com.android.settings 冷启动 TotalTime，6 轮轮换顺序取中位）：
+#   基线 [90 95 82]        中位 1136 ms
+#   只降第一位 [60 95 82]  中位  939 ms
+#   三位全降 [60 60 60]    中位  942 ms
+# 只降第一位与全降在统计上不可区分，说明收益完全来自弱核这一个边界。因此
+# 保留后两位已调好的值：中核之间同容量，压低只会徒增抖动；通往 X4 的门槛
+# 另有功耗取舍。均衡档取 60 为实测值，其余档位按同方向等距外推、未单独实测。
 write_task_migration() {
     down=$1
     up=$2
@@ -219,7 +233,7 @@ set_mode() {
     case "$mode" in
         powersave)
             write_node '1804800 2246400 2246400 2476800' /proc/sys/walt/sched_fmax_cap
-            write_task_migration '85 85 85' '95 95 95'
+            write_task_migration '75 85 85' '85 95 95'
             write_policy walt/up_rate_limit_us 1000 1000 1000 1000
             write_policy walt/down_rate_limit_us 5000 5000 5000 5000
             write_policy walt/hispeed_freq 1017600 1286400 1286400 1248000
@@ -234,7 +248,7 @@ set_mode() {
         balance)
             write_node '2265600 2707200 2707200 2995200' /proc/sys/walt/sched_fmax_cap
             # cluster1/2 是同容量的四颗中核；只降低通往 cluster3/X4 的门槛。
-            write_task_migration '80 85 70' '90 95 82'
+            write_task_migration '50 85 70' '60 95 82'
             write_policy walt/up_rate_limit_us 0 0 0 0
             write_policy walt/down_rate_limit_us 3000 3000 3000 3000
             write_policy walt/hispeed_freq 1248000 1497600 1497600 1478400
@@ -248,7 +262,7 @@ set_mode() {
             ;;
         performance)
             write_node '2265600 2956800 2956800 3302400' /proc/sys/walt/sched_fmax_cap
-            write_task_migration '75 80 60' '85 90 72'
+            write_task_migration '45 80 60' '55 90 72'
             write_policy walt/up_rate_limit_us 0 0 0 0
             write_policy walt/down_rate_limit_us 1000 1000 1000 1000
             write_policy walt/hispeed_freq 1459200 1708800 1708800 1593600
@@ -262,7 +276,7 @@ set_mode() {
             ;;
         fast)
             write_node '2265600 2956800 2956800 3302400' /proc/sys/walt/sched_fmax_cap
-            write_task_migration '70 75 52' '80 85 65'
+            write_task_migration '40 75 52' '50 85 65'
             write_policy walt/up_rate_limit_us 0 0 0 0
             write_policy walt/down_rate_limit_us 0 0 0 0
             write_policy walt/hispeed_freq 1689600 1920000 1920000 1824000

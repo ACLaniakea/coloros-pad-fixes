@@ -69,7 +69,7 @@ adb shell su -c 'ksud module uninstall lenovo_pen_bridge'
 # 3. 安装新模块（KernelSU）
 adb shell su -c 'ksud module install /sdcard/FixModule-v2.0.14.zip'
 adb shell su -c 'ksud module install /sdcard/PenBridge-Module-v1.1.20.zip'
-adb shell su -c 'ksud module install /sdcard/SM8650Q-Scene-Scheduler-v1.0.8.zip'
+adb shell su -c 'ksud module install /sdcard/SM8650Q-Scene-Scheduler-v1.0.9.zip'
 
 # 4. 安装 Hook APK（LSPosed）
 adb install --no-incremental BaseFix-Hook-v1.1.12.apk
