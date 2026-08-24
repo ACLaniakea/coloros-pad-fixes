@@ -1,8 +1,21 @@
 #!/system/bin/sh
 
 LOGFILE="$MODDIR/fix-module.log"
+# 模块目录在 /data/adb 下，没有任何外部轮转机制。此前是无限追加，长期运行会把
+# 分区撑大。保留一份 .1 备份，超过上限即滚动，最多占用 2 * LOG_MAX_BYTES。
+LOG_MAX_BYTES=262144
+
+rotate_log() {
+    [ -f "$LOGFILE" ] || return 0
+    size=$(wc -c <"$LOGFILE" 2>/dev/null)
+    case "$size" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$size" -lt "$LOG_MAX_BYTES" ] && return 0
+    mv -f "$LOGFILE" "$LOGFILE.1" 2>/dev/null
+    : >"$LOGFILE" 2>/dev/null
+}
 
 log_msg() {
+    rotate_log
     echo "[$(date '+%F %T')] $*" >>"$LOGFILE"
 }
 

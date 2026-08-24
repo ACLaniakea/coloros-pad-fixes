@@ -91,6 +91,23 @@ case "$soc/$platform" in
     *) echo "unsupported device: soc=$soc platform=$platform" >"$LOGFILE"; exit 0;;
 esac
 
+# 本服务把整个输出重定向进日志，模块目录在 /data/adb 下又没有任何外部轮转，
+# 此前是无限追加。开机先滚一次，保留上一轮现场；运行中由下面的
+# trim_log_if_large 兜底。exec >> 用的是 O_APPEND，所以就地截断是安全的：
+# 下一次写入仍从文件末尾（即 0）开始，不会产生空洞文件。
+LOG_MAX_BYTES=524288
+if [ -f "$LOGFILE" ]; then
+    mv -f "$LOGFILE" "$LOGFILE.1" 2>/dev/null
+fi
+
+trim_log_if_large() {
+    size=$(wc -c <"$LOGFILE" 2>/dev/null)
+    case "$size" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$size" -lt "$LOG_MAX_BYTES" ] && return 0
+    : >"$LOGFILE" 2>/dev/null
+    echo "[$(date '+%F %T')] log truncated at ${size}B (cap ${LOG_MAX_BYTES}B)"
+}
+
 exec >>"$LOGFILE" 2>&1
 echo "[$(date '+%F %T')] service start"
 
@@ -901,6 +918,7 @@ monitor_real_bt_state() {
         # Real ACL/GATT callbacks update the mirror immediately.  Keep this
         # expensive full bluetooth_manager dump as a low-rate reconciliation
         # path only, not a one-Hz permanent poll.
+        trim_log_if_large
         sleep_sec 30
     done
 }
