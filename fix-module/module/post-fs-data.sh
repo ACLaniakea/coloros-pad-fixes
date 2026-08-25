@@ -438,7 +438,7 @@ bridge_ram_expansion_ui
 # watchdog is needed.  The module has been built against GKI build 13606743
 # and all CONFIG_MODVERSIONS CRCs are checked during the repository build.
 # ============================================================================
-# thermal-engine 配置覆盖：必须走 bind mount，不能走 KernelSU 的 system 覆盖
+# vendor 配置覆盖：必须走 bind mount，不能走 KernelSU 的 system 覆盖
 #
 # KernelSU 的 system/ 覆盖把模块内的文件原样挂到 /vendor/etc，而模块 zip 里的
 # 文件带的是 u:object_r:system_file:s0，且挂载点只读、事后 chcon 无效。
@@ -448,27 +448,35 @@ bridge_ram_expansion_ui
 # 实测（向外壳温热区注入 47.5°C）：context 为 system_file 时 GPU 毫无反应；
 # 换成 vendor_configs_file 后立刻正确降到 720MHz、撤掉后回满 903MHz。
 #
+# 同一问题也适用于 /vendor/etc/perf/targetconfig.xml：perf HAL 同为 vendor 域
+# （vendor_hal_perf_default / vendor_perfservice），同目录其余配置全部是
+# vendor_configs_file，只有我们覆盖的那份是 system_file——即为 SoC ID 696 补的
+# 那份 6 核 4 簇拓扑也从未被读到过。实测该拓扑与硬件一致（cpu0-5、policy
+# 0 / 1-2 / 3-4 / 5，capacity 379/867×4/1024），配置本身是对的，只是没生效。
+#
 # 因此改用本项目已验证可行的 bind mount 方式：源文件在 payload/ 内，先 chcon
 # 成 vendor_configs_file，再 bind 到原路径。
 # ============================================================================
-bind_thermal_configs() {
-    for src in "$MODDIR"/payload/thermal/thermal-engine_*.conf; do
-        [ -f "$src" ] || continue
-        name=$(basename "$src")
-        dst="/vendor/etc/$name"
-        [ -f "$dst" ] || continue
-        chown 0:0 "$src"
-        chmod 0644 "$src"
-        chcon u:object_r:vendor_configs_file:s0 "$src" 2>/dev/null
-        if mount --bind "$src" "$dst" 2>/dev/null; then
-            log_msg "thermal-engine config bind mounted $name"
-        else
-            log_msg "WARN: thermal-engine config bind failed for $name"
-        fi
-    done
+bind_vendor_config() {
+    src="$1"
+    dst="$2"
+    [ -f "$src" ] || return 0
+    [ -f "$dst" ] || return 0
+    chown 0:0 "$src"
+    chmod 0644 "$src"
+    chcon u:object_r:vendor_configs_file:s0 "$src" 2>/dev/null
+    if mount --bind "$src" "$dst" 2>/dev/null; then
+        log_msg "vendor config bind mounted $dst"
+    else
+        log_msg "WARN: vendor config bind failed for $dst"
+    fi
 }
 
-bind_thermal_configs
+for conf in "$MODDIR"/payload/thermal/thermal-engine_*.conf; do
+    bind_vendor_config "$conf" "/vendor/etc/$(basename "$conf")"
+done
+bind_vendor_config "$MODDIR/payload/perf/targetconfig.xml" \
+    /vendor/etc/perf/targetconfig.xml
 
 SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
 if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then

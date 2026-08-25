@@ -37,7 +37,17 @@ bind mount：源文件放在模块的 `payload/thermal/`，先 `chcon` 成
 两个变量同时改动 → 归因错误。现在这几个 `.conf` 仍保持无注释、纯 ASCII
 （与原厂格式一致），但**注释是否真的有害并未被单独验证过**，不要当成结论。
 
-## 3. 待查
+## 3. 同一根因的第二处：/vendor/etc/perf/targetconfig.xml
 
-`fix-module/module/system/vendor/etc/perf/` 仍然走 KernelSU 的 system 覆盖，
-属于同一类风险（perf HAL 同样是 vendor 域）。尚未验证它是否真的被读到。
+同目录十份配置里只有我们覆盖的那份是 `system_file`，perf HAL 跑在
+`vendor_hal_perf_default` / `vendor_perfservice`，读不到。为 SoC ID 696 补的
+6 核 4 簇拓扑因此从未生效。拓扑本身经硬件核对是正确的
+（`present=0-5`；policy 0 / 1-2 / 3-4 / 5；capacity 379 / 867x4 / 1024）。
+已迁到 `payload/perf/`，与温控配置共用 `bind_vendor_config()`。
+
+`/system_ext/etc/horae/horae_.conf` 不受影响：同目录原厂文件本来就是
+`system_file`，Horae 读得到。
+
+**教训**：凡是要被 vendor 域进程读取的覆盖文件，都不能走 KernelSU 的
+`system/` 覆盖。检查方法很简单——`ls -Z` 比对同目录的原厂文件，标签不一致
+就是没生效。
