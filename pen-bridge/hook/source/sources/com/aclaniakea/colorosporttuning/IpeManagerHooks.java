@@ -991,13 +991,24 @@ final class IpeManagerHooks {
             }
             boolean zDirect = false;
             if (objCallback != null) {
-                if (intent != null && intent.hasExtra("connected")) {
-                    boolean connected = intent.getIntExtra("connected", 0) > 0
-                            && !HookUtils.disconnectRequested(context);
-                    int connectState = connected ? 1 : 0;
-                    if (invoke(objCallback, "notifyConnectState", Integer.valueOf(connectState), penState.address)) {
-                        HookUtils.log("IPe settings connect state pushed state=" + connectState);
-                    }
+                // Push the connect state on every notify, not only when the
+                // intent happens to carry a "connected" extra.  The stock code
+                // flips the page to disconnected on a dock or undock edge, and
+                // the 180 ms replay that follows a page re-attach carries only
+                // source=settings_replay -- so the old gate let the page keep a
+                // stale "not connected" until it was left and re-entered, which
+                // is exactly the reported symptom.  The OEM callback path a few
+                // lines below already falls back to penState.connected; this is
+                // the same rule, applied consistently.
+                boolean pageConnected = (intent != null && intent.hasExtra("connected")
+                        ? intent.getIntExtra("connected", 0) > 0
+                        : penState.connected)
+                        && !HookUtils.disconnectRequested(context);
+                int connectState = pageConnected ? 1 : 0;
+                if (invoke(objCallback, "notifyConnectState", Integer.valueOf(connectState), penState.address)) {
+                    HookUtils.log("IPe settings connect state pushed state=" + connectState
+                            + " source=" + (intent != null && intent.hasExtra("connected")
+                                    ? "intent" : "penState"));
                 }
                 if (iBattery >= 0) {
                     invoke(objCallback, "notifyBatteryLevel", Integer.valueOf(iBattery));

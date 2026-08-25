@@ -364,11 +364,16 @@ final class HookUtils {
     }
 
     /*
-     * The profile answer stays authoritative when the two agree.  When they
-     * disagree the live uhid link wins, because it cannot exist without a
-     * connected pen, and the disagreement is logged once per transition -- the
-     * original failure was completely silent, which is why it took a full
-     * measurement pass to find.
+     * Either signal being positive means connected.  Both are evidence *of* a
+     * link and neither can prove its absence: the HID Host profile hands out
+     * the BR/EDR leg's 0 for a pen that only ever uses HOGP, and the uhid
+     * device list is not equally visible from every process -- an earlier
+     * version let the input-device answer win outright, and in the ipemanager
+     * process, where the pen's uhid devices are not enumerable, that pinned the
+     * settings page to "not connected" permanently.  OR can only ever be more
+     * permissive than the old profile-only answer, which is the whole point.
+     * Disagreements are logged once per transition so a wrong call is visible
+     * rather than silent.
      */
     private static boolean reconcileLink(boolean profileConnected, boolean linkPresent) {
         if (profileConnected == linkPresent) {
@@ -379,9 +384,9 @@ final class HookUtils {
         if (lastLinkDisagreement != marker) {
             lastLinkDisagreement = marker;
             log("pen link state disagrees: HID Host profile=" + profileConnected
-                    + " live uhid link=" + linkPresent + "; trusting the link");
+                    + " live uhid link=" + linkPresent + "; reporting connected");
         }
-        return linkPresent;
+        return true;
     }
 
     static boolean bluetoothConnected(Context context, String str) {

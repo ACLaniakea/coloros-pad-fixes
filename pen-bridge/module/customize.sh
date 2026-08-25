@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-ui_print "- 联想手写笔桥接 Root 服务 1.1.22（ACLaniakea）"
+ui_print "- 联想手写笔桥接 Root 服务 1.1.24（ACLaniakea）"
 ui_print "- 开机按已绑定手写笔地址直接调用原厂 CoreService BLE 连接"
 ui_print "- 设置页断开同时执行原厂 CoreService、GATT/HID 实际断开"
 ui_print "- 统一 Hall/CPS/BLE 硬件充电状态与 ColorOS 设置页热切换"
