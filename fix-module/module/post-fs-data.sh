@@ -629,18 +629,27 @@ if [ -w /dev/memcg/system/memory.swappiness ]; then
 fi
 
 # First unlock creates CE app memcgs in a burst and ColorOS can write its high
-# defaults into each new child. Clamp new groups to the same stable 0/50
-# policy until service.sh publishes the handoff. This helper is bounded to four
-# minutes and always exits; it is not a resident tuning daemon.
-MEMCG_SETTLE_FLAG="$MODDIR/.memcg_settle_ready"
-rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
+# defaults into each new child. Clamp new groups to the same stable 0/50 policy
+# across that window. Bounded to four minutes and always exits; it is not a
+# resident tuning daemon.
+#
+# There used to be a .memcg_settle_ready handoff flag here, meant to let
+# service.sh cut this short. Nothing ever created it -- both boots logged
+# handoff=0 with attempts=240 -- and wiring it up would have been wrong anyway:
+# service.sh runs at boot completion, normally *before* the first unlock, which
+# is precisely the window this guard exists to cover. The bound is the exit
+# condition; there is no handoff.
+#
+# Note this runs as a plain `( ... ) &` child and does survive: post-fs-data's
+# children are not reaped, while service.sh's are, which is why the aclswap
+# writeback driver there needs setsid. The asymmetry is real, not an oversight.
 (
     attempt=0
     assigned_system_server=0
     assigned_surfaceflinger=0
     assigned_systemui=0
     assigned_launcher=0
-    while [ "$attempt" -lt 240 ] && [ ! -e "$MEMCG_SETTLE_FLAG" ]; do
+    while [ "$attempt" -lt 240 ]; do
         # On this port AMS creates active/systemserver tens of seconds after
         # system_server starts. By then hundreds of MB can already be swapped
         # from first-unlock code. Create the stock-named groups as soon as the
@@ -751,7 +760,7 @@ rm -f "$MEMCG_SETTLE_FLAG" 2>/dev/null
         sleep 1
         attempt=$((attempt + 1))
     done
-    log_msg "early first-unlock guard finished attempts=$attempt handoff=$([ -e "$MEMCG_SETTLE_FLAG" ] && echo 1 || echo 0) assigned=system_server:$assigned_system_server,surfaceflinger:$assigned_surfaceflinger,systemui:$assigned_systemui,launcher:$assigned_launcher"
+    log_msg "early first-unlock guard finished attempts=$attempt assigned=system_server:$assigned_system_server,surfaceflinger:$assigned_surfaceflinger,systemui:$assigned_systemui,launcher:$assigned_launcher"
 ) &
 
 wait_count=0

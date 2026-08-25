@@ -83,13 +83,28 @@ apply_serial_fix() {
 # 把它拉回正常。这里只纠正 powersave，不覆盖 balance/performance 正常使用的
 # schedutil/performance，避免与其他调频器争夺。
 normalize_cpu() {
-    target=schedutil
-    for g in schedutil walt; do
-        if grep -qw "$g" /sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors 2>/dev/null; then
-            target=$g
-            break
-        fi
+    # 恢复目标必须是"这台机器其余 policy 正在用的那个 governor"，而不是一个固定
+    # 偏好。本机四个 policy 全部是 walt（高通 WALT 感知调频器），而原来的写法优先
+    # schedutil：一旦某个 policy 被第三方钉成 powersave 而触发恢复，它会被拉到
+    # schedutil，留下混合 governor 的状态。先看同机其他 policy 用什么，取不到再
+    # 按 walt > schedutil 回退。
+    target=
+    for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+        [ -r "$policy/scaling_governor" ] || continue
+        current=$(cat "$policy/scaling_governor" 2>/dev/null)
+        case "$current" in ''|powersave) continue ;; esac
+        target=$current
+        break
     done
+    if [ -z "$target" ]; then
+        for g in walt schedutil; do
+            if grep -qw "$g" /sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors 2>/dev/null; then
+                target=$g
+                break
+            fi
+        done
+    fi
+    [ -n "$target" ] || return 0
     changed=0
     for policy in /sys/devices/system/cpu/cpufreq/policy*; do
         [ -d "$policy" ] || continue
