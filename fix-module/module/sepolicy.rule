@@ -7,3 +7,25 @@ allow platform_app adsprpcd_file file { open read getattr map };
 allow platform_app vendor_file dir { open read getattr search watch };
 allow platform_app adsprpcd_file dir { open read getattr search watch };
 allow hal_audio_default system_file file { read open getattr map };
+
+# 源机 ROM 的 nandswap 开机自检（SELinux 域 u:r:nandswap:s0）会跑 mount 与 df
+# 遍历全部挂载点。本机多了两类源策略从未预料到的挂载 —— 本模块的 bind mount
+# 与 KernelSU 的 loop 挂载 —— 于是自检撞上一连串 avc denied：
+#
+#   denied { search }  /data/adb                            adb_data_file       dir
+#   denied { getattr } /vendor/bin/init.qcom.post_boot.sh   vendor_file         file
+#   denied { getattr } /vendor/bin/init.kernel.post_boot.sh vendor_qti_init_shell_exec file
+#   denied { getattr } /mnt/hm_xvVyAjSGCS                   unlabeled           dir
+#
+# 这些拒绝是我们自己引入挂载造成的，补上属于修复我们弄坏的部分，四条都只授予
+# 只读的 search/getattr。实测加入后该域的拒绝数由一大串降为 0。
+#
+# 但要说清楚：**这并不能修好「内存扩展」开关**。加规则后实测自检依旧把
+# persist.sys.oplus.nandswap 写回 false，说明它失败的真正原因是本机没有
+# /proc/nandswap 等内核接口，与 SELinux 无关。开关的实际修复在
+# service.sh 的 restore_ram_expansion_intent。此处保留只为消除我们造成的
+# 拒绝与随之而来的 audit 日志噪声。
+allow nandswap adb_data_file dir search;
+allow nandswap vendor_file file getattr;
+allow nandswap vendor_qti_init_shell_exec file getattr;
+allow nandswap unlabeled dir getattr;

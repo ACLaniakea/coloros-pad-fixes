@@ -15,8 +15,13 @@ ro.oplus.display.colormode.soft.renderintent=0
 ro.oplus.audio.dolby.equalizer_support=true
 ro.oplus.audio.dolby.movieToMusic_support=true
 
-# The source ROM enables HMBIRD/HybridSwap cloud managers, but Lenovo's GKI
-# has neither control plane. Disable their managers at property-init time;
-# standard ZRAM, LMKD, MGLRU and the independent Scene scheduler stay active.
+# The source ROM enables the HMBIRD cloud manager, but Lenovo's GKI has no
+# control plane for it. Disable it at property-init time; standard ZRAM, LMKD,
+# MGLRU and the independent Scene scheduler stay active.
 sys.oplus.hmbird.manager.enable=0
-persist.sys.oplus.nandswap=false
+
+# persist.sys.oplus.nandswap is deliberately NOT forced to false here any more.
+# Pinning it false left the stock "RAM expansion" toggle permanently greyed out
+# even though the device runs 8 GiB of compressed swap on zram0. post-fs-data.sh
+# now reconciles that property against the real zram size instead, so the UI
+# reports what is actually configured. See bridge_ram_expansion_ui there.
