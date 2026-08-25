@@ -20,12 +20,38 @@ def _module_version(module_dir: Path) -> str:
 
 
 OUT = ROOT.parents[1] / "releases" / f"FixModule-v{_module_version(ROOT)}.zip"
-HOOK_APK = ROOT.parents[1] / "releases" / "BaseFix-Hook-v1.1.12.apk"
-EXCLUDE = {"fix-module.log", "tuning.log", "daemon.pid", "magic.pid"}
+def _basefix_version() -> str:
+    """Read the BaseFix Hook version from its manifest instead of hardcoding it.
+
+    The literal had already drifted once; a stale value here silently embeds an
+    older Hook into the module while the standalone APK ships the new one.
+    """
+    import re
+    manifest = ROOT.parents[1] / "base-fix" / "hook" / "resources" / "AndroidManifest.xml"
+    m = re.search(r'android:versionName="([^"]+)"', manifest.read_text(encoding="utf-8"))
+    if not m:
+        raise SystemExit("base-fix AndroidManifest has no android:versionName")
+    return m.group(1)
+
+
+HOOK_APK = ROOT.parents[1] / "releases" / f"BaseFix-Hook-v{_basefix_version()}.apk"
+EXCLUDE = {"fix-module.log", "fix-module.log.1", "tuning.log", "daemon.pid",
+           "magic.pid", "ram-expand.boot-toggle", ".aclswap.err"}
 
 
 def main() -> None:
-    subprocess.run([sys.executable, str(ROOT / "tools/build_lsposed_sync.py")], check=True)
+    # Same policy as the patcher jar below: rebuild from source when the
+    # toolchain is present, but fall back to the checked-in build product
+    # rather than refusing to package. Both jars are byte-reproducible, so a
+    # machine without the SDK still assembles an identical module.
+    sync_jar = ROOT / "bin" / "lsposed-path-sync.jar"
+    try:
+        subprocess.run([sys.executable, str(ROOT / "tools/build_lsposed_sync.py")],
+                       check=True)
+    except (subprocess.CalledProcessError, SystemExit):
+        if not sync_jar.is_file():
+            raise
+        print(f"toolchain unavailable; keeping {sync_jar}")
     if not HOOK_APK.is_file():
         raise SystemExit(f"missing Hook APK: {HOOK_APK}")
     patcher = ROOT / "tools" / "build_patcher.py"
