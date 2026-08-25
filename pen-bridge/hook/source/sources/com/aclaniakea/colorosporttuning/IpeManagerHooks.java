@@ -846,36 +846,10 @@ final class IpeManagerHooks {
         HookUtils.log("IPe settings callback captured=" + (obj2 != null));
     }
 
-    /*
-     * Runtime A/B switch for the two things this hook does to an already-open
-     * settings page: the 180 ms replay after a re-attach, and the stock
-     * fragment refresh.  The page renders correctly for about half a second
-     * after it opens and only then goes grey, which puts our own refresh in the
-     * window of suspicion -- invoking the stock fragment's refresh may make it
-     * re-read the stock connection source and repaint as disconnected.
-     *
-     * Default 1 keeps today's behaviour.  Setting
-     *   settings put global lenovo_pen_page_refresh 0
-     * turns both off, so the two cases can be compared on the device without
-     * another build.  Diagnostic only; remove once the real owner of the
-     * preference enable state is found.
-     */
-    private static boolean pageRefreshEnabled(Context context) {
-        if (context == null) {
-            return true;
-        }
-        try {
-            return Settings.Global.getInt(context.getContentResolver(),
-                    "lenovo_pen_page_refresh", 1) != 0;
-        } catch (Throwable unused) {
-            return true;
-        }
-    }
-
     /* JADX INFO: Access modifiers changed from: private */
     public static void replaySettingsPage(final Object obj) {
         final Context context = HookUtils.context(obj);
-        if (context == null || !pageRefreshEnabled(context)) {
+        if (context == null) {
             return;
         }
         try {
@@ -1030,7 +1004,16 @@ final class IpeManagerHooks {
                         ? intent.getIntExtra("connected", 0) > 0
                         : penState.connected)
                         && !HookUtils.disconnectRequested(context);
-                int connectState = pageConnected ? 1 : 0;
+                // 2, not 1.  The stock fragment gates every preference on
+                // "state == 2" (BluetoothProfile.STATE_CONNECTED) -- see
+                // t0.I == 2 and the s0 coroutine that enables the whole page --
+                // so pushing 1 (STATE_CONNECTING) disabled everything. The
+                // project's own PenState.connectState() has always returned 2,
+                // which is what the CONNECT_KEYS carry; only this one call site
+                // used the wrong encoding. The page reads the correct value
+                // from settings when it opens, which is why it looked right for
+                // about half a second and then went grey as our push landed.
+                int connectState = pageConnected ? 2 : 0;
                 if (invoke(objCallback, "notifyConnectState", Integer.valueOf(connectState), penState.address)) {
                     HookUtils.log("IPe settings connect state pushed state=" + connectState
                             + " source=" + (intent != null && intent.hasExtra("connected")
@@ -1046,7 +1029,7 @@ final class IpeManagerHooks {
                 HookUtils.log("IPe settings direct callback updated: battery=" + iBattery + " charging=" + iCharging);
             }
             Object objFragment = settingsFragment;
-            if (objFragment != null && pageRefreshEnabled(context) && invoke(objFragment, "h")) {
+            if (objFragment != null && invoke(objFragment, "h")) {
                 HookUtils.log("IPe settings fragment refreshed: battery=" + iBattery + " charging=" + iCharging);
                 zDirect = true;
             }
