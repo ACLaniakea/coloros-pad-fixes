@@ -437,8 +437,46 @@ bridge_ram_expansion_ui
 # exact-build compatibility module once, before Horae starts; no userspace
 # watchdog is needed.  The module has been built against GKI build 13606743
 # and all CONFIG_MODVERSIONS CRCs are checked during the repository build.
+# ============================================================================
+# thermal-engine 配置覆盖：必须走 bind mount，不能走 KernelSU 的 system 覆盖
+#
+# KernelSU 的 system/ 覆盖把模块内的文件原样挂到 /vendor/etc，而模块 zip 里的
+# 文件带的是 u:object_r:system_file:s0，且挂载点只读、事后 chcon 无效。
+# thermal-engine 跑在 vendor 域，读不了 system_file，于是**整份配置被静默丢弃**
+# ——策略不生效、不报错、日志里没有任何痕迹。
+#
+# 实测（向外壳温热区注入 47.5°C）：context 为 system_file 时 GPU 毫无反应；
+# 换成 vendor_configs_file 后立刻正确降到 720MHz、撤掉后回满 903MHz。
+#
+# 因此改用本项目已验证可行的 bind mount 方式：源文件在 payload/ 内，先 chcon
+# 成 vendor_configs_file，再 bind 到原路径。
+# ============================================================================
+bind_thermal_configs() {
+    for src in "$MODDIR"/payload/thermal/thermal-engine_*.conf; do
+        [ -f "$src" ] || continue
+        name=$(basename "$src")
+        dst="/vendor/etc/$name"
+        [ -f "$dst" ] || continue
+        chown 0:0 "$src"
+        chmod 0644 "$src"
+        chcon u:object_r:vendor_configs_file:s0 "$src" 2>/dev/null
+        if mount --bind "$src" "$dst" 2>/dev/null; then
+            log_msg "thermal-engine config bind mounted $name"
+        else
+            log_msg "WARN: thermal-engine config bind failed for $name"
+        fi
+    done
+}
+
+bind_thermal_configs
+
 SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
 if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
+    # Also publishes the skin-msm-therm-usr thermal zone that this board's
+    # device tree omits, carrying Horae's real shell temperature. Both
+    # thermal-engine and the thermal HAL look their skin sensor up by that
+    # name; without it they fall back to the board sensor next to the SoC,
+    # which measured up to 19 C hotter than the shell.
     if [ -f "$SHELL_TEMP_KO" ] && insmod "$SHELL_TEMP_KO" 2>>"$LOGFILE"; then
         log_msg "OPlus Horae shell-temp compatibility loaded"
     else

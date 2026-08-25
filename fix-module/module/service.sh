@@ -275,6 +275,55 @@ disable_ghost_thermal_zones() {
 disable_ghost_thermal_zones
 
 # ============================================================================
+# 让框架的 Thermal Status 不再从开机起就报 SEVERE
+#
+# QTI 的 thermal HAL 把 skin-msm-therm 这个 zone 的 trip_point_0 当作 skin 传感器
+# 的 SEVERE 阈值上报给框架，而 thermal-engine 又把同一个 trip 当成自己的通知触发
+# 点在不停改写——实测它就在 43000/45000/48000/51000/54000 之间跳，正是 GPU 降频
+# 梯子的那几级。于是主板 43°C（本机待机温度）就被框架当成"严重降频"，此时真实
+# 外壳温只有 35°C。
+#
+# 上面的配置覆盖已经把所有生效的策略块从 skin-msm-therm 迁到 shell-therm，
+# 因此不再有人改写这个 trip，可以把它设成一个真正有意义的值。这一步在内核侧是
+# 惰性的：本机 skin-msm-therm 的 trip0 没有绑定任何 cooling device（cdev0 绑在
+# trip2/60°C，且是 gpu-dump-skip-cdev 这个空壳），过热保护仍由 trip1(95°C)、
+# trip2 以及 cpuss-*/gpuss-* 各自的配置负责。
+#
+# 只在确认 trip0 未绑定任何 cooling device 时才动它。
+# ============================================================================
+SKIN_STATUS_TRIP=68000
+
+relax_skin_status_trip() {
+    for zone in /sys/class/thermal/thermal_zone*; do
+        [ "$(cat "$zone/type" 2>/dev/null)" = skin-msm-therm ] || continue
+
+        for bound in "$zone"/cdev*_trip_point; do
+            [ -r "$bound" ] || continue
+            if [ "$(cat "$bound" 2>/dev/null)" = 0 ]; then
+                log_msg "thermal: skin trip0 has a cooling device bound; left alone"
+                return 0
+            fi
+        done
+
+        current=$(cat "$zone/trip_point_0_temp" 2>/dev/null)
+        case "$current" in ''|*[!0-9]*) return 0 ;; esac
+        [ "$current" -ge "$SKIN_STATUS_TRIP" ] && return 0
+
+        chmod 644 "$zone/trip_point_0_temp" 2>/dev/null
+        if echo "$SKIN_STATUS_TRIP" >"$zone/trip_point_0_temp" 2>/dev/null &&
+           [ "$(cat "$zone/trip_point_0_temp" 2>/dev/null)" = "$SKIN_STATUS_TRIP" ]; then
+            log_msg "thermal: skin SEVERE trip raised $current -> $SKIN_STATUS_TRIP"
+        else
+            log_msg "WARN: thermal: could not raise skin SEVERE trip from $current"
+        fi
+        return 0
+    done
+    return 0
+}
+
+relax_skin_status_trip
+
+# ============================================================================
 # 内存扩展：开机后的一次复核
 #
 # 真正的权威是 Settings.Secure.customize_ram_swap_state（开关）与

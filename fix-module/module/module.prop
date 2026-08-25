@@ -1,6 +1,6 @@
 id=coloros_port_fix
 name=联想平板 Pro GT - ColorOS 修复模块
 author=ACLaniakea
-version=2.0.17
-versionCode=2017
-description=SM8650Q/pineapple ColorOS 移植修复模块 2.0.16：标准ZRAM采用实测50/30/10策略并隔离zsmalloc/CMA；关闭缺失内核接口的HybridSwap、Nirvana与HMBIRD云控；兼容8/12GB RAM及ROM既有ZRAM；OPlus特性表改为按原厂表增量派生、不再整表替换；停用源机遗留、读数物理不可能且温控绑定已失效的幽灵热区；保留预加载、LMKD、MGLRU、动态boost、温控、杜比、环境光、AON与BWV修复。
+version=2.0.18
+versionCode=2018
+description=SM8650Q/pineapple ColorOS 移植修复模块 2.0.18：把 thermal-engine 的体感梯子从贴 SoC 的 skin-msm-therm 迁到 Horae 真实外壳温 zone shell-therm，修复开机即 GPU 降频与框架误报 SEVERE；标准ZRAM采用实测50/30/10策略并隔离zsmalloc/CMA；关闭缺失内核接口的HybridSwap、Nirvana与HMBIRD云控；兼容8/12GB RAM及ROM既有ZRAM；OPlus特性表改为按原厂表增量派生、不再整表替换；停用源机遗留、读数物理不可能且温控绑定已失效的幽灵热区；保留预加载、LMKD、MGLRU、动态boost、温控、杜比、环境光、AON与BWV修复。
