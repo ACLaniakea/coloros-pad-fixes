@@ -12,6 +12,7 @@ import java.io.FileReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /* loaded from: classes.dex */
 /** Prevents port-only OStats CPU telemetry from assuming an incompatible CPU layout. */
@@ -20,7 +21,23 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
     private static final AtomicBoolean THERMAL_RECOVERY_REPORTED = new AtomicBoolean(false);
     private static final AtomicBoolean SOCD_BRIDGE_REPORTED = new AtomicBoolean(false);
     private static final AtomicBoolean SOCD_RECOVERY_REPORTED = new AtomicBoolean(false);
+    private static final AtomicBoolean CPU_BRIDGE_REPORTED = new AtomicBoolean(false);
     private static final AtomicBoolean HBM_BRIDGE_REPORTED = new AtomicBoolean(false);
+    /**
+     * Cached-process ceiling for <=9 GB variants. 48 is where the 96 -> 64 ->
+     * 48 walk documented below stopped, but the walk was never finished: each
+     * step reduced the swap working set and the next value was never tried
+     * because the constant was compiled in, so testing it meant a rebuild and
+     * a reboot per arm. Reading it from a property makes the remaining range
+     * measurable at runtime - flip the property, let ActivityManagerConstants
+     * refresh, and the new ceiling applies - while an absent or out-of-range
+     * property keeps the tested 48.
+     */
+    private static final String CACHE_CAP_PROP = "persist.sys.aclaniakea.max_cached";
+    private static final int CACHE_CAP_DEFAULT = 48;
+    private static final int CACHE_CAP_MIN = 8;
+    private static final int CACHE_CAP_MAX = 256;
+    private static final AtomicInteger CACHE_CAP_APPLIED = new AtomicInteger(-1);
     private static final AtomicBoolean CACHE_LIMIT_REPORTED = new AtomicBoolean(false);
     private static final AtomicBoolean POST_BOOT_CACHE_GRACE_REPORTED = new AtomicBoolean(false);
     private static final String TAG = "ColorOSRuntimeFix";
@@ -36,9 +53,27 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
      */
     private static final float SKIN_SEVERE_CLEAR_C = 44.5f;
     private static final float PHYSICAL_SKIN_CLEAR_C = 43.0f;
+    private static final int TEMPERATURE_TYPE_CPU = 0;
     private static final int TEMPERATURE_TYPE_SKIN = 3;
     private static final int THROTTLING_SEVERE = 3;
     private static final int THROTTLING_NONE = 0;
+    /*
+     * ThermalManagerService caches one Temperature per sensor and refreshes it
+     * only when the HAL delivers a callback. The transplanted QTI HAL notifies
+     * on severity transitions rather than on every sample, so a CPU entry that
+     * was captured during a genuine load spike stays in the cache indefinitely.
+     * Measured on device while every real zone sat at 38-40 C: the cache still
+     * reported CPU3 at 83.0 C and CPU5 at 89.9 C, and apps reading
+     * IThermalService.getCurrentTemperatures() see those stale values against a
+     * 95 C threshold, which is what makes monitoring apps announce throttling
+     * that is not happening.
+     *
+     * Correct such an entry from the live cpuss-0..3 cluster maximum - a real
+     * sensor read at the moment of the call, never a constant. Only entries that
+     * disagree with the live reading by more than this margin are touched, so a
+     * freshly delivered callback keeps its genuine per-core spread.
+     */
+    private static final float CPU_STALE_DELTA_C = 15.0f;
     private static final float SOCD_SEVERE_CLEAR_MAX_CLUSTER_C = 80.0f;
     private static volatile String physicalSkinTempPath;
     private static volatile String[] cpuClusterTempPaths;
@@ -138,17 +173,55 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * The configured ceiling, clamped to a sane range. Anything unparseable,
+     * absent, or outside the range falls back to the value that was actually
+     * measured, so a typo in the property cannot silently produce a ceiling
+     * nobody tested.
+     */
+    private static int cachedProcessCap() {
+        try {
+            String raw = (String) XposedHelpers.callStaticMethod(
+                    Class.forName("android.os.SystemProperties"), "get",
+                    CACHE_CAP_PROP, "");
+            if (raw != null && raw.length() > 0) {
+                int value = Integer.parseInt(raw.trim());
+                if (value >= CACHE_CAP_MIN && value <= CACHE_CAP_MAX) {
+                    return value;
+                }
+                XposedBridge.log(TAG + ": ignoring out-of-range " + CACHE_CAP_PROP
+                        + "=" + value + "; keeping " + CACHE_CAP_DEFAULT);
+            }
+        } catch (Throwable ignored) {
+            // Unset, unreadable or non-numeric: keep the measured default.
+        }
+        return CACHE_CAP_DEFAULT;
+    }
+
     private static void applyEightGbCachedProcessPolicy(Object constants) {
         if (constants == null) return;
+        int cap = cachedProcessCap();
         try {
             int requested = XposedHelpers.getIntField(
                     constants, "mOverrideMaxCachedProcesses");
-            if (requested > 48) {
+            // Lower whatever the framework asks for; additionally allow the
+            // ceiling to move back up, but only when the current value is the
+            // one this guard installed. Without that second case the cap can
+            // only ratchet down within a boot, which made the range
+            // untestable: lowering it and then raising the property again left
+            // the old, lower ceiling in place. The ownership check is what
+            // keeps that from overriding a genuinely lower value the framework
+            // chose on its own, e.g. under memory pressure.
+            boolean owned = requested == CACHE_CAP_APPLIED.get();
+            if (requested > cap || (owned && requested != cap)) {
                 XposedHelpers.setIntField(constants,
-                        "mOverrideMaxCachedProcesses", 48);
-                if (CACHE_LIMIT_REPORTED.compareAndSet(false, true)) {
-                    XposedBridge.log(TAG + ": capped cached processes "
-                            + requested + " -> 48 on 8GB-class device");
+                        "mOverrideMaxCachedProcesses", cap);
+                // Log on the first application and again whenever the ceiling
+                // actually changes, so an A/B run can be read off the log.
+                if (CACHE_CAP_APPLIED.getAndSet(cap) != cap
+                        || CACHE_LIMIT_REPORTED.compareAndSet(false, true)) {
+                    XposedBridge.log(TAG + ": cached-process ceiling "
+                            + requested + " -> " + cap + " on 8GB-class device");
                 }
             }
         } catch (Throwable t) {
@@ -291,6 +364,19 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
                 return;
             }
             int type = ((Integer) XposedHelpers.callMethod(temperature, "getType")).intValue();
+            if (type == TEMPERATURE_TYPE_CPU) {
+                float cached = XposedHelpers.getFloatField(temperature, "mValue");
+                float liveCluster = readMaxCpuClusterTemperatureC();
+                if (!Float.isNaN(liveCluster) && !Float.isNaN(cached)
+                        && Math.abs(cached - liveCluster) > CPU_STALE_DELTA_C) {
+                    XposedHelpers.setFloatField(temperature, "mValue", liveCluster);
+                    if (CPU_BRIDGE_REPORTED.compareAndSet(false, true)) {
+                        XposedBridge.log(TAG + ": bridged stale cached CPU reading " + cached
+                                + "C to live cluster max=" + liveCluster + "C");
+                    }
+                }
+                return;
+            }
             if (type != TEMPERATURE_TYPE_SKIN || status < THROTTLING_SEVERE) {
                 return;
             }
@@ -339,6 +425,37 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
                         return;
                     }
                     if (!"socd".equals(nameObj)) {
+                        // A stale cached CPU entry can only be corrected on the read
+                        // path. ThermalManagerService keeps one Temperature per sensor
+                        // and refreshes it when the HAL delivers a callback; the ported
+                        // QTI HAL notifies on severity transitions rather than on every
+                        // sample, so an object built during a real spike is never
+                        // reconstructed and the constructor sanitiser above gets no
+                        // second chance. Measured with every real zone at 61 C: the
+                        // cache still served CPU3 83.3 C, CPU4 83.7 C and CPU5 89.9 C.
+                        // Correct from the live cpuss-0..3 maximum, and only when the
+                        // disagreement exceeds CPU_STALE_DELTA_C so a freshly delivered
+                        // callback keeps its genuine per-core spread.
+                        Object typeObj = XposedHelpers.callMethod(param.thisObject, "getType");
+                        if (!(typeObj instanceof Integer)
+                                || ((Integer) typeObj).intValue() != TEMPERATURE_TYPE_CPU) {
+                            return;
+                        }
+                        Object cachedObj = param.getResult();
+                        if (!(cachedObj instanceof Float)) {
+                            return;
+                        }
+                        float cached = ((Float) cachedObj).floatValue();
+                        float liveCluster = readMaxCpuClusterTemperatureC();
+                        if (Float.isNaN(liveCluster) || Float.isNaN(cached)
+                                || Math.abs(cached - liveCluster) <= CPU_STALE_DELTA_C) {
+                            return;
+                        }
+                        param.setResult(Float.valueOf(liveCluster));
+                        if (CPU_BRIDGE_REPORTED.compareAndSet(false, true)) {
+                            XposedBridge.log(TAG + ": bridged stale cached CPU reading " + cached
+                                    + "C to live cluster max=" + liveCluster + "C");
+                        }
                         return;
                     }
                     float maxCluster = readMaxCpuClusterTemperatureC();
@@ -428,7 +545,21 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
                 return Float.NaN;
             }
             String raw = readFirstLine(new File(path));
-            return raw == null ? Float.NaN : Float.parseFloat(raw) / 1000.0f;
+            if (raw == null) {
+                return Float.NaN;
+            }
+            float value = Float.parseFloat(raw) / 1000.0f;
+            // Same plausibility gate the cluster reader applies. Nothing here can
+            // resolve to one of the port's phantom zones - the lookup above matches
+            // the exact name skin-msm-therm, never a substring such as -therm, so
+            // xo-therm / wls-therm / usb-therm and friends can never be selected.
+            // This guards only against the physical sensor itself going bad and
+            // reporting an out-of-range value, which would otherwise be bridged
+            // straight into hbm and every SKIN-type consumer.
+            if (value < 0.0f || value > 125.0f) {
+                return Float.NaN;
+            }
+            return value;
         } catch (Throwable ignored) {
             return Float.NaN;
         }
