@@ -1388,6 +1388,8 @@ final class SystemStylusHooks {
         return false;
     }
 
+    private static long lastGateRefusalAt;
+
     private static boolean onMotion(Context context, MotionEvent motionEvent) {
         // The BLE accessory exposes an auxiliary mouse collection, while the
         // real pressure/tilt stream comes from NVTCapacitivePen. Ignore only
@@ -1407,6 +1409,17 @@ final class SystemStylusHooks {
                     lastButtons = 0;
                     if (writing) {
                         stopWriting();
+                    }
+                    // Never refuse silently. When this gate closed wrongly the
+                    // whole haptic chain vanished with no dispatch and no log,
+                    // and only a full measurement pass could find it.
+                    long now = SystemClock.uptimeMillis();
+                    if (now - lastGateRefusalAt > 5000) {
+                        lastGateRefusalAt = now;
+                        HookUtils.log("stylus haptic gate closed: connected="
+                                + HookUtils.state(context).connected
+                                + " disconnectRequested="
+                                + HookUtils.disconnectRequested(context));
                     }
                     return false;
                 }

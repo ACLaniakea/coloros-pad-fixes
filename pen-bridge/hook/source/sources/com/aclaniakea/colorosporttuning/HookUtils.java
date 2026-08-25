@@ -10,6 +10,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.net.Uri;
 import android.provider.Settings;
+import android.view.InputDevice;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import java.lang.reflect.Field;
@@ -20,6 +21,49 @@ final class HookUtils {
     private static final int HID_HOST_PROFILE = 4;
     private static volatile BluetoothProfile hidHostProxy;
     private static volatile boolean hidHostProxyRequested;
+    private static volatile int lastLinkDisagreement = -1;
+
+    /*
+     * This pen is LE-only and runs over HOGP.  The stock stack tracks both legs
+     * separately -- dumpsys shows
+     *   "Selected transport=2  HID connection state=0  HOGP connection state=2"
+     * -- and the HID Host profile hands out the BR/EDR leg's 0, which this pen
+     * never uses.  Every consumer that asks the profile is therefore told the
+     * pen is disconnected while it is working: the stock settings page greys
+     * out every option, and onMotion()'s gate silently drops all haptics.
+     *
+     * The uhid input devices the stack creates for the HOGP link are direct
+     * evidence that the link is up, and they disappear when it really drops.
+     * Match only the explicit Lenovo pen names -- isPenName() is deliberately
+     * loose and would also match the built-in NVTCapacitivePen digitizer, which
+     * is always present and would pin this to true forever.
+     */
+    private static boolean penHidLinkPresent() {
+        try {
+            int[] ids = InputDevice.getDeviceIds();
+            if (ids == null) {
+                return false;
+            }
+            for (int id : ids) {
+                InputDevice device = InputDevice.getDevice(id);
+                if (device == null) {
+                    continue;
+                }
+                String name = device.getName();
+                if (name == null) {
+                    continue;
+                }
+                String lower = name.toLowerCase();
+                for (String known : PenBridgeConstants.LENOVO_NAMES) {
+                    if (lower.contains(known)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
     static int hookAll(ClassLoader classLoader, String str, String str2, XC_MethodHook xC_MethodHook) {
         try {
             int i = 0;
@@ -319,6 +363,27 @@ final class HookUtils {
         return iHardwareBattery >= 0 ? iHardwareBattery : -1;
     }
 
+    /*
+     * The profile answer stays authoritative when the two agree.  When they
+     * disagree the live uhid link wins, because it cannot exist without a
+     * connected pen, and the disagreement is logged once per transition -- the
+     * original failure was completely silent, which is why it took a full
+     * measurement pass to find.
+     */
+    private static boolean reconcileLink(boolean profileConnected, boolean linkPresent) {
+        if (profileConnected == linkPresent) {
+            lastLinkDisagreement = -1;
+            return profileConnected;
+        }
+        int marker = linkPresent ? 1 : 0;
+        if (lastLinkDisagreement != marker) {
+            lastLinkDisagreement = marker;
+            log("pen link state disagrees: HID Host profile=" + profileConnected
+                    + " live uhid link=" + linkPresent + "; trusting the link");
+        }
+        return linkPresent;
+    }
+
     static boolean bluetoothConnected(Context context, String str) {
         if (str != null && str.length() != 0) {
             try {
@@ -327,6 +392,7 @@ final class HookUtils {
                     return false;
                 }
                 final BluetoothDevice remoteDevice = defaultAdapter.getRemoteDevice(str);
+                boolean linkPresent = penHidLinkPresent();
                 BluetoothProfile profile = hidHostProxy;
                 if (profile != null) {
                     // BluetoothHidHost is hidden from the public SDK, but the
@@ -334,7 +400,9 @@ final class HookUtils {
                     // getConnectionState(BluetoothDevice) implementation.
                     Object state = call(profile, "getConnectionState", remoteDevice);
                     if (state instanceof Number) {
-                        return ((Number) state).intValue() == BluetoothProfile.STATE_CONNECTED;
+                        boolean profileConnected = ((Number) state).intValue()
+                                == BluetoothProfile.STATE_CONNECTED;
+                        return reconcileLink(profileConnected, linkPresent);
                     }
                 }
                 if (!hidHostProxyRequested) {
@@ -369,8 +437,8 @@ final class HookUtils {
                 // The proxy arrives asynchronously. Until then use the stock
                 // adapter's aggregate HID Host state. This is still profile 4
                 // (not ACL/GATT) and is immediately available during boot.
-                return defaultAdapter.getProfileConnectionState(HID_HOST_PROFILE)
-                        == BluetoothProfile.STATE_CONNECTED;
+                return reconcileLink(defaultAdapter.getProfileConnectionState(HID_HOST_PROFILE)
+                        == BluetoothProfile.STATE_CONNECTED, linkPresent);
             } catch (Throwable unused) {
             }
         }
