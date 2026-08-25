@@ -532,6 +532,13 @@ retire_stock_zram_for_aclswap() {
     return 1
 }
 
+# post-fs-data 里 aclswap 任何一步失败都会静默回落到原厂标准 zram：系统照常可
+# 用，只是没有写回。这种情况必须在日志里留一条明显的记录，否则它只会表现为
+# 「最近好像又变卡了」，而 action.sh 的输出里看不出任何异常。
+if ! aclswap_active; then
+    log_msg "WARN: aclswap: not in /proc/swaps; running on stock zram with no writeback"
+fi
+
 # 顺序有意为之：先让 aclswap 成为唯一 swap，再发布镜像，否则 UI 上报的会是
 # 那个马上就要被摘掉的 zram0。
 aclswap_retire_attempts=0

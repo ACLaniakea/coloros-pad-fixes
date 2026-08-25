@@ -318,13 +318,27 @@ aclswap_setup() {
     # backing 设备，而刚由 loop-control 建出来的设备此刻可能还被内核的分区扫描
     # 占着（这些 loop 都是 partscan=1）。重试而不是放弃，并把真实错误留在日志里，
     # 免得下次又只能看到一句“失败”。
+    #
+    # 实测补充：3 秒的重试预算不够。有一次开机 15 次全部 EBUSY 而回滚到原厂
+    # zram，同一串命令在开机后手动跑第一次就成功——说明是那一个 loop 设备当时
+    # 正被独占，而不是普遍性的失败。所以除了把预算放宽到 10 秒，每 8 次还换一个
+    # loop 设备重试：EBUSY 针对的是具体设备，换一个通常立刻就成。
     aclswap_bind=0
-    while [ "$aclswap_bind" -lt 15 ]; do
+    while [ "$aclswap_bind" -lt 40 ]; do
         if echo "$ACLSWAP_LOOP" >"$ACLSWAP_SYS/backing_dev" 2>"$MODDIR/.aclswap.err"; then
             break
         fi
         aclswap_bind=$((aclswap_bind + 1))
-        toybox sleep 0.2 2>/dev/null || sleep 1
+        toybox sleep 0.25 2>/dev/null || sleep 1
+        if [ "$((aclswap_bind % 8))" -eq 0 ]; then
+            losetup -d "$ACLSWAP_LOOP" 2>/dev/null
+            candidate=$(losetup -f 2>/dev/null)
+            if [ -n "$candidate" ] &&
+               losetup "$candidate" "$ACLSWAP_BACKING" 2>/dev/null; then
+                log_msg "aclswap: backing_dev busy on $ACLSWAP_LOOP; retrying on $candidate"
+                ACLSWAP_LOOP="$candidate"
+            fi
+        fi
     done
     if [ "$(cat "$ACLSWAP_SYS/backing_dev" 2>/dev/null)" = none ] ||
        [ -z "$(cat "$ACLSWAP_SYS/backing_dev" 2>/dev/null)" ]; then
