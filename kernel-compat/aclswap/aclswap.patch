@@ -1,0 +1,141 @@
+--- a/zcomp.h
++++ b/zcomp.h
+@@ -5,6 +5,15 @@
+ 
+ #ifndef _ZCOMP_H_
+ #define _ZCOMP_H_
++
++/*
++ * ACLaniakea: the stock driver registers the statically numbered
++ * CPUHP_ZCOMP_PREPARE hotplug state. That number is already owned by the
++ * GKI zram module which stays loaded, so a second registration returns
++ * -EBUSY from module_init before anything is logged. Allocate a dynamic
++ * state instead and share the kernel-assigned number.
++ */
++extern int aclswap_cpuhp_state;
+ #include <linux/local_lock.h>
+ 
+ struct zcomp_strm {
+--- a/zcomp.c
++++ b/zcomp.c
+@@ -181,7 +181,7 @@
+ 	if (!comp->stream)
+ 		return -ENOMEM;
+ 
+-	ret = cpuhp_state_add_instance(CPUHP_ZCOMP_PREPARE, &comp->node);
++	ret = cpuhp_state_add_instance(aclswap_cpuhp_state, &comp->node);
+ 	if (ret < 0)
+ 		goto cleanup;
+ 	return 0;
+@@ -193,7 +193,7 @@
+ 
+ void zcomp_destroy(struct zcomp *comp)
+ {
+-	cpuhp_state_remove_instance(CPUHP_ZCOMP_PREPARE, &comp->node);
++	cpuhp_state_remove_instance(aclswap_cpuhp_state, &comp->node);
+ 	free_percpu(comp->stream);
+ 	kfree(comp);
+ }
+--- a/zram_drv.c
++++ b/zram_drv.c
+@@ -12,7 +12,7 @@
+  *
+  */
+ 
+-#define KMSG_COMPONENT "zram"
++#define KMSG_COMPONENT "aclswap"
+ #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
+ 
+ #include <linux/module.h>
+@@ -41,6 +41,7 @@
+ static DEFINE_MUTEX(zram_index_mutex);
+ 
+ static int zram_major;
++int aclswap_cpuhp_state = -1;
+ static const char *default_compressor = CONFIG_ZRAM_DEF_COMP;
+ 
+ /* Module params (documentation at end) */
+@@ -549,6 +550,8 @@
+ 	zram->backing_dev = backing_dev;
+ 	zram->bitmap = bitmap;
+ 	zram->nr_pages = nr_pages;
++	pr_info("aclswap: backing device bound, %lu MB available for writeback\n",
++		(nr_pages << PAGE_SHIFT) >> 20);
+ 	up_write(&zram->init_lock);
+ 
+ 	pr_info("setup backing device %s\n", file_name);
+@@ -883,7 +886,7 @@
+ 
+ static void zram_debugfs_create(void)
+ {
+-	zram_debugfs_root = debugfs_create_dir("zram", NULL);
++	zram_debugfs_root = debugfs_create_dir("aclswap", NULL);
+ }
+ 
+ static void zram_debugfs_destroy(void)
+@@ -1934,7 +1937,7 @@
+ 	zram->disk->flags |= GENHD_FL_NO_PART;
+ 	zram->disk->fops = &zram_devops;
+ 	zram->disk->private_data = zram;
+-	snprintf(zram->disk->disk_name, 16, "zram%d", device_id);
++	snprintf(zram->disk->disk_name, 16, "aclswap%d", device_id);
+ 
+ 	/* Actual capacity set using syfs (/sys/block/zram<id>/disksize */
+ 	set_capacity(zram->disk, 0);
+@@ -2097,7 +2100,7 @@
+ ATTRIBUTE_GROUPS(zram_control_class);
+ 
+ static struct class zram_control_class = {
+-	.name		= "zram-control",
++	.name		= "aclswap-control",
+ 	.owner		= THIS_MODULE,
+ 	.class_groups	= zram_control_class_groups,
+ };
+@@ -2114,8 +2117,8 @@
+ 	idr_for_each(&zram_index_idr, &zram_remove_cb, NULL);
+ 	zram_debugfs_destroy();
+ 	idr_destroy(&zram_index_idr);
+-	unregister_blkdev(zram_major, "zram");
+-	cpuhp_remove_multi_state(CPUHP_ZCOMP_PREPARE);
++	unregister_blkdev(zram_major, "aclswap");
++	cpuhp_remove_multi_state(aclswap_cpuhp_state);
+ }
+ 
+ static int __init zram_init(void)
+@@ -2124,24 +2127,26 @@
+ 
+ 	BUILD_BUG_ON(__NR_ZRAM_PAGEFLAGS > BITS_PER_LONG);
+ 
+-	ret = cpuhp_setup_state_multi(CPUHP_ZCOMP_PREPARE, "block/zram:prepare",
++	ret = cpuhp_setup_state_multi(CPUHP_BP_PREPARE_DYN,
++				      "block/aclswap:prepare",
+ 				      zcomp_cpu_up_prepare, zcomp_cpu_dead);
+ 	if (ret < 0)
+ 		return ret;
++	aclswap_cpuhp_state = ret;
+ 
+ 	ret = class_register(&zram_control_class);
+ 	if (ret) {
+ 		pr_err("Unable to register zram-control class\n");
+-		cpuhp_remove_multi_state(CPUHP_ZCOMP_PREPARE);
++		cpuhp_remove_multi_state(aclswap_cpuhp_state);
+ 		return ret;
+ 	}
+ 
+ 	zram_debugfs_create();
+-	zram_major = register_blkdev(0, "zram");
++	zram_major = register_blkdev(0, "aclswap");
+ 	if (zram_major <= 0) {
+ 		pr_err("Unable to get major number\n");
+ 		class_unregister(&zram_control_class);
+-		cpuhp_remove_multi_state(CPUHP_ZCOMP_PREPARE);
++		cpuhp_remove_multi_state(aclswap_cpuhp_state);
+ 		return -EBUSY;
+ 	}
+ 
+@@ -2174,4 +2179,4 @@
+ 
+ MODULE_LICENSE("Dual BSD/GPL");
+ MODULE_AUTHOR("Nitin Gupta <ngupta@vflare.org>");
+-MODULE_DESCRIPTION("Compressed RAM Block Device");
++MODULE_DESCRIPTION("Compressed RAM Block Device with writeback (ACLaniakea)");

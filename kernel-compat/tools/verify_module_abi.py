@@ -21,7 +21,20 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("symvers", type=pathlib.Path)
     parser.add_argument("modules", nargs="+", type=pathlib.Path)
+    parser.add_argument(
+        "--allow-depends",
+        default="",
+        help=(
+            "Comma-separated module names this module is expected to depend on. "
+            "The default of none is deliberate: a compatibility shim that starts "
+            "pulling in other modules has usually stopped being a shim. State the "
+            "dependency here so it is a decision rather than a silent change."
+        ),
+    )
     args = parser.parse_args()
+    allowed_depends = {
+        name.strip() for name in args.allow_depends.split(",") if name.strip()
+    }
 
     expected_crc = {}
     for line in args.symvers.read_text().splitlines():
@@ -65,15 +78,21 @@ def main() -> int:
             failed = True
             module_failed = True
         dependencies = output("modinfo", "-F", "depends", str(module))
-        if dependencies:
+        declared = {name for name in dependencies.split(",") if name}
+        unexpected = sorted(declared - allowed_depends)
+        if unexpected:
             print(
-                f"FAIL {module}: unexpected module dependencies={dependencies!r}",
+                f"FAIL {module}: unexpected module dependencies="
+                + ",".join(unexpected),
                 file=sys.stderr,
             )
             failed = True
             module_failed = True
         if not module_failed:
-            print(f"PASS {module}: vermagic exact, {len(lines)} symbol CRCs exact")
+            summary = f"PASS {module}: vermagic exact, {len(lines)} symbol CRCs exact"
+            if declared:
+                summary += f", depends={','.join(sorted(declared))} (declared)"
+            print(summary)
 
     return 1 if failed else 0
 
