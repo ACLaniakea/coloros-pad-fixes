@@ -29,7 +29,7 @@ cp releases/PenHidCtl-v1.1.0.apk pen-bridge/module/system/priv-app/aclpenhid/Pen
 
 echo "== 5/7 root module zips =="
 python3 fix-module/tools/build_fix.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.1.24.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v1.1.25.zip
 
 echo "== 6/7 SM8650Q Scene scheduler =="
 python3 scheduler-module/tools/build_scheduler.py

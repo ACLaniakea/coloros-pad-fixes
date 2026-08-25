@@ -846,10 +846,36 @@ final class IpeManagerHooks {
         HookUtils.log("IPe settings callback captured=" + (obj2 != null));
     }
 
+    /*
+     * Runtime A/B switch for the two things this hook does to an already-open
+     * settings page: the 180 ms replay after a re-attach, and the stock
+     * fragment refresh.  The page renders correctly for about half a second
+     * after it opens and only then goes grey, which puts our own refresh in the
+     * window of suspicion -- invoking the stock fragment's refresh may make it
+     * re-read the stock connection source and repaint as disconnected.
+     *
+     * Default 1 keeps today's behaviour.  Setting
+     *   settings put global lenovo_pen_page_refresh 0
+     * turns both off, so the two cases can be compared on the device without
+     * another build.  Diagnostic only; remove once the real owner of the
+     * preference enable state is found.
+     */
+    private static boolean pageRefreshEnabled(Context context) {
+        if (context == null) {
+            return true;
+        }
+        try {
+            return Settings.Global.getInt(context.getContentResolver(),
+                    "lenovo_pen_page_refresh", 1) != 0;
+        } catch (Throwable unused) {
+            return true;
+        }
+    }
+
     /* JADX INFO: Access modifiers changed from: private */
     public static void replaySettingsPage(final Object obj) {
         final Context context = HookUtils.context(obj);
-        if (context == null) {
+        if (context == null || !pageRefreshEnabled(context)) {
             return;
         }
         try {
@@ -1020,7 +1046,7 @@ final class IpeManagerHooks {
                 HookUtils.log("IPe settings direct callback updated: battery=" + iBattery + " charging=" + iCharging);
             }
             Object objFragment = settingsFragment;
-            if (objFragment != null && invoke(objFragment, "h")) {
+            if (objFragment != null && pageRefreshEnabled(context) && invoke(objFragment, "h")) {
                 HookUtils.log("IPe settings fragment refreshed: battery=" + iBattery + " charging=" + iCharging);
                 zDirect = true;
             }
