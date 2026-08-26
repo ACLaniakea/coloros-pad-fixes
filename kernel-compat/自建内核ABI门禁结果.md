@@ -71,3 +71,42 @@ kernel-compat/tools/build_gki_ref.sh
 
 下一步：先核对 `frame_boost` / `sched_assist` 所需的 `android_vh_*` 是否在
 本内核的导出集合内，再决定这两个模块是移植还是重写。
+
+## 后续：第一个一加内核特性已经补进去并编过
+
+按"能用 ColorOS 逻辑就替代、替代不了才桥接"的原则，第一步挑的是
+**`frame_boost`（动画/滑动卡顿的首要嫌疑）**。结果比预期干净：
+
+- `frame_boost` 引用 8 个 vendor hook、`sched_assist` 引用 33 个，
+  本内核已导出的分别是 **7/8** 和 **32/33**——只差同一个
+  `android_vh_binder_proc_transaction_end`；
+- 这个钩子官方 GKI 里没有（只有 `_entry` / `_finish`），
+  是一加在自己的 common 内核里加的，**不在 Lenovo 的 Module.symvers 里，
+  所以补上它不会与任何现有模块冲突**。
+
+补丁一共四处，见 `kernel-compat/patches/apply_oplus_hooks.py`：
+
+| 文件 | 改动 |
+| --- | --- |
+| `include/trace/hooks/binder.h` | 新增 `DECLARE_HOOK(android_vh_binder_proc_transaction_end, …)` |
+| `drivers/android/binder.c` | 在 `_finish` 调用点后加一行 `trace_…_end(current, proc->tsk, …)` |
+| `drivers/android/vendor_hooks.c` | `EXPORT_TRACEPOINT_SYMBOL_GPL(…_end)` |
+| `abi_symbollist.raw` | 补 `__tracepoint_` / `__traceiter_` 两条，否则 TRIM 会把它裁掉 |
+
+模块侧是三处 5.10→6.1 的 API 漂移（同一脚本处理）：
+`task_running()` → `task_on_cpu()`、`p->state` → `p->__state`、
+补 `#include <linux/sched/cputime.h>`（`account_group_exec_runtime` 在那里）。
+
+打完之后：
+
+```
+内核重编 退出码 0  报错 0
+vmlinux.symvers 含 binder_proc_transaction_end: 2 条
+CRC mismatches : 0        PASS: vendor modules would still load.
+frame_boost 编译 退出码 0  报错 0  无未定义符号
+oplus_bsp_frame_boost(.ko) 746952 字节
+```
+
+**尚未上机**。下一步是把 `sched_assist` 也编出来（frame_boost 的
+`sa_common.h` 依赖它），再决定装载顺序与开关，然后才谈刷机验证；
+在此之前 Image 只是产物，不进 boot 分区。
