@@ -42,11 +42,26 @@ def port_file(path):
     return s != orig
 
 
+def import_ns(path):
+    """si_swapinfo 在 GKI 里属于 MINIDUMP 命名空间，模块要显式 import。"""
+    s = open(path, encoding="utf-8", errors="surrogateescape").read()
+    if "si_swapinfo(" not in s or "MODULE_IMPORT_NS(MINIDUMP)" in s:
+        return False
+    if "#include <linux/module.h>" not in s:
+        s = "#include <linux/module.h>\n" + s
+    s = s.rstrip("\n") + "\n\nMODULE_IMPORT_NS(MINIDUMP);\n"
+    open(path, "w", encoding="utf-8", errors="surrogateescape").write(s)
+    print(f"  {os.path.basename(path)}: 已加 MODULE_IMPORT_NS(MINIDUMP)")
+    return True
+
+
 def port_dir(d):
     hits = 0
     for f in sorted(os.listdir(d)):
         if f.endswith((".c", ".h")):
             hits += port_file(os.path.join(d, f))
+        if f.endswith(".c"):
+            hits += import_ns(os.path.join(d, f))
     print(f"== {os.path.basename(d)}: {hits} 个文件改动")
 
 

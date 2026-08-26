@@ -29,22 +29,30 @@ fi
 # 全局 CONFIG：一加自家构建是整棵树一起开的，而 oplus_rq / oplus_task_struct
 # 的字段本身受这些宏控制——各模块开的宏不一致，结构体布局就不一致，
 # 编得过也是踩内存。所以取全树并集，所有模块统一用同一套。
-GLOBAL_DEFS=$(find "$S/mport" -name Makefile -o -name Makefile.orig | xargs -r sed -nE 's/.*\$\(CONFIG_([A-Z_0-9]+)\).*/-DCONFIG_\1/p' | sort -u | tr '\n' ' ')
+# 排除那些需要内核侧配套改动、而我们没有的一加特性
+BLOCKED="CONFIG_CONT_PTE_HUGEPAGE"
+GLOBAL_DEFS=$(find "$S/mport" -name Makefile -o -name Makefile.orig | xargs -r sed -nE 's/.*\$\(CONFIG_([A-Z_0-9]+)\).*/-DCONFIG_\1/p' | sort -u | grep -vE "^-D($(echo $BLOCKED | tr ' ' '|'))$" | tr '\n' ' ')
 echo "全局 CONFIG 数：$(echo $GLOBAL_DEFS | wc -w)"
 
 for d in $(find "$S/mport" -name Makefile | xargs -r -n1 dirname | sort -u); do
     ls "$d"/*.c >/dev/null 2>&1 || continue
-    [ -f "$d/Makefile.orig" ] || cp "$d/Makefile" "$d/Makefile.orig"
+    # 有些模块是 out-of-tree 写法：Makefile 只是转发，真正的对象列表在 Kbuild
+    if [ -f "$d/Kbuild" ] && grep -q '\-y' "$d/Kbuild"; then
+        cp "$d/Kbuild" "$d/Makefile.orig"
+        rm -f "$d/Kbuild"   # Kbuild 优先级高于 Makefile，留着它我们写的 Makefile 不生效
+    elif [ ! -f "$d/Makefile.orig" ]; then
+        cp "$d/Makefile" "$d/Makefile.orig"
+    fi
     # 取所有对象：无条件的 -y，以及 -$(CONFIG_X) 的（一加默认全开，我们也全开）
     # 只取第一个 obj- 目标的对象组：有的 Makefile 里同时有正式版和 dbg 版，
     # 两组共用大部分源文件，混在一起编就是重复符号。
-    tgt=$(sed -nE 's/^obj-[^ ]+ *\+?= *([a-zA-Z_0-9]+)\.o.*/\1/p' "$d/Makefile.orig" | head -1)
+    tgt=$(sed -nE 's/^obj-[^ \t]+[[:space:]]*\+?=[[:space:]]*([a-zA-Z_0-9]+)\.o.*/\1/p' "$d/Makefile.orig" | head -1)
     if [ -n "$tgt" ]; then
-        objs=$(sed -nE "s/^${tgt}-(y|\\\$\\(CONFIG_[A-Z_0-9]+\\)) *[:+]= *//p" "$d/Makefile.orig" | tr '\n' ' ')
+        objs=$(sed -nE "s/^${tgt}-(y|\\\$\\(CONFIG_[A-Z_0-9]+\\))[[:space:]]*[:+]=[[:space:]]*//p" "$d/Makefile.orig" | tr '\n' ' ')
     else
         objs=""
     fi
-    [ -n "$objs" ] || objs=$(sed -nE 's/^[a-zA-Z_0-9]*-(y|\$\(CONFIG_[A-Z_0-9]+\)) *[:+]= *//p' "$d/Makefile.orig" | tr '\n' ' ')
+    [ -n "$objs" ] || objs=$(sed -nE 's/^[a-zA-Z_0-9]*-(y|\$\(CONFIG_[A-Z_0-9]+\))[[:space:]]*[:+]=[[:space:]]*//p' "$d/Makefile.orig" | tr '\n' ' ')
     defs="$GLOBAL_DEFS"
     keep=""
     for o in $(echo $objs | tr ' ' '\n' | awk '!seen[$0]++'); do
