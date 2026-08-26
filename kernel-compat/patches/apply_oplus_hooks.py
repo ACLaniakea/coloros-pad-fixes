@@ -53,6 +53,29 @@ def patch_kernel(src):
                 [("EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_binder_proc_transaction_end);",
                   exp, exp + "\nEXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_binder_proc_transaction_end);")])
 
+    # 2. struct binder_transaction 补一格 OEM 数据
+    #    一加的 ipc 模块把 struct oplus_binder_transaction（8 字节）存在
+    #    t->android_oem_data1 里；GKI 的 binder_transaction 只有 vendor 数据。
+    #    已确认 289 个 Lenovo vendor 模块无一引用 binder 符号，加字段不影响它们。
+    bi = src + "/drivers/android/binder_internal.h"
+    s2 = open(bi).read()
+    if "android_oem_data1" in s2 or "ANDROID_OEM_DATA_ARRAY" in s2:
+        print("  binder_internal.h: 已存在")
+    else:
+        import re as _re
+        m = _re.search(r"(struct binder_transaction \{.*?\n)\};", s2, _re.S)
+        if not m:
+            print("  !! binder_internal.h: 找不到 struct binder_transaction"); ok = False
+        else:
+            body = m.group(0)
+            new_body = body[:-2] + "\tANDROID_OEM_DATA_ARRAY(1, 1);\n};"
+            s2 = s2.replace(body, new_body, 1)
+            if "#include <linux/android_vendor.h>" not in s2:
+                s2 = s2.replace("#include <linux/list.h>",
+                                "#include <linux/list.h>\n#include <linux/android_vendor.h>", 1)
+            open(bi, "w").write(s2)
+            print("  binder_internal.h: struct binder_transaction 已加 ANDROID_OEM_DATA_ARRAY(1, 1)")
+
     # 2. TRIM_UNUSED_KSYMS 白名单：不加这两条，符号会被裁掉，模块链接时未定义。
     wl = src + "/abi_symbollist.raw"
     lines = open(wl).read().split("\n")
