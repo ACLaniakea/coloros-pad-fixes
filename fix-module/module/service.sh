@@ -8,8 +8,9 @@ MODDIR=${0%/*}
 # ============================================================================
 # 联想平板 Pro GT - ColorOS 基础修复 · service（开机完成后）阶段
 # 实际修复与作用：
-#   1) 停用移植 ROM 不兼容的 source-device 性能 HAL（perf2-hal、
-#      vendor.perfservice），保留设备 performance 与 Thermal HAL；
+#   1) 重载移植 ROM 上时序不对的 source-device 性能 HAL（perf2-hal、
+#      vendor.perfservice）——是 stop+start 重载，不是停用，两者必须保持
+#      running，否则 AIDL 调用会失败并打满 system_server 的 binder 线程；
 #   2) 重载 thermal-engine，让 CPU 策略在模块挂载后生效；
 #   3) 把每个 CPU policy 的 scaling_max_freq 一次性恢复为内核硬件上限
 #      （充电/CPU 热限频由 thermal-engine_battery_0/2.conf 覆盖策略接管，
@@ -22,8 +23,7 @@ MODDIR=${0%/*}
 #   7) 允许 Dolby Bridge 后台运行，避免原厂控制页仍在前台时服务被 app-idle
 #      回收，导致 UI 仅写入设置但没有实时下发 DAP；
 #   8) 清理已合并的旧 AON 独立包；启动 horae/gameopt；
-#   9) 修正应用 memcg 仍为 swappiness=100 的合并回归：普通/冷后台 50，
-#      活跃 UI、system_server 与 native system 禁止匿名页换出，并保留64MB水位；
+#   9) 8GB 机型把首次解锁后的 cached 进程保护期归零；
 #  10) 按需执行应用建议协议修复与序列号补齐。
 # ============================================================================
 
@@ -35,14 +35,19 @@ if ! is_supported_device; then
     exit 0
 fi
 
-# Reassert once after Android property services are available. The source-ROM
-# hmbird manager targets kernel facilities absent on this device and otherwise
-# retries or falls back to cache killing. This is not a resident watcher.
+# Reassert once after Android property services are available.
+#
+# ★ 这一条**不是**内核缺口清理的对象，是永久保留项。HMBIRD 是一加基于
+#   sched_ext/scx 的调度框架，需要 hmbird_sched 系列 ko 与内核的
+#   CONFIG_SCHED_CLASS_EXT；它跟我们已加载的 oplus_cpu_sched_* 完全是两回事，
+#   后者只是一组 restricted vendor hook。实机确认 /sys/kernel/hmbird*、
+#   /proc/hmbird*、/sys/kernel/sched_ext* 一个都不存在，lsmod 里也没有
+#   任何 hmbird 模块。与 oplus_bsp_healthinfo 同等处理：缺就让它缺，
+#   把管理器关掉，免得它反复重试并回落到杀缓存。这不是常驻监视器。
 #
 # persist.sys.oplus.nandswap used to be pinned false here too. It is not a
-# switch but a mirror of Settings.Secure.customize_ram_swap_state (see
-# publish_ram_expansion_settings below), so pinning it only desynchronised the
-# UI from the zram that was running anyway.
+# switch but a mirror of Settings.Secure.customize_ram_swap_state, so pinning
+# it only desynchronised the UI from the zram that was running anyway.
 setprop sys.oplus.hmbird.manager.enable 0
 
 # AOSP/ColorOS protects excessive cached processes for ten minutes after the
@@ -51,22 +56,13 @@ setprop sys.oplus.hmbird.manager.enable 0
 # compete for roughly a minute. Newer AOSP defaults this grace period to zero.
 # Apply that upstream behavior only to <=9 GB variants; 12 GB devices retain
 # the stock ten-minute cache warmth and normal Android process semantics.
+#
+# 这一段只剩 cached 进程保护期这一件事。原先与它绑在一起的整套 VM 调参
+# （swappiness / min_free_kbytes / watermark_scale_factor / KGSL 回收批量）
+# 已随 post-fs-data 那边一起撤销，交还原厂与 OSense。
 ram_kb=$(awk '/MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null)
 case "$ram_kb" in ''|*[!0-9]*) ram_kb=0 ;; esac
-vm_swappiness=50
-configure_oplus_memory_compat() {
-    [ -d /proc/oplus_mem ] || return 0
-    if [ -w /proc/oplus_mem/swappiness_para ]; then
-        echo 'vm_swappiness=50' >/proc/oplus_mem/swappiness_para 2>/dev/null
-        echo 'direct_swappiness=10' >/proc/oplus_mem/swappiness_para 2>/dev/null
-    fi
-    [ -w /proc/oplus_mem/dynamic_swappiness ] && \
-        echo '50 1024 30 512' >/proc/oplus_mem/dynamic_swappiness 2>/dev/null
-    [ -w /proc/oplus_mem/alloc_adjust_ctrl ] && \
-        echo 0 >/proc/oplus_mem/alloc_adjust_ctrl 2>/dev/null
-}
 if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
-    vm_watermark=10
     cache_grace=$(device_config get activity_manager \
         no_kill_cached_processes_post_boot_completed_duration_millis 2>/dev/null)
     if [ "$cache_grace" != 0 ]; then
@@ -76,18 +72,7 @@ if [ "$ram_kb" -gt 0 ] && [ "$ram_kb" -le 9437184 ]; then
     fi
     log_msg "8GB cache trim policy active: post-unlock grace=0ms"
 else
-    vm_watermark=20
     log_msg "12GB-class cache trim policy preserved"
-fi
-
-# Close the gap before the bounded memcg handoff below. Vendor init may have
-# overwritten post-fs-data's VM values while Android was still starting.
-echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
-configure_oplus_memory_compat
-echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
-echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
-if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
-    echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
 fi
 
 # PackageManager may rewrite LSPosed's module path after an APK update.  Pin it
@@ -164,10 +149,13 @@ start thermal-engine
 sleep 3
 log_msg "reloaded thermal-engine after module mounts"
 
-# Restore each policy's min/max to the hardware bounds of this device's own
-# kernel once, and recover from the third-party "powersave" governor pin that
-# locks every cluster to its minimum frequency after a long standby.  Runs once
-# at boot only (no resident guard/daemon).
+# Recover from the third-party "powersave" governor pin that locks a cluster to
+# its minimum frequency after a long standby; only clusters actually found in
+# that state get their min/max restored to this device's own cpuinfo_* bounds.
+# Everything else is left to thermal-engine and the stock perf HAL.  Runs once
+# at boot only (no resident guard/daemon).  NOTE: the "cpu policyN ... max=" log
+# lines below are read back seconds after thermal-engine was restarted above, so
+# they show the thermal mitigation state, not what this module wrote.
 normalize_cpu
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     log_msg "cpu $(basename "$policy") gov=$(cat "$policy/scaling_governor" 2>/dev/null) min=$(cat "$policy/scaling_min_freq" 2>/dev/null) max=$(cat "$policy/scaling_max_freq" 2>/dev/null)"
@@ -324,234 +312,20 @@ relax_skin_status_trip() {
 relax_skin_status_trip
 
 # ============================================================================
-# 内存扩展：开机后的一次复核
+# 内存扩展 / 压缩交换：已交还给原厂
 #
-# 真正的权威是 Settings.Secure.customize_ram_swap_state（开关）与
-# customize_ram_swap_value（档位）—— 反编译 Athena 的 u3.i1 确认，
-# persist.sys.oplus.nandswap 只是这两个键的派生镜像，由 u3.i1$a / u3.i1$b 两个
-# ContentObserver 写出。post-fs-data 已经按同一套规则从 Secure 推导过一次镜像，
-# 并把 zram 调成了用户选的档位。
+# 这里原本有三组东西，随 aclswap 一并退场：
+#   * active_swap_sysfs / publish_ram_expansion_settings —— 读实际 swap 设备，
+#     反推 persist.sys.oplus.nandswap* 三个镜像属性和 Secure 里的 record_* 键；
+#   * aclswap 写回驱动（bin/aclswap-writeback.sh）与它的常驻巡检循环；
+#   * retire_stock_zram_for_aclswap —— 开机后把原厂 zram0 摘掉。
 #
-# 这里只做两件 post-fs-data 做不了的事：
-#   * settings 表要等 system_server 起来才能读写；
-#   * 万一 ROM 的 init 在 post-fs-data 之后又把 zram 重新 swapon 上去，而用户其实
-#     是关闭状态，这里还有一次纠正机会（受同样的已用量上限保护）。
-#
-# 不再有「恢复用户意图」那段逻辑。当时以为是 nandswap 自检把开关写回 false，
-# sepolicy.rule 补齐放行后拒绝数确实降为 0，但开关照样回落 —— 因为那根本不是
-# 自检，而是 observer 按 Secure 里的值重写镜像。既然现在以 Secure 为准，镜像被
-# 谁重写都不再是问题，那段猜测性的回写整段删掉。
+# ★ 镜像属性尤其不能再由我们写。原厂 init.oplus.nandswap.sh 把
+#   persist.sys.oplus.nandswap.swapsize 当作**输入**（disksize = swapsize +
+#   zram_increase），而 hybridswap 的 disksize 本来就大于 swapsize；再按 disksize
+#   反推回 swapsize 写回去，下次开机就会在原基础上再加一次 increase，逐次膨胀。
+#   镜像本就该由 Athena 的 ContentObserver 从 Settings.Secure 派生，交还给它。
 # ============================================================================
-# 与 post-fs-data 同一份语义：persist.* 必须用 -p（同时落盘 /data/property），
-# -n 只改内存，重启后会被磁盘上的旧值覆盖。写完回读校验。
-set_persist_prop() {
-    key="$1"; value="$2"
-    [ "$(getprop "$key")" = "$value" ] && return 0
-    resetprop -p "$key" "$value" 2>/dev/null
-    [ "$(getprop "$key")" = "$value" ] && return 0
-    log_msg "WARN: ram-expand: failed to set $key=$value (still '$(getprop "$key")')"
-    return 1
-}
-
-# 「内存扩展」显示的必须是真正在服务 swap 的那个设备。装上 aclswap 之后 zram0 的
-# disksize 归零、也不在 /proc/swaps 里，仍然去读它只会得到「已关闭」。
-# 这里解析 /proc/swaps 找出实际设备，aclswap 优先。
-active_swap_sysfs() {
-    for dev in /dev/block/aclswap0 /dev/block/zram0; do
-        if grep -q "^$dev " /proc/swaps 2>/dev/null; then
-            echo "/sys/block/$(basename "$dev")"
-            return 0
-        fi
-    done
-    return 1
-}
-
-publish_ram_expansion_settings() {
-    swap_sys=$(active_swap_sysfs)
-    if [ -z "$swap_sys" ]; then
-        # 一个 swap 都没挂：如实报告关闭，而不是沿用上一次的值。
-        swap_sys=/sys/block/zram0
-        [ -d "$swap_sys" ] || return 0
-    fi
-    swap_dev="/dev/block/$(basename "$swap_sys")"
-
-    state=$(settings get secure customize_ram_swap_state 2>/dev/null | tr -d '\r')
-    case "$state" in ''|null|NULL|*[!0-9]*) state="" ;; esac
-
-    swap_on=0
-    grep -q "^$swap_dev " /proc/swaps 2>/dev/null && swap_on=1
-
-    # 复核：用户明确关掉了，却发现 swap 又被挂上，说明 init 在我们之后重建过。
-    # state 未写过时不动 —— 那是「保留默认」，不是「关」。
-    if [ "$state" = 0 ] && [ "$swap_on" = 1 ]; then
-        used=$(awk -v d="$swap_dev" '$1 == d { print $4 }' /proc/swaps)
-        case "$used" in ''|*[!0-9]*) used=0 ;; esac
-        if [ "$used" -le 131072 ]; then
-            if swapoff "$swap_dev" 2>/dev/null; then
-                echo 1 >"$swap_sys/reset" 2>/dev/null
-                swap_on=0
-                log_msg "ram-expand: zram was re-enabled after post-fs-data; disabled again"
-            fi
-        else
-            log_msg "ram-expand: toggle off but zram holds ${used}KB; cannot detach safely now"
-        fi
-    fi
-
-    # 镜像属性在这里、也只在这里推导 —— post-fs-data 那时 init 还没 swapon 完，
-    # 读到的大小是 0，据此推导会误判成「已关闭」。到 boot_completed 才是事实。
-    # 规则与 Athena 的 u3.i1$a / u3.i1$b 两个 observer 完全一致，用户改设置时以
-    # observer 为准，两边不会给出不同的答案。
-    if [ "$swap_on" = 1 ]; then
-        actual_bytes=$(cat "$swap_sys/disksize" 2>/dev/null)
-        case "$actual_bytes" in ''|*[!0-9]*) actual_bytes=0 ;; esac
-        curr=$(awk -v b="$actual_bytes" 'BEGIN{ printf "%d", b / 1073741824 }')
-    else
-        curr=0
-    fi
-    case "$curr" in ''|*[!0-9]*) curr=0 ;; esac
-    [ "$curr" -gt 0 ] && mirror=true || mirror=false
-
-    set_persist_prop persist.sys.oplus.nandswap "$mirror"
-    set_persist_prop persist.sys.oplus.nandswap.swapsize "$curr"
-    set_persist_prop persist.sys.oplus.nandswap.swapsize.curr "$curr"
-    cfg=$(getprop persist.sys.oplus.nandswap.cfg)
-    if [ "$curr" -gt 0 ] && [ -n "$cfg" ]; then
-        actual_lvl=$(echo "$cfg" | tr ',' '\n' | awk -v g="$curr" '
-            { gsub(/[^0-9]/, "", $0); if ($0 + 0 == g) { print NR - 1; exit } }')
-        if [ -n "$actual_lvl" ]; then
-            set_persist_prop persist.sys.oplus.nandswap.lvl "$actual_lvl"
-        else
-            # 实际大小不在档位表里：如实报告大小，但不谎报一个不存在的档位。
-            log_msg "ram-expand: active ${curr}GiB is not one of [$cfg]; level left as-is"
-        fi
-    fi
-    lvl=$(getprop persist.sys.oplus.nandswap.lvl)
-    case "$lvl" in ''|*[!0-9]*) lvl="" ;; esac
-    [ "$mirror" = true ] && record=1 || record=0
-
-    # 「该功能在本机可用」，与开/关无关。Athena 的 u3.i1.s() 把它写到 Secure、值
-    # 是字符串 "true"（Settings$Secure.putString(..., String.valueOf(true))）；这句
-    # 原本被 u3.i1.q() 的能力门挡着，Hook 打开门之后 Athena 自己也会写，这里代写
-    # 一次只是不必等它，值与格式照抄，重复写是幂等的。
-    [ "$(settings get secure nandswap_ui_feature_state 2>/dev/null | tr -d '\r')" = true ] ||
-        settings put secure nandswap_ui_feature_state true >/dev/null 2>&1
-    [ "$(settings get global record_oplus_nandswap 2>/dev/null | tr -d '\r')" = "$record" ] ||
-        settings put global record_oplus_nandswap "$record" >/dev/null 2>&1
-    if [ -n "$lvl" ] &&
-       [ "$(settings get global record_oplus_nandswap_lvl 2>/dev/null | tr -d '\r')" != "$lvl" ]; then
-        settings put global record_oplus_nandswap_lvl "$lvl" >/dev/null 2>&1
-    fi
-    log_msg "ram-expand: mirrors published from $(basename "$swap_sys") (secure state=${state:-unset}, swap_on=$swap_on, size=${curr}GiB, lvl=${lvl:-unset})"
-    return 0
-}
-
-# ============================================================================
-# aclswap 写回驱动
-#
-# 光有 writeback 能力不够——必须有人周期性地把冷页推出去，否则压缩池照样只涨
-# 不落。原厂 HybridSwap 就是这么干的，这里补上等价的那一环。
-#
-# 这是本模块少有的常驻循环，理由是它本质上就是周期性的：每 5 分钟醒一次，读三
-# 个 sysfs 文件，绝大多数时候什么都不做就继续睡。判据是压缩池占用超过上限的
-# 六成才动手，且只写回 idle 超过 ACLSWAP_IDLE_AGE 秒的页（按页面年龄，靠模块编
-# 入的 CONFIG_ZRAM_MEMORY_TRACKING 支持；没有它 idle 只接受 "all"，那等于把热
-# 页也一起推到闪存）。
-#
-# 闪存写入必须封顶：writeback_limit 每轮重新发放固定额度，写完即止。不设限的
-# 话一个内存压力大的下午就能写掉几十 GB。
-# ============================================================================
-ACLSWAP_SYS=/sys/block/aclswap0
-ACLSWAP_DEV=/dev/block/aclswap0
-# 参数按实测调整过一轮：最初 300 秒巡检 + 600 秒冷页判据，在连开 24 个应用的
-# 压测里一次都没来得及触发，池子直接顶到上限，换出开始失败，反而比不设限更糟
-# （psi_mem 22.7s -> 40.4s）。写回必须比压力上涨更快才有意义。
-ACLSWAP_IDLE_AGE=300          # 秒；这么久没被访问过的页才算冷
-ACLSWAP_CYCLE=60              # 秒；巡检间隔
-ACLSWAP_WB_PAGES_PER_CYCLE=65536   # 每轮最多写回 65536 页 = 256MB
-ACLSWAP_TRIGGER_PCT=60        # 池子占到上限这个百分比才触发
-
-aclswap_active() {
-    [ -d "$ACLSWAP_SYS" ] || return 1
-    grep -q "^$ACLSWAP_DEV " /proc/swaps 2>/dev/null
-}
-
-aclswap_writeback_once() {
-    limit=$(cat "$ACLSWAP_SYS/mem_limit" 2>/dev/null)
-    used=$(awk '{print $3}' "$ACLSWAP_SYS/mm_stat" 2>/dev/null)
-    case "$limit" in ''|0|*[!0-9]*) return 0 ;; esac
-    case "$used" in ''|*[!0-9]*) return 0 ;; esac
-    threshold=$(awk -v l="$limit" -v p="$ACLSWAP_TRIGGER_PCT" 'BEGIN{ printf "%.0f", l * p / 100 }')
-    [ "$used" -gt "$threshold" ] || return 0
-
-    echo 1 >"$ACLSWAP_SYS/writeback_limit_enable" 2>/dev/null
-    echo "$ACLSWAP_WB_PAGES_PER_CYCLE" >"$ACLSWAP_SYS/writeback_limit" 2>/dev/null
-    echo "$ACLSWAP_IDLE_AGE" >"$ACLSWAP_SYS/idle" 2>/dev/null
-    echo idle >"$ACLSWAP_SYS/writeback" 2>/dev/null
-
-    after=$(awk '{print $3}' "$ACLSWAP_SYS/mm_stat" 2>/dev/null)
-    case "$after" in ''|*[!0-9]*) after=$used ;; esac
-    if [ "$after" -lt "$used" ]; then
-        log_msg "aclswap: wrote back $(( (used - after) / 1048576 ))MB from the pool (now $(( after / 1048576 ))MB, bd=$(awk '{print $1}' "$ACLSWAP_SYS/bd_stat" 2>/dev/null) pages on flash)"
-    fi
-    return 0
-}
-
-# 必须 setsid 脱离进程组：KernelSU 的 service.sh 跑完退出时会回收整个进程组，
-# 单纯 `... &` 的子进程会被一起带走。首次实测就是这样——日志写着“驱动已启动”，
-# 而 writeback_limit_enable 始终是 0，进程列表里也找不到它。
-start_aclswap_writeback_driver() {
-    aclswap_active || return 0
-    driver="$MODDIR/bin/aclswap-writeback.sh"
-    [ -x "$driver" ] || chmod 0755 "$driver" 2>/dev/null
-    if [ -f "$driver" ]; then
-        setsid "$driver" "$MODDIR" </dev/null >/dev/null 2>&1 &
-        log_msg "aclswap: writeback driver started (age=${ACLSWAP_IDLE_AGE}s cycle=${ACLSWAP_CYCLE}s cap=${ACLSWAP_WB_PAGES_PER_CYCLE}pages/cycle)"
-    else
-        log_msg "WARN: aclswap: writeback driver script missing"
-    fi
-}
-
-# init 会在 post-fs-data 之后按 fstab 把 zram0 重新挂回来，而且用的是高优先级
-# （实测 32758）。两个 swap 同时在线时内核只喂优先级高的那个，于是带写回的
-# aclswap 形同虚设。这里在开机完成后把它摘掉——此时它刚挂上不久，用量很小。
-retire_stock_zram_for_aclswap() {
-    aclswap_active || return 0
-    grep -q '^/dev/block/zram0 ' /proc/swaps 2>/dev/null || return 0
-    used=$(awk '$1 == "/dev/block/zram0" { print $4 }' /proc/swaps)
-    case "$used" in ''|*[!0-9]*) used=0 ;; esac
-    if [ "$used" -gt 262144 ]; then
-        log_msg "WARN: aclswap: stock zram0 holds ${used}KB; leaving it mounted rather than forcing those pages back"
-        return 1
-    fi
-    if swapoff /dev/block/zram0 2>/dev/null; then
-        echo 1 >/sys/block/zram0/reset 2>/dev/null
-        log_msg "aclswap: retired stock zram0 (held ${used}KB); aclswap is now the only swap"
-        return 0
-    fi
-    log_msg "WARN: aclswap: could not swapoff stock zram0"
-    return 1
-}
-
-# post-fs-data 里 aclswap 任何一步失败都会静默回落到原厂标准 zram：系统照常可
-# 用，只是没有写回。这种情况必须在日志里留一条明显的记录，否则它只会表现为
-# 「最近好像又变卡了」，而 action.sh 的输出里看不出任何异常。
-if ! aclswap_active; then
-    log_msg "WARN: aclswap: not in /proc/swaps; running on stock zram with no writeback"
-fi
-
-# 顺序有意为之：先让 aclswap 成为唯一 swap，再发布镜像，否则 UI 上报的会是
-# 那个马上就要被摘掉的 zram0。
-aclswap_retire_attempts=0
-while [ "$aclswap_retire_attempts" -lt 6 ]; do
-    retire_stock_zram_for_aclswap && break
-    aclswap_retire_attempts=$((aclswap_retire_attempts + 1))
-    toybox sleep 20
-done
-
-publish_ram_expansion_settings
-
-
-start_aclswap_writeback_driver
 
 
 # ============================================================================
@@ -792,85 +566,98 @@ else
 fi
 
 # ============================================================================
-# 调优部分（原 coloros_port_tuning）：service 阶段
-# 实机发现合并版只写 active/systemserver，apps 根分组和每个应用子分组仍为
-# swappiness=100，导致 Launcher/SystemUI/常用应用累计数百 MB Swap。长待机
-# 现场进一步确认 system_server/SystemUI/SurfaceFlinger 分别已有约243/154/43MB
-# Swap，唤醒时集中重大缺页。修正zsmalloc/CMA争抢后，稳定态收敛为普通/冷后台=50，
-# active/systemserver/native-system=0；缓存进程上限由 system_server Hook 在
-# 8GB 机型从源手机的96压到48，12GB机型保持原值。
+# 调优部分（原 coloros_port_tuning）：service 阶段 —— 已整体撤销
+#
+# 这里原本会在 boot_completed 后再睡 90 秒，然后把全局 / 根 memcg /
+# apps 及其全部子分组的 swappiness 按 0/50 重写一遍，另外补写
+# min_free_kbytes、watermark_scale_factor、watermark_boost_factor 与 KGSL
+# 回收批量，最后还挂一个 120 秒的守卫等 apps/systemserver 出现再写一次 0。
+#
+# 全部删除，理由与 post-fs-data 那半边相同：22 个一加 BSP ko 已经在跑，
+# /dev/memcg 下那套 swapd 参数由原厂 init.oplus.nandswap.sh 写，
+# 按场景抬换出额度的权力交还 OSense。我们这套手调值是在跟原厂抢同一批旋钮，
+# 留着只会互相覆盖，而且实机观察到最终稳定态本来就是原厂值（swappiness=100、
+# watermark_scale_factor=100），说明这层覆盖早已是空转。
+#
+# 顺带删掉的还有那 90 秒 sleep —— 它唯一的作用就是给上面这套写入留交接窗口。
 # ============================================================================
-# post-fs-data already applies the final 0/50 split and keeps clamping newly
-# created first-unlock groups. Retain a bounded overlap before handoff so late
-# CE groups cannot regain ColorOS' high defaults; no all-zero phase remains.
-log_msg "tuning settle window start: maintaining split memcg policy for 90s"
-sleep 90
 
-# OSense may publish its phone defaults after boot_completed. Reassert the
-# tested standard-zram caps once at handoff; the kernel hard ceiling remains
-# effective afterwards, so no resident policy watcher is needed.
-configure_oplus_memory_compat
+# HMBIRD 管理器：本机确无 hmbird_sched / sched_ext，开机后再压一次，
+# 防止 OSense 在 boot_completed 之后把源手机默认值发布回来。
 setprop sys.oplus.hmbird.manager.enable 0
 
-# Do not terminate post-fs-data's bounded guard merely because Android has
-# been up for 90 seconds. The user may perform the first unlock later; the
-# helper exits by itself after four minutes，覆盖较晚发生的首次解锁；它只改变
-# 进程后续分配的 memcg 归属，不批量搬运已经计费的页面，也不常驻。
+# ============================================================================
+# hybridswap：把原厂自己算出来、却漏发给内核的 ub_zram2ufs_ratio 补下去。
+#
+# 原厂 /product/bin/init.oplus.nandswap.sh 的 configure_hybridswap_parameters()
+# 会按 MemTotal 分档算出 zram2ufs_ratio（本机 7.4G 走 else 档 = 15），但这个值
+# 只被用来决定预留 dd 区的大小（dd_mb_cnt），**从未写进 swapd_memcgs_param**；
+# 第 212 行下发的是硬编码的 "3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0"，
+# 每一级的 ub_zram2ufs_ratio 都是 0。后果是 8G eswap 挂上了、hybridswap_enable
+# 三段全 enable、hybridswapd 也活着，但 ESU_C 恒为 0、reclaimin_cnt 恒为 0，
+# 一页都没往 UFS 写过，zram 里的冷数据全程占着物理内存。
+#
+# 2026-08-27 实机验证（8G 机型，写入 15 后 4 分钟）：reclaimin_cnt 0→101、
+# 落盘 286MB（loop51 diskstats 587264 扇区独立佐证）、ZSU_O 4295124→3519536 KB
+# 即 zram 腾出 776MB、MemAvailable 1277788→1446704 KB。读回仅 34MB，无换入风暴，
+# dmesg 无告警。速率收敛（T+2→T+3 增量为 0），属于一次性排积压而非持续狂写，
+# 且原厂 hybridswap_quota_day=10GB/天 的闸仍在兜底。
+#
+# 注意两点：
+#  1) mem2zram 那两列（本机开机后是 80/70）是 perf HAL
+#     /odm/bin/hw/vendor-oplus-hardware-performance-V1-service 在运行时从
+#     60/50 抬上去的，**必须读回原值原样写回**，不能硬编码，否则会把 HAL 的
+#     场景决策打回去。
+#  2) 这是一次性写入，不挂常驻守卫。HAL 若在之后重写整串会把 15 冲回 0；
+#     实测 4 分钟内没有发生。要确认现状用 action.sh 里那行 zram2ufs 读数。
+# ============================================================================
+tune_zram2ufs() {
+    param=/dev/memcg/memory.swapd_memcgs_param
+    [ -w "$param" ] || { log_msg "hybridswap: $param 不可写，跳过"; return 0; }
+    # 只在原厂那三级（level 0/1/2）上工作，level 3~9 原厂就是全 0 的占位。
+    m1=$(awk '/level 1 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
+    m2=$(awk '/level 2 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
+    case "$m1" in ''|*[!0-9]*) m1= ;; esac
+    case "$m2" in ''|*[!0-9]*) m2= ;; esac
+    # 读不到就用原厂脚本第 212 行的硬编码值兜底，绝不猜。
+    [ -n "$m1" ] || m1=60
+    [ -n "$m2" ] || m2=50
+    # 格式：级数, 然后每级 min_score max_score ub_mem2zram ub_zram2ufs refault
+    echo "3 0 99 0 0 0 100 399 $m1 15 0 400 499 $m2 15 0 " >"$param" 2>/dev/null
+    log_msg "hybridswap: zram2ufs 15 已下发 (保留 HAL 的 mem2zram $m1/$m2)，实际=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' "$param" 2>/dev/null)"
+}
 
-wait_count=0
-while [ ! -w /dev/memcg/apps/memory.swappiness ] &&
-      [ "$wait_count" -lt 60 ]; do
-    toybox sleep 1
-    wait_count=$((wait_count + 1))
-done
-echo "$vm_swappiness" >/proc/sys/vm/swappiness 2>/dev/null
-echo "$vm_swappiness" >/dev/memcg/memory.swappiness 2>/dev/null
-for memcg_file in /dev/memcg/apps/memory.swappiness \
-        /dev/memcg/apps/*/memory.swappiness; do
-    [ -w "$memcg_file" ] || continue
-    case "$memcg_file" in
-        */active/memory.swappiness|*/launcher/memory.swappiness)
-            echo 0 >"$memcg_file" 2>/dev/null
-            ;;
-        */systemserver/memory.swappiness)
-            echo 0 >"$memcg_file" 2>/dev/null
-            ;;
-        */inactive/memory.swappiness)
-            echo "$vm_swappiness" >"$memcg_file" 2>/dev/null
-            ;;
-        *)
-            echo "$vm_swappiness" >"$memcg_file" 2>/dev/null
-            ;;
-    esac
-done
-if [ -w /dev/memcg/system/memory.swappiness ]; then
-    echo 0 >/dev/memcg/system/memory.swappiness 2>/dev/null
-fi
-
-# On this port /dev/memcg/apps/systemserver may be created only after the first
-# user unlock, later than service.sh.  A bounded 1-second waiter fixes it once
-# and exits; it is not a permanent tuning daemon.
-(
-    attempt=0
-    while [ "$attempt" -lt 120 ]; do
-        if [ -w /dev/memcg/apps/systemserver/memory.swappiness ]; then
-            echo 0 >/dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null
-            log_msg "late systemserver memcg protected from swap"
-            exit 0
-        fi
-        sleep 1
-        attempt=$((attempt + 1))
+# 原厂 nandswap 服务在开机约 57 秒才跑完（ro.boottime.init.oplus.nandswap.sh），
+# 而本脚本第 30 行只等到 sys.boot_completed（约 30~45 秒），先到先写会被它覆盖。
+# 不用盲睡，直接有界轮询我们依赖的那个状态本身：等 hybridswap_enable 里出现
+# "swapd enable"（原厂脚本第 233 行写完才会有）且 swapd_pid 非 0。
+# 注意不能拿 persist.sys.oplus.hybridswap_app_memcg 当标志——它是 persist 属性，
+# 上次开机的值会一直留着，看不出本次是否已完成。
+if [ -e /sys/block/zram0/hybridswap_enable ]; then
+    waited=0
+    while [ "$waited" -lt 180 ]; do
+        st=$(cat /sys/block/zram0/hybridswap_enable 2>/dev/null)
+        pid=$(cat /dev/memcg/memory.swapd_pid 2>/dev/null)
+        case "$st" in
+            *"swapd enable"*)
+                case "$pid" in
+                    ''|0|*[!0-9]*) ;;
+                    *) break ;;
+                esac
+                ;;
+        esac
+        sleep 3
+        waited=$((waited + 3))
     done
-    log_msg "late systemserver memcg one-shot wait timed out"
-) &
-
-# 64MB is only 0.8% of RAM. The watermark is RAM-aware: 10 on the 8GB model
-# prevents premature background scanning, while 12GB retains the prior 20.
-echo 65536 >/proc/sys/vm/min_free_kbytes 2>/dev/null
-echo "$vm_watermark" >/proc/sys/vm/watermark_scale_factor 2>/dev/null
-echo 0 >/proc/sys/vm/watermark_boost_factor 2>/dev/null
-if [ -w /sys/class/kgsl/kgsl/page_reclaim_per_call ]; then
-    echo 1024 >/sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null
+    if [ "$waited" -ge 180 ]; then
+        log_msg "hybridswap: 等原厂 nandswap 就绪超时 ${waited}s，仍尝试下发（state=$st pid=$pid）"
+    else
+        log_msg "hybridswap: 原厂 nandswap 已就绪（等待 ${waited}s，swapd_pid=$pid）"
+    fi
+    sleep 3
+    tune_zram2ufs
+else
+    log_msg "hybridswap: 节点不存在，跳过 zram2ufs 调整"
 fi
 
-log_msg "tuning ready: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) kgsl_reclaim=$(cat /sys/class/kgsl/kgsl/page_reclaim_per_call 2>/dev/null) active=$(cat /dev/memcg/apps/active/memory.swappiness 2>/dev/null) systemserver=$(cat /dev/memcg/apps/systemserver/memory.swappiness 2>/dev/null) inactive=$(cat /dev/memcg/apps/inactive/memory.swappiness 2>/dev/null)"
+log_msg "tuning handed back to stock: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root_memcg=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) zram2ufs=$(awk '/level 1 ub_zram2ufs_ratio/{print \$NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)"

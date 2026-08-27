@@ -547,9 +547,14 @@
         </scene>
 		
         <scene id="1009" name="SCENE_RES_MEM_PSI_MULTIWINDOW">
-            <!-- 与 oplus.software.psi_multi_window_clean 特性一同关闭：源手机的 PSI 主动清理策略，
-                 平板上会误杀分屏/小窗里的后台应用。机型策略差异，非内核缺口。
-                 原厂在此有 2 条 rule，已整体移除。 -->
+            <rule index = "1" tag = "memory" skip="memory">
+                <condition memory_scene="multiWindowPSI" memory="1" bglimit="2+"/>
+                <policy name="clear" type="multi-window" level_scene="multiWindowPSI" level="1"/>
+            </rule>
+            <rule index = "1" tag = "memory" skip="memory">
+                <condition memory_scene="multiWindowPSI" memory="1" />
+                <policy name="clear" type="cached" level_scene="multiWindowPSI" level="1"/>
+            </rule>
         </scene>
 
         <scene id="1010" name="SCENE_RES_MEM_PSI_KSWAPD_HIGHLOAD">
@@ -572,9 +577,18 @@
         </scene>
 		
         <scene id="1009" name="SCENE_RES_MEM_PSI_MINIPROGRAM">
-            <!-- 与 oplus.software.psi_miniprogram_clean 特性一同关闭：源手机的 PSI 主动清理策略，
-                 平板上会误杀分屏/小窗里的后台应用。机型策略差异，非内核缺口。
-                 原厂在此有 3 条 rule，已整体移除。 -->
+	        <rule index = "3" tag = "memory" skip="memory">
+                <condition memory_scene="miniProgramPSI" memory="2" bglimit="3+"/>
+                <policy name="clear" type="mini-program" level_scene="miniProgramPSI" level="2"/>
+            </rule>
+            <rule index = "2" tag = "memory" skip="memory">
+                <condition memory_scene="miniProgramPSI" memory="1" bglimit="1+"/>
+                <policy name="clear" type="mini-program" level_scene="miniProgramPSI" level="1"/>
+            </rule>
+            <rule index = "1" tag = "memory" skip="memory">
+                <condition memory_scene="miniProgramPSI" memory="1" />
+                <policy name="clear" type="cached" level_scene="miniProgramPSI" level="1"/>
+            </rule>
         </scene>
 
     </config>

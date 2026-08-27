@@ -2,7 +2,7 @@
 <resources>
     <filter-conf>
         <!-- <project>8350R</project> -->
-        <version>2026082401</version>
+        <version>2026042701</version>
         <filter-name>sys_osense_feature_common_config</filter-name>
     </filter-conf>
 
@@ -371,23 +371,20 @@
         </config>
 		
 		<config name="osenseCompressConfig" type="bundle">
-			<!-- Lenovo GKI has no OPlus compression-abort/control hooks. -->
-			<item name="Enable" type="bool" value="false"/>
+			<item name="Enable" type="bool" value="true"/>
             <item name="RegisterAbortHandler" type="bool" value="true"/>
 			<item name="AllowCompressOnBigCore" type="bool" value="true"/>
 			<item name="SupportAbortKernelVersion" type="string" value="601|515|510|504|419"/>
         </config>
 		
 		<config name="dynamicSwappinessConfig" type="bundle">
-			<!-- Keep the validated 50/30/10 policy; do not temporarily raise
-			     camera or multi-window reclaim to the source-phone value 60. -->
 			<item name="EnableIdleDynamicSwappiness" type="bool" value="false"/>
             <item name="DynamicSwappinessStepSize" type="int" value="10"/>
 
 			<item name="EnableBalancedSwappiness" type="bool" value="false"/>
 			<item name="BalancedSwappiness" type="int" value="100"/>
 			
-			<item name="CameraShrinkFileFeatureEnable" type="bool" value="false"/>
+			<item name="CameraShrinkFileFeatureEnable" type="bool" value="true"/>
 			<item name="CameraSwappiness" type="int" value="60"/>
 			<item name="CameraMinFileMB" type="int" value="1000"/>
 			<item name="CameraSwappinessTimeout" type="int" value="30000"/>
@@ -396,7 +393,7 @@
 			<item name="HighloadSwappiness" type="int" value="0"/>
 			<item name="HighLoadMinCachedMap" type="string" value="6-1000|8-2000|12-2500|16-3000|24-3500"/>
 
-            <item name="MultiWinShrinkFileFeatureEnable" type="bool" value="false"/>
+            <item name="MultiWinShrinkFileFeatureEnable" type="bool" value="true"/>
             <item name="MultiWinSwappiness" type="int" value="60"/>
             <item name="MultiWinMinFileMB" type="int" value="1000"/>
             <item name="MultiWinSwappinessTimeout" type="int" value="30000"/>

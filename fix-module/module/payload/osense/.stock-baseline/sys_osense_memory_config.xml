@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <filter-conf>
-        <version>2026081901</version>
+        <version>2026010601</version>
         <filter-name>sys_osense_memory_config</filter-name>
     </filter-conf>
 
@@ -51,42 +51,40 @@
 	
     <policy name="swap">
         <config name="swap" type="bundle">
-			<!-- Interactive switching tests showed that OSense proactive reclaim
-			     caused a swap storm. Keep ZRAM ROM-owned and available to normal
-			     kernel pressure, but disable policy-driven background swap-out. -->
-			<item name="switch" type="bool" value="false"/>
-			<item name="nandSwitch" type="bool" value="false"/>
+			<item name="switch" type="bool" value="true"/>
+			<item name="nandSwitch" type="bool" value="true"/>
 			<!-- common -->
 			<item name="nandSupportMemSizeStr" type="string" value="6-8-12"/>
 			<item name="thermal" type="int" value="41"/>
 			<item name="zramLoad" type="int" value="95"/>
 			<item name="cpuLoad" type="int" value="90"/>
 			<!-- task -->
-			<item name="delayAfterFreeze" type="long" value="30000"/>
-			<item name="delayAfterBg" type="long" value="60000"/>
+			<item name="delayAfterFreeze" type="long" value="5000"/>
+			<item name="delayAfterBg" type="long" value="10000"/>
 			<item name="offsetEnable" type="bool" value="false"/>
-			<!-- Bound each pass so compression cannot compete with UI frames. -->
-			<item name="maxShrinBytes" type="long" value="131072"/>
-			<item name="maxSwapOutBytes" type="long" value="65536"/>
+			<!--200 * 1024kb-->
+			<item name="maxShrinBytes" type="long" value="204800"/>
+			<!--100 * 1024kb-->
+			<item name="maxSwapOutBytes" type="long" value="102400"/>
 			<!-- swapin -->
-			<item name="swapInThreshold" type="int" value="20"/>
+			<item name="swapInThreshold" type="int" value="40"/>
 			<!-- inactive -->
 			<item name="inactiveAnonRatioQB" type="string" value="40|55"/>
 			<item name="inactiveZramRatioQb" type="string" value="10|15"/>
 			<item name="inactiveAnonRatio" type="string" value="40|40|55"/>
 			<item name="inactiveZramRatio" type="string" value="20|25|30"/>
-			<item name="inactiveInitDelay" type="long" value="300000"/>
-			<item name="inactiveNextDelay" type="long" value="120000"/>
+			<item name="inactiveInitDelay" type="long" value="180000"/>
+			<item name="inactiveNextDelay" type="long" value="60000"/>
 			<item name="inactiveMinAnonRatioInc" type="int" value="2"/>
 			<item name="inactiveMinZramRatioInc" type="int" value="2"/>
 			<!-- app -->
 			<item name="appAnonRatio" type="string" value="20|40|70|90"/>
-			<item name="appZramRatio" type="string" value="0|0|15|25"/>
+			<item name="appZramRatio" type="string" value="0|0|20|35"/>
 			<item name="appSkipDelay" type="long" value="5000"/>
 			<item name="appNextDelay" type="long" value="20000"/>
 			<item name="appLongNextDelay" type="long" value="30000"/>
 			<item name="appAnonThreshold" type="int" value="80"/>
-			<item name="appBgDurationThreshold" type="long" value="300000"/>
+			<item name="appBgDurationThreshold" type="long" value="150000"/>
 			<item name="appMinAnonRatioInc" type="int" value="5"/>
 			<item name="appMinZramRatioInc" type="int" value="5"/>
         </config>
@@ -108,18 +106,13 @@
 
 	<policy name="dynaZram">
         <config name="dynaZramConfig" type="bundle">
-			<!-- The Lenovo kernel exposes a fixed ROM-owned zram device but not
-			     the complete OPlus HybridSwap control plane. Dynamic management
-			     only produces empty bootCompress passes on this port. -->
-			<item name="switch" type="bool" value="false"/>
+			<item name="switch" type="bool" value="true"/>
         </config>
     </policy>
 
 	<policy name="cMem">
         <config name="cMemConfig" type="bundle">
-			<!-- Leave reclaim to the kernel and lmkd. Periodic OPlus compressed-
-			     memory passes depend on source-device hooks missing here. -->
-			<item name="switch" type="bool" value="false"/>
+			<item name="switch" type="bool" value="true"/>
 			<item name="pollingInv" type="long" value="60000"/>
 			<item name="enterAvailMemThdStr" type="string" value="2|600-3|600-4|600-6|800-8|1200-12|1600-16|2000-24|2800"/>
 			<item name="exitAvailMemThdStr" type="string" value="2|800-3|800-4|800-6|1000-8|1500-12|2000-16|2400-24|3200"/>

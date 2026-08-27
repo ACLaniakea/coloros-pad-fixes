@@ -1,6 +1,6 @@
 id=coloros_port_fix
 name=联想平板 Pro GT - ColorOS 修复模块
 author=ACLaniakea
-version=2.0.19
-versionCode=2019
-description=SM8650Q/pineapple ColorOS 移植修复模块 2.0.19：把 thermal-engine 的体感梯子从贴 SoC 的 skin-msm-therm 迁到 Horae 真实外壳温 zone shell-therm，修复开机即 GPU 降频与框架误报 SEVERE；标准ZRAM采用实测50/30/10策略并隔离zsmalloc/CMA；关闭缺失内核接口的HybridSwap、Nirvana与HMBIRD云控；兼容8/12GB RAM及ROM既有ZRAM；OPlus特性表改为按原厂表增量派生、不再整表替换；停用源机遗留、读数物理不可能且温控绑定已失效的幽灵热区；保留预加载、LMKD、MGLRU、动态boost、温控、杜比、环境光、AON与BWV修复。
+version=2.3.0-eswap-writeback
+versionCode=20300
+description=SM8650Q/pineapple ColorOS 移植修复模块 2.3.0：在 2.2.0「交还原厂」的基础上，补上原厂自己算出却漏发的 HybridSwap 回写额度。原厂 init.oplus.nandswap.sh 按 MemTotal 分档算出 zram2ufs_ratio（本机 7.4G=15），却只拿它决定 dd 预留区大小，下发给内核的是硬编码 0，导致 8G eswap 全程空转（ESU_C/reclaimin_cnt 恒为 0）。本版在等到原厂 nandswap 就绪后补写 15，并读回保留 perf HAL 运行时抬高的 mem2zram 值；实测 4 分钟落盘 286MB、zram 腾出 776MB、MemAvailable 上升，读回仅 34MB 无换入风暴。同时修正 action.sh 读错节点名（hybridswap_stat→hybridswap_stat_snap）导致回写统计恒为空，并收紧 normalize_cpu：只对真被钉成 powersave 的簇解频率钳制，不再无条件顶掉 thermal-engine 刚设的上限。2.2.0 的撤销项全部保持：不写 swappiness/watermark/min_free_kbytes/KGSL，OSense 覆盖仅剩 2 份，aclswap 与 mm/sched 兼容壳已退役。永久保留项：shell-temp 兼容模块（缺 oplus_bsp_horae_shell_temp）与 HMBIRD 云控关闭（本机无 sched_ext）。继续保留 thermal 外壳温梯子、6 核 4 簇 perf 配置、杜比、环境光、AON、BWV 语音唤醒与 Tango 32 位修复。

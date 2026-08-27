@@ -14,12 +14,7 @@
         <item name="SkipFreezeCgroupWhenFreezeBinderFailed" type="bool" value="true"/>
         <item name="EnableBoostExitPriority" type="bool" value="true"/>
         <item name="BoostExitPriorityDelay" type="long" value="0"/>
-        <!-- 平板高频使用多窗口，源手机那套多窗口 PSI 主动清理会误杀分屏里的
-             后台应用。与 oplus.software.psi_multi_window_clean 特性一同保持关闭，
-             这是机型策略差异，不是内核缺口。其余三项
-             （EnableNoSwap / EnableLightNoSwap / EnableKswapdLoadDetect）
-             已随 BSP ko 到位全部改回原厂 true。 -->
-        <item name="SupportMultiWin" type="bool" value="false"/>
+        <item name="SupportMultiWin" type="bool" value="true"/>
     </config>
 
     <config name="memoryMonitorConfig" type="bundle">

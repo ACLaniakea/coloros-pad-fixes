@@ -20,11 +20,14 @@ allow hal_audio_default system_file file { read open getattr map };
 # 这些拒绝是我们自己引入挂载造成的，补上属于修复我们弄坏的部分，四条都只授予
 # 只读的 search/getattr。实测加入后该域的拒绝数由一大串降为 0。
 #
-# 但要说清楚：**这并不能修好「内存扩展」开关**。加规则后实测自检依旧把
-# persist.sys.oplus.nandswap 写回 false，说明它失败的真正原因是本机没有
-# /proc/nandswap 等内核接口，与 SELinux 无关。开关的实际修复在
-# service.sh 的 restore_ram_expansion_intent。此处保留只为消除我们造成的
-# 拒绝与随之而来的 audit 日志噪声。
+# 注：早先这里写着"内存扩展开关修不好是因为本机没有 /proc/nandswap 等内核接口"，
+# 那已经是过时结论。oplus_mm_hybridswap_zram 现已开机自动加载，
+# /product/bin/init.oplus.nandswap.sh 靠 /sys/block/zram0/hybridswap_core_enable
+# 自行探测并接管全套启用逻辑，mem→zram→UFS 三层实测全通。
+# 原文提到的 restore_ram_expansion_intent 函数也早已从 service.sh 删除。
+# 下面四条规则与内核缺口无关，是纯粹的挂载副作用修复，保留。
+# 后两条对应 post_boot 脚本的 bind——该 bind 已撤销，但 KernelSU 自身的
+# 挂载仍可能让 nandswap 自检 getattr 到这两个路径，故一并留着，纯只读无风险。
 allow nandswap adb_data_file dir search;
 allow nandswap vendor_file file getattr;
 allow nandswap vendor_qti_init_shell_exec file getattr;

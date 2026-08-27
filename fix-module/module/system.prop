@@ -15,13 +15,17 @@ ro.oplus.display.colormode.soft.renderintent=0
 ro.oplus.audio.dolby.equalizer_support=true
 ro.oplus.audio.dolby.movieToMusic_support=true
 
-# The source ROM enables the HMBIRD cloud manager, but Lenovo's GKI has no
-# control plane for it. Disable it at property-init time; standard ZRAM, LMKD,
-# MGLRU and the independent Scene scheduler stay active.
+# HMBIRD 是一加基于 sched_ext/scx 的调度框架，需要 hmbird_sched 系列内核模块。
+# 那批模块不在我们移植过来的 23 个 oplus ko 里（已加载的 oplus_cpu_sched_* 是
+# 另一套 restricted vendor hook，两者无关），实机确认 /sys/kernel/hmbird*、
+# /proc/hmbird*、/sys/kernel/sched_ext* 全部不存在。
+# 因此在 property-init 阶段就关掉云控管理器，否则它会反复重试并回落到杀缓存。
+# 这是与 oplus_bsp_horae_shell_temp、oplus_bsp_healthinfo 同类的**永久保留项**，
+# 不属于"内核节点补齐后可以撤销"的那一批。
 sys.oplus.hmbird.manager.enable=0
 
-# persist.sys.oplus.nandswap is deliberately NOT forced to false here any more.
-# Pinning it false left the stock "RAM expansion" toggle permanently greyed out
-# even though the device runs 8 GiB of compressed swap on zram0. post-fs-data.sh
-# now reconciles that property against the real zram size instead, so the UI
-# reports what is actually configured. See bridge_ram_expansion_ui there.
+# persist.sys.oplus.nandswap 一律不由本模块写。
+# 它不是开关，而是 Settings.Secure.customize_ram_swap_state 的派生镜像；
+# 更要紧的是原厂 init.oplus.nandswap.sh 把 persist.sys.oplus.nandswap.swapsize
+# 当作**输入**（disksize = swapsize + zram_increase），我们回写等于每次开机
+# 让它自我膨胀。现在 hybridswap 与内存扩展整条链路都交还给原厂脚本。

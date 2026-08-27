@@ -112,10 +112,14 @@ normalize_cpu() {
         [ -e "$gov_file" ] || continue
         # min/max 频率节点默认 0444，需先 chmod 才能写（与旧版 max_freq 恢复一致）。
         chmod 0644 "$gov_file" "$policy/scaling_min_freq" "$policy/scaling_max_freq" 2>/dev/null
-        if [ "$(cat "$gov_file" 2>/dev/null)" = powersave ]; then
-            echo "$target" >"$gov_file" 2>/dev/null
-            changed=1
-        fi
+        [ "$(cat "$gov_file" 2>/dev/null)" = powersave ] || continue
+        echo "$target" >"$gov_file" 2>/dev/null
+        changed=1
+        # 只有确实是被钉成 powersave 的簇才连带解开频率钳制。以前这两行在循环里
+        # 无条件执行，会把 thermal-engine 刚刚压下去的 scaling_max 顶回硬件上限
+        # ——本模块紧接在 `start thermal-engine` 之后跑，正好撞在温控的建仓窗口，
+        # 开机日志里那几个"policy0 max=1017600"就是这么读出来的。温控下一周期会
+        # 自己压回来，没造成实际问题，但没必要去抢原厂温控的方向盘。
         hw_min=$(cat "$policy/cpuinfo_min_freq" 2>/dev/null)
         hw_max=$(cat "$policy/cpuinfo_max_freq" 2>/dev/null)
         case "$hw_min" in ''|*[!0-9]*) hw_min= ;; esac

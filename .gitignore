@@ -29,3 +29,12 @@ pen-bridge/hook/source/resources/lib/
 
 # experimental/find-device 的 release APK 可由各 tools/build_*.py 从源码重建
 experimental/find-device/releases/
+
+# 历史留档目录：只在本地保留，不入版本库。
+# 这些文件的「被删除前的内容」git 历史里本来就有，再提交一份等于重复存二进制
+# （.retired-dead-files 里还有个 2.3MB 的 aclswap.ko）。
+# 注意 payload/osense/.stock-baseline/ **不在**忽略之列——那 6 份原厂原件是做
+# 最小 patch 的基准，必须入库。
+fix-module/module/.presync-*/
+fix-module/module/.retired-dead-files/
+fix-module/module/payload/osense/.retired-handed-back-to-stock/

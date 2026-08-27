@@ -1,14 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <filter-conf>
-    <version>2026082401</version>
+    <version>2026051201</version>
     <filter-name>sys_mm_swap_config</filter-name>
 
-    <!-- HybridSwap/NAND writeback nodes are absent on Lenovo GKI. Keep the
-         standard kernel-managed ZRAM device enabled outside this policy. -->
     <switches
-        enabled="false"         nandSwap="false"           nandSupportMem="4|6|8|12"
-        adaptiveOffset="false"  workStation="false"       mmMiniPSwap="false"
-        disableHybSwapd="true" skipInactiveScrOff="true"/>
+        enabled="true"          nandSwap="true"           nandSupportMem="4|6|8|12"
+        adaptiveOffset="true"   workStation="true"        mmMiniPSwap="true"
+        disableHybSwapd="false" skipInactiveScrOff="true"/>
 
     <!-- only support MemcgV2; V1 add noswap pkgs by adding them to active memcg -->
     <noSwapPkgs>

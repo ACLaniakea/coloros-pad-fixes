@@ -13,8 +13,11 @@
 
     <config name="rules_engine">
         <scene id="1000" name="SCENE_RES_IO_PSI">
-          <!-- 移植调优：禁用 IO PSI 触发的 reentrant/iostop 高频清理，
-               避免与 zram 换出形成换出-换入循环，拖累动画与续航 -->
+          <rule index = "1" tag = "ioload" skip="ioload">
+              <!-- when ioload normal trigger cpnstop-->
+              <condition ioload="1"/>
+              <policy name="reentrant" type="iostop"/>
+          </rule>
         </scene>
     </config>
 

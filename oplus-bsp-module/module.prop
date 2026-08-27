@@ -1,0 +1,6 @@
+id=aclaniakea_oplus_bsp
+name=OPlus BSP Kernel Modules (TB710FU)
+version=v1.0.0
+versionCode=10000
+author=ACLaniakea
+description=在 post-fs-data 阶段按依赖拓扑序加载 22 个一加 BSP 内核模块（含 hybridswap zram），让 /product/bin/init.oplus.nandswap.sh 在 boot_completed 时自行探测并接管。不含 oplus_synchronize（mutex 缺陷，且无法 rmmod）。带"上次未开机成功即自禁用"保险丝。
