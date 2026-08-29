@@ -53,8 +53,11 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
     private static final long RETRY_DELAY_MS = 40L;
     private static final long LISTEN_WINDOW_MS = 3500L;
     private static final long POST_WAKE_REARM_MS = 2500L;
-    /** PCM 断流多久算管线真的停了。BWV 每 ~2.7s 出一次 null 结果，那是正常的窗口边界，不是停机。 */
-    private static final long BWV_STALL_MS = 2500L;
+    /**
+     * PCM 断流多久算管线真的死了。**只是兜底**——正常的重开由 no-word 结果即时触发，
+     * 这个阈值不能拿来当主循环，否则就是"听一段、聋一段"（见 hookSecondStage 的注释）。
+     */
+    private static final long BWV_STALL_MS = 5000L;
     private static final long BWV_WATCHDOG_PERIOD_MS = 500L;
     /** 只有这个窗口内真的出过唤醒候选，才允许 OVMS 去踩 OSense 的 VOICE_WAKEUP 场景。 */
     private static final long OSENSE_SCENE_WINDOW_MS = 3000L;
@@ -71,6 +74,9 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
     private static final String DETECTION_WINDOW_KEY = "aclaniakea_ovoice_window";
     private static final String DSP_OPT_IN_KEY = "aclaniakea_ovoice_dsp";
     private static final String STREAM_MODE_KEY = "aclaniakea_ovoice_stream";
+    private static final String TWO_STAGE_KEY = "aclaniakea_ovoice_twostage";
+    private static final String VPR_KEY = "aclaniakea_ovoice_vpr";
+    private static final String VAD_KEY = "aclaniakea_ovoice_vad";
     /** 给原厂 DSP 一阶段留的上机窗口：attachModule + loadSoundModel + startRecognition 全程。 */
     private static final long DSP_PROBE_MS = 9000L;
     private static final float WAKEWORD_THRESHOLD_SCALE = 0.9f;
@@ -464,8 +470,22 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
                             //   settings put global aclaniakea_ovoice_stream 0
                             boolean stream = streamMode();
                             XposedHelpers.setBooleanField(hook.args[0], "stream_mode", stream);
-                            XposedHelpers.setBooleanField(hook.args[0], "enable_vpr", true);
-                            XposedBridge.log("ColorOSVoiceWakeupBridge: BWV SetHParams stream_mode=" + stream + " + vpr=on (app speakerId)");
+                            boolean vpr = flag(VPR_KEY, true);
+                            XposedHelpers.setBooleanField(hook.args[0], "enable_vpr", vpr);
+                            // enable_vad 只在被人关掉时才写回：VAD 关掉意味着 KWS 对每一帧都推理，
+                            // 是最贵的跑法。这里只保证它是开的，不改原厂语义。
+                            if (!XposedHelpers.getBooleanField(hook.args[0], "enable_vad") && flag(VAD_KEY, true)) {
+                                XposedHelpers.setBooleanField(hook.args[0], "enable_vad", true);
+                            }
+                            // two_stage：便宜的一级先筛、命中再跑贵的二级。原厂这里是 false，
+                            // 打开是省 CPU 的正路，但要模型支持，故默认不动、留旋钮做实验：
+                            //   settings put global aclaniakea_ovoice_twostage 1
+                            boolean two = flag(TWO_STAGE_KEY, false);
+                            if (two) XposedHelpers.setBooleanField(hook.args[0], "two_stage", true);
+                            XposedBridge.log("ColorOSVoiceWakeupBridge: BWV SetHParams stream_mode=" + stream
+                                    + " vpr=" + vpr
+                                    + " vad=" + XposedHelpers.getBooleanField(hook.args[0], "enable_vad")
+                                    + " two_stage=" + XposedHelpers.getBooleanField(hook.args[0], "two_stage"));
                         }
                     } catch (Throwable t) { XposedBridge.log(t); }
                 }
@@ -518,15 +538,20 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod("com.oplus.ovoicemanager.wakeup.service.WakeupService", p.classLoader, "r", JSONObject.class, result);
             XposedHelpers.findAndHookMethod("com.oplus.ovoicemanager.wakeup.service.WakeupService", p.classLoader, "i", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(XC_MethodHook.MethodHookParam hook) {
-                    // ★ 这里以前会 retry() 整条管线：BWV 每 ~2.7s 出一次 wakeupWord=null，
-                    // 于是每 2.7 秒重建一次 AudioRecord + 3 路 KWS taskflow。后果有两条：
-                    //   1) 常驻烧掉约 1/3 个核（实测 22~39%）；
-                    //   2) 每次重建都把 SDK 的音频窗口清零（sample_cnt_: 40960 -> 0），
-                    //      跨越重建边界的"小布小布"被拦腰截断 —— 这就是识别慢/漏识别的根因。
-                    // null 结果是"这一窗没听到"，属正常，原厂管线是连续听的。
-                    // 真正停机由 PCM 断流看门狗判定，见 startWatchdog()。
+                    // wakeupWord=null 是"这一窗没听到"，会话到此结束，必须**立刻**重开，
+                    // 否则中间就是一段听不见的空窗。
+                    //
+                    // ★ 2026-08-30 实测教训：我一度以为"按结果重启"是识别慢的根因，
+                    // 改成只靠 PCM 断流看门狗（2.5 秒无音频才重开）。结果是
+                    //   听 2.6 秒 → 聋 2.5 秒 → 听 2.6 秒 …
+                    // 占空比只剩一半，用户直接反馈"很不灵敏"。日志实锤：
+                    //   00:01:02.172 AudioRecord constructed
+                    //   00:01:07.346 BWV PCM stalled 2565ms; restarting pipeline
+                    // 原厂那种"出结果就立刻重开"才是连续覆盖的正确做法，恢复之。
+                    // 看门狗保留，但只当兜底（BWV_STALL_MS 放长），负责管线真死掉的情况。
                     int n = NO_WORD_RESULTS.incrementAndGet();
-                    if (n <= 3 || n % 200 == 0) XposedBridge.log("ColorOSVoiceWakeupBridge: no-word result #" + n + " (pipeline kept alive)");
+                    if (n <= 3 || n % 200 == 0) XposedBridge.log("ColorOSVoiceWakeupBridge: no-word result #" + n + "; re-arming immediately");
+                    if (!SECOND_STAGE_RESULT.get()) retry(hook.thisObject, p.classLoader, RETRY_DELAY_MS, true, "no-word result");
                 }
             });
             XposedHelpers.findAndHookMethod("com.oplus.ovoicemanager.wakeup.service.WakeupService$e", p.classLoader, "onReceive", Context.class, Intent.class, new XC_MethodHook() {
@@ -609,9 +634,10 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
                     WATCHDOG_RUNNING.set(false);
                     return;
                 }
-                // 从没收到过 PCM 说明存活探针本身没挂上（例如换了音频路径），
-                // 这时候一直重启只会变成刷屏风暴，宁可不动。
-                if (PCM_CHUNKS.get() == 0) { h.postDelayed(this, BWV_WATCHDOG_PERIOD_MS); return; }
+                // 流式模式下 SDK 不走 h5.b.b(byte[])，PCM 探针天然收不到数据，
+                // 此时管线由结果回调自己驱动，看门狗必须让开，否则就是重启风暴。
+                // 同理，从没收到过 PCM 也说明探针没挂上，宁可不动。
+                if (streamMode() || PCM_CHUNKS.get() == 0) { h.postDelayed(this, BWV_WATCHDOG_PERIOD_MS); return; }
                 long idle = android.os.SystemClock.elapsedRealtime() - LAST_PCM_MS;
                 if (BWV_STARTED.get() && idle > BWV_STALL_MS) {
                     XposedBridge.log("ColorOSVoiceWakeupBridge: BWV PCM stalled " + idle + "ms; restarting pipeline");
@@ -659,6 +685,15 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
             });
             XposedBridge.log("ColorOSVoiceWakeupBridge: OVMS_settings.xml parse hook installed (detection window override = " + detectionWindowMs() + "ms, 0=stock)");
         } catch (Throwable t) { DETECTION_TIMEOUT_SET.set(false); XposedBridge.log(t); }
+    }
+
+    /** 读一个 Settings.Global 布尔旋钮，读不到就用默认值。 */
+    private static boolean flag(String key, boolean fallback) {
+        try {
+            Application a = currentApplication();
+            if (a != null) return Settings.Global.getInt(a.getContentResolver(), key, fallback ? 1 : 0) != 0;
+        } catch (Throwable t) { XposedBridge.log(t); }
+        return fallback;
     }
 
     /** 监听窗口覆盖值，0 = 用原厂值。 */
