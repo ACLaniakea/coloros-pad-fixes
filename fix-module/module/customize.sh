@@ -4,7 +4,7 @@ module_version=$(sed -n 's/^version=//p' "$MODPATH/module.prop" | head -n 1)
 ui_print "- 联想平板 Pro GT - ColorOS 修复模块 ${module_version:-unknown} (ACLaniakea)"
 ui_print "- 仅适用于 SM8650Q / pineapple 平台"
 ui_print "- 修正 AON QNN 生命周期、环境光自适应与屏幕常亮关联项"
-ui_print "- 恢复小布 BWV 语音唤醒链路与 HAL 级录音增益"
+ui_print "- 关闭不兼容的小布 BWV 唤醒并隐藏其设置入口（旧代码已归档）"
 ui_print "- 绑定显示色域映射与混音器配置"
 ui_print "- 修复 Tango 32 位兼容、序列号空项与性能 HAL 冲突"
 ui_print "- 内存与交换整体交还原厂：不再写 swappiness/watermark/min_free/KGSL"

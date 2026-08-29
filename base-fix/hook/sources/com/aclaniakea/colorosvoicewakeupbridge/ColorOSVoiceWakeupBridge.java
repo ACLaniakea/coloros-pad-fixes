@@ -63,8 +63,6 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
     private static final long OSENSE_SCENE_WINDOW_MS = 3000L;
     /** ColorOS 的"语音唤醒"总开关。关掉时不再拉起 BWV，管线自然收敛到 0 占用。 */
     private static final String WAKEUP_SWITCH_KEY = "voice_to_wakeup";
-    /** 用户不使用唤醒时，入口默认隐藏；手动设为 1 才重新显示。 */
-    private static final String WAKEUP_ENTRY_KEY = "aclaniakea_xiaobu_wakeup_entry";
     /**
      * BWV 单次监听窗口。0 = 不改，用原厂值（本机 2600ms）。
      *
@@ -185,12 +183,10 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
         try {
             XposedHelpers.findAndHookMethod("com.heytap.speechassist.utils.FeatureOption", p.classLoader, "G1", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(XC_MethodHook.MethodHookParam p) {
-                    if (wakeupEntryEnabled() && wakeupEnabled() && hasWakeupService()) {
-                        p.setResult(Boolean.TRUE);
-                        if (SPEECH_ENTRY_REPORTED.compareAndSet(false, true)) XposedBridge.log("ColorOSVoiceWakeupBridge: exposed XiaoBu wake entry");
-                    } else {
-                        p.setResult(Boolean.FALSE);
-                    }
+                    // 此入口是本移植为 BWV 试验强行补出的，并非平板原厂能力。
+                    // 用户明确不使用语音唤醒，永久交还为“不支持”，不能被 Settings
+                    // 缓存或全局键意外重新打开。
+                    p.setResult(Boolean.FALSE);
                 }
             });
         } catch (Throwable t) { XposedBridge.log(t); }
@@ -738,13 +734,6 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
             if (a == null) return true;
             return Settings.Global.getInt(a.getContentResolver(), WAKEUP_SWITCH_KEY, 1) != 0;
         } catch (Throwable t) { return true; }
-    }
-
-    private static boolean wakeupEntryEnabled() {
-        try {
-            Application a = currentApplication();
-            return a != null && Settings.Global.getInt(a.getContentResolver(), WAKEUP_ENTRY_KEY, 0) != 0;
-        } catch (Throwable t) { return false; }
     }
 
     private static void scheduleRearm(final Object service, final ClassLoader loader, long delay, String reason) {

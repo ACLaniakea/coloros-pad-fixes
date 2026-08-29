@@ -1,0 +1,16 @@
+#!/system/bin/sh
+# Historical only — deliberately not sourced by the module.
+#
+# This was the BWV/XiaoBu enable switch. TB710FU must keep it retired because
+# its Lenovo ADSP has no compatible BreenoSpeech model.
+enable_voice_wakeup_for_experiment_only() {
+    for package in com.oplus.ovoicemanager.wakeup com.heytap.speechassist; do
+        pm enable --user 0 "$package"
+        cmd package unstop --user 0 "$package"
+    done
+    settings put global hotword_detection_enabled 1
+    settings put global voice_to_wakeup 1
+    settings put global wakeup_word '小布小布'
+    am broadcast --user 0 -a android.intent.action.BOOT_COMPLETED \
+        -n com.oplus.ovoicemanager.wakeup/.service.OVSBootupReceiver
+}

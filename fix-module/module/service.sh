@@ -16,9 +16,7 @@ MODDIR=${0%/*}
 #      （充电/CPU 热限频由 thermal-engine_battery_0/2.conf 覆盖策略接管，
 #      不再使用常驻守护脚本）；
 #   4) 保持 Tango 32 位 zygote 停止，启用 horae，避免移植运行时不兼容；
-#   5) 恢复小布语音唤醒：启用/解冻 OVoice 与 SpeechAssist 包、写入全局
-#      唤醒开关与唤醒词、安装原厂 BWV 模型、委托 ExSystem BootReceiver、
-#      并把 OVMS 检测窗口延长到 6000ms 减少重启间隙漏唤醒；
+#   5) 永久关闭本机不兼容的小布 BWV 唤醒，保留 SpeechAssist 的非唤醒能力；
 #   6) 开启电池健康入口（数据由 LSPosed BatteryHealthBridge 从 sysfs 桥接）；
 #   7) 允许 Dolby Bridge 后台运行，避免原厂控制页仍在前台时服务被 app-idle
 #      回收，导致 UI 仅写入设置但没有实时下发 DAP；
@@ -75,9 +73,36 @@ else
     log_msg "12GB-class cache trim policy preserved"
 fi
 
-# PackageManager may rewrite LSPosed's module path after an APK update.  Pin it
-# again once Android is up so the following cold boot already starts from the
-# stable module copy, even before post-fs-data performs its own early check.
+# KernelSU can replace the stable LSPosed payload without updating the ordinary
+# PackageManager package.  That leaves running processes on an older Hook APK
+# even though the module directory contains newer code.  Reconcile versionCode
+# before pinning the LSPosed path; only an upgrade causes a package update.
+HOOK_PACKAGE=com.aclaniakea.colorosostatsguard
+HOOK_EXPECTED_FILE="$MODDIR/hook/versionCode"
+HOOK_EXPECTED=$(tr -dc '0-9' <"$HOOK_EXPECTED_FILE" 2>/dev/null)
+HOOK_INSTALLED=$(dumpsys package "$HOOK_PACKAGE" 2>/dev/null | \
+    sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' | head -1)
+case "$HOOK_EXPECTED$HOOK_INSTALLED" in *[!0-9]*|'') HOOK_EXPECTED=0; HOOK_INSTALLED=0 ;; esac
+if [ "$HOOK_EXPECTED" -gt "$HOOK_INSTALLED" ] 2>/dev/null && \
+        [ -f "$MODDIR/hook/BaseFix-Hook.apk" ]; then
+    # `cmd package install` is rejected by this port's package binder when
+    # called from a KernelSU service.  The platform `pm` frontend uses the
+    # accepted install path and was verified on-device for 1117 -> 1118.
+    if pm install -r "$MODDIR/hook/BaseFix-Hook.apk" >>"$LOGFILE" 2>&1; then
+        log_msg "Hook APK upgraded $HOOK_INSTALLED -> $HOOK_EXPECTED"
+        # Processes already spawned with the old dex must not keep stale UI
+        # hooks after the package update.  These two are safe to restart only
+        # on an actual Hook upgrade.
+        am force-stop --user 0 com.android.settings >/dev/null 2>&1
+        am force-stop --user 0 com.oplus.ovoicemanager.wakeup >/dev/null 2>&1
+    else
+        log_msg "ERROR: Hook APK upgrade $HOOK_INSTALLED -> $HOOK_EXPECTED failed"
+    fi
+fi
+
+# PackageManager may rewrite LSPosed's module path after an APK update. Pin it
+# again once Android is up so the following cold boot starts from the stable
+# module copy, even before post-fs-data performs its own early check.
 if [ -f "$MODDIR/bin/lsposed-path-sync.jar" ] && \
         [ -f "$MODDIR/hook/BaseFix-Hook.apk" ] && \
         [ -f /data/adb/lspd/config/modules_config.db ]; then
@@ -1051,139 +1076,24 @@ stop_dead_telephony_stack() {
 
 stop_dead_telephony_stack
 
-# The port ships the genuine OVoice service but the source ROM leaves its
-# companion SpeechAssist package disabled. Keep the user-facing XiaoBu path
-# available and restore the same global switches used by the source ROM.
-ensure_voice_wakeup() {
-    for package in com.oplus.ovoicemanager.wakeup com.heytap.speechassist; do
-        if pm enable --user 0 "$package" >/dev/null 2>&1; then
-            log_msg "voice wake package enabled package=$package"
-        else
-            log_msg "voice wake package enable failed package=$package"
-        fi
-        if cmd package unstop --user 0 "$package" >/dev/null 2>&1; then
-            log_msg "voice wake package unstopped package=$package"
-        else
-            log_msg "voice wake package unstop failed package=$package"
-        fi
-    done
-    for key in hotword_detection_enabled voice_to_wakeup; do
-        current=$(settings get global "$key" 2>/dev/null | tr -d '\r')
-        if [ "$current" != 1 ]; then
-            settings put global "$key" 1 >/dev/null 2>&1
-            log_msg "voice wake global enabled key=$key"
-        fi
-    done
-    wakeup_word=$(settings get global wakeup_word 2>/dev/null | tr -d '\r')
-    case "$wakeup_word" in
-        ''|null|NULL|unknown|UNKNOWN)
-            settings put global wakeup_word '小布小布' >/dev/null 2>&1
-            log_msg "voice wake word restored"
-            ;;
-    esac
-
-    voice_model_dir=/data/user/0/com.oplus.ovoicemanager.wakeup/files
-    install_voice_model() {
-        voice_model_payload="$1"
-        voice_model_target="$2"
-        voice_model_label="$3"
-        if [ -r "$voice_model_payload" ] && [ -d "$voice_model_dir" ]; then
-            voice_model_hash=$(sha256sum "$voice_model_payload" 2>/dev/null | awk '{print $1}')
-            installed_model_hash=$(sha256sum "$voice_model_target" 2>/dev/null | awk '{print $1}')
-            if [ "$voice_model_hash" != "$installed_model_hash" ]; then
-                voice_model_tmp="$voice_model_target.tmp"
-                rm -f "$voice_model_tmp" 2>/dev/null
-                if cp "$voice_model_payload" "$voice_model_tmp" 2>/dev/null; then
-                    voice_model_owner=$(stat -c '%u:%g' "$voice_model_dir" 2>/dev/null || echo 10108:10108)
-                    chown "$voice_model_owner" "$voice_model_tmp" 2>/dev/null
-                    chmod 0600 "$voice_model_tmp" 2>/dev/null
-                    if [ -r "$voice_model_dir/profileInstalled" ]; then
-                        chcon --reference="$voice_model_dir/profileInstalled" "$voice_model_tmp" 2>/dev/null
-                    fi
-                    if mv -f "$voice_model_tmp" "$voice_model_target" 2>/dev/null; then
-                        log_msg "$voice_model_label installed sha256=$voice_model_hash bytes=$(stat -c '%s' "$voice_model_target" 2>/dev/null)"
-                    else
-                        log_msg "$voice_model_label install failed"
-                    fi
-                else
-                    log_msg "$voice_model_label copy failed"
-                fi
-            else
-                log_msg "$voice_model_label verified sha256=$installed_model_hash"
-            fi
-        else
-            log_msg "$voice_model_label payload or OVoice data directory missing"
-        fi
-    }
-
-    # The vendor UIM is readable by root but is labelled vendor_configs_file,
-    # so an OVoice app process cannot reliably open it. Stage the native model
-    # in app-private storage and make the Hook read this copy instead.
-    install_voice_model \
-        "$MODDIR/payload/voice/sm8_gr3UsMFCN230612eAIv34ENPUv4Float.uim" \
-        "$voice_model_dir/lenovo.uim" \
-        "voice wake native Lenovo UIM"
-
-    # Keep the phone model available for explicit offline analysis, but never
-    # leave a stale one-shot probe armed across boots.
-    install_voice_model \
-        "$MODDIR/payload/voice/oppo21001_20211124.bin" \
-        "$voice_model_dir/codex-qcom-oppo21001.bin" \
-        "voice wake Qualcomm diagnostic model"
-    for probe_file in \
-        /data/local/tmp/coloros_cdsp_breeno_probe_once \
-        /data/local/tmp/coloros_cdsp_capture_no_mmap_once \
-        /data/local/tmp/coloros_cdsp_hotword_qcom_probe_once \
-        /data/local/tmp/coloros_cdsp_qcom_probe_once \
-        /data/local/tmp/coloros_cdsp_qc_probe_once; do
-        if [ -e "$probe_file" ]; then
-            rm -f "$probe_file" 2>/dev/null
-            log_msg "cleared stale voice wake probe flag=$probe_file"
-        fi
-    done
-
-    # Re-enter the stock boot receiver after package state is repaired.  It
-    # sends the ExSystem status broadcast; ExSystem then binds
-    # OplusAppServicesManagerClient, whose onBind() starts the foreground
-    # service and the genuine OVoice manager.  Starting OVoice directly from
-    # this late service bypasses that bind and triggers Android's foreground
-    # service timeout.
-    if pidof com.oplus.ovoicemanager.wakeup >/dev/null 2>&1; then
-        log_msg "voice wake process already running; stock boot lifecycle preserved"
-    else
-        cmd package unstop --user 0 com.oplus.ovoicemanager.wakeup >/dev/null 2>&1
-        if am broadcast --user 0 \
-            -a android.intent.action.BOOT_COMPLETED \
-            -n com.oplus.ovoicemanager.wakeup/.service.OVSBootupReceiver >/dev/null 2>&1; then
-            log_msg "voice wake process absent; stock BootReceiver re-entered"
-        else
-            log_msg "voice wake stock BootReceiver request failed"
-        fi
-    fi
-}
+# BWV enablement is archived under payload/retired/voice-wakeup-bwv and is
+# never sourced on this tablet: the vendor DSP model is incompatible.
 
 disable_voice_wakeup() {
-    # 用户明确不使用小布唤醒：关闭总开关并隐藏入口，但保留 SpeechAssist 本体，
-    # 不影响小布的非唤醒能力。Hook 也会据此拒绝后台重新拉起 BWV。
+    # 用户明确不使用小布唤醒：关闭总开关并禁用仅负责唤醒的 OVMS 包。
+    # SpeechAssist 本体保持启用，不影响小布的非唤醒能力。
     for key in hotword_detection_enabled voice_to_wakeup aclaniakea_xiaobu_wakeup_entry; do
         settings put global "$key" 0 >/dev/null 2>&1
     done
     am force-stop --user 0 com.oplus.ovoicemanager.wakeup >/dev/null 2>&1
-    log_msg "voice wake disabled and XiaoBu wake entry hidden by user policy"
+    pm disable-user --user 0 com.oplus.ovoicemanager.wakeup >/dev/null 2>&1
+    log_msg "voice wake package disabled and XiaoBu wake entry hidden by user policy"
 }
 
 disable_voice_wakeup
 
-# Lengthen each BWV listening window from 2600ms to 6000ms so the engine
-# restarts far less often and the wake word is not missed during restart gaps.
-ovms_settings=/my_product/etc/OVMS_settings.xml
-if [ -f "$MODDIR/my_product/etc/OVMS_settings.xml" ] && [ -f "$ovms_settings" ]; then
-    if ! cmp -s "$MODDIR/my_product/etc/OVMS_settings.xml" "$ovms_settings"; then
-        mount --bind "$MODDIR/my_product/etc/OVMS_settings.xml" "$ovms_settings" 2>/dev/null \
-            || cp "$MODDIR/my_product/etc/OVMS_settings.xml" "$ovms_settings" 2>/dev/null
-        log_msg "OVMS detection timeout raised to 6000ms"
-    fi
-fi
+# BWV listening-window override is retired with the enable path above.  Do not
+# bind OVMS_settings.xml: the stock file remains untouched while wakeup is off.
 
 # Expose the ColorOS battery-health entry; its data is bridged by the
 # LSPosed BatteryHealthBridge from the real power-supply sysfs.
