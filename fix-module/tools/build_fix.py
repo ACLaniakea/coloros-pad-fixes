@@ -39,6 +39,31 @@ EXCLUDE = {"fix-module.log", "fix-module.log.1", "tuning.log", "daemon.pid",
            "magic.pid", "ram-expand.boot-toggle", ".aclswap.err"}
 
 
+def verify_hook_payload(apk: Path) -> None:
+    """Refuse to ship an LSPosed entry point absent from classes.dex.
+
+    The module pins LSPosed to its embedded APK before zygote starts, so a
+    stale embedded payload can override a newer PackageManager APK silently.
+    """
+    with zipfile.ZipFile(apk) as src:
+        try:
+            entries = src.read("assets/xposed_init").decode("utf-8-sig").splitlines()
+            dex = src.read("classes.dex")
+        except KeyError as exc:
+            raise SystemExit(f"invalid Hook APK {apk}: missing {exc}") from exc
+    missing = []
+    for entry in entries:
+        entry = entry.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        descriptor = ("L" + entry.replace(".", "/") + ";").encode()
+        if descriptor not in dex:
+            missing.append(entry)
+    if missing:
+        raise SystemExit("refusing stale Hook APK; xposed_init entries missing from classes.dex: "
+                         + ", ".join(missing))
+
+
 def main() -> None:
     # Same policy as the patcher jar below: rebuild from source when the
     # toolchain is present, but fall back to the checked-in build product
@@ -54,6 +79,7 @@ def main() -> None:
         print(f"toolchain unavailable; keeping {sync_jar}")
     if not HOOK_APK.is_file():
         raise SystemExit(f"missing Hook APK: {HOOK_APK}")
+    verify_hook_payload(HOOK_APK)
     patcher = ROOT / "tools" / "build_patcher.py"
     jar = ROOT / "bin" / "card-protocol-patcher.jar"
     if patcher.is_file():
