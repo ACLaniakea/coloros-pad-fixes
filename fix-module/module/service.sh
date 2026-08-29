@@ -124,47 +124,564 @@ if pm path "$ROMUPDATE_PACKAGE" >/dev/null 2>&1; then
     log_msg "ROMUpdate provider enabled for Scene accessibility policy"
 fi
 
-# The port ships the source-phone's perf HAL targetconfig (8-core pineapple).
-# This module overlays a corrected SoC-696 (6-core) targetconfig so the perf
-# HAL understands TB710FU's real topology and stops applying wrong source-device
-# CPU caps.  Reload both perf HALs so they pick it up, and KEEP them running:
-# the display composer / framework send CPU boost hints through perfservice on
-# every large composition; leaving them stopped turns that path into a
-# failed-AIDL IPC storm ("perf aidl service doesn't exist") that pegs
-# system_server's binder threads — the actual cause of the post-boot CPU
-# pressure, not the memory policy and not the powersave governor.
-stop perf2-hal-1-0
-stop vendor.perfservice
-sleep 2
-start vendor.perfservice
-start perf2-hal-1-0
-sleep 2
-log_msg "reloaded perf HALs with corrected pineapple SoC-696 topology"
+# perf HAL 的 stop/start 重载已删除（2026-08-29），改成只核对状态。
+#
+# 我们确实overlay了一份改正过的 SoC-696（六核）targetconfig.xml，但它是
+# post-fs-data 第 97~98 行 bind mount 上去的，而两个 perf HAL 属于 `class hal`，
+# 由 init 在 `on boot` 才拉起 —— 晚于 post-fs-data。也就是说它们**第一次**
+# open 到的就已经是我们的文件，根本不存在"读到旧配置"的窗口。
+#
+# 而这次重载的代价是实打实的：两个 sleep 2 白占 4 秒串行时间，且正好落在
+# boot_completed 之后最拥挤的那几秒——此时 system_server 正在恢复 CE 数据、
+# 几十个自启应用在抢内存。把 perfservice 摘掉再插回去，中间那 2 秒里所有
+# 走 AIDL 的升频提示全部失败，等于在最需要升频的时刻自断一条腿。
+#
+# 保留的只有状态核对：两者必须 running，否则 composer/framework 的升频提示
+# 会变成失败 IPC 风暴并打满 system_server 的 binder 线程。真停了才补一次 start。
+for _svc in vendor.perfservice perf2-hal-1-0; do
+    [ "$(getprop "init.svc.$_svc")" = running ] || start "$_svc"
+done
+log_msg "perf HALs: perfservice=$(getprop init.svc.vendor.perfservice) perf2hal=$(getprop init.svc.perf2-hal-1-0)（SoC-696 targetconfig 由 post-fs-data bind，无需重载）"
 
-# thermal-engine can read its configuration before KernelSU finishes mounting
-# the module overlay. Reload it once so it picks up the CPU-only policy.
-stop thermal-engine
-sleep 2
-start thermal-engine
-sleep 3
-log_msg "reloaded thermal-engine after module mounts"
+# thermal-engine 的重载已删除（2026-08-29）。
+#
+# 原注释说"thermal-engine 可能在 KernelSU 挂完模块覆盖层之前就读了配置"——那是
+# 配置还走 KernelSU system/ 覆盖层时代的结论。现在四份 thermal-engine_*.conf 是
+# 由 post-fs-data 显式 bind mount 上去的，而 thermal-engine 是 `class main`、
+# 由 `on boot` 启动，晚于 post-fs-data，所以它**第一次**读到的就已经是我们的配置。
+#
+# 更要命的是原厂 rc 自己就会重载一次：
+#     /vendor/etc/init/init_thermal-engine-v2.rc
+#         on property:sys.boot_completed=1
+#             restart thermal-engine
+# 而本脚本同样由 boot_completed 触发，于是我们这次 stop/start 是**第三次**加载，
+# 并且和原厂那次 restart 抢同一个窗口，互相打断。删掉之后交还原厂时序。
+#
+# 撤销判据：若日后热区里再次找不到 skin-msm-therm-usr（由 post-fs-data 的
+# oplus_shell_temp_compat.ko 提供），说明 bind/insmod 时序又变了，那时才需要恢复。
 
 # Recover from the third-party "powersave" governor pin that locks a cluster to
 # its minimum frequency after a long standby; only clusters actually found in
 # that state get their min/max restored to this device's own cpuinfo_* bounds.
 # Everything else is left to thermal-engine and the stock perf HAL.  Runs once
-# at boot only (no resident guard/daemon).  NOTE: the "cpu policyN ... max=" log
-# lines below are read back seconds after thermal-engine was restarted above, so
-# they show the thermal mitigation state, not what this module wrote.
+# at boot only (no resident guard/daemon).
+#
+# 注意：这一条修的是**运行期**现象（第三方调频器长待机后把 governor 留在
+# powersave），冷启动时通常是 no-op。读回日志已挪到 apply_sched_baseline 之后，
+# 否则读到的是温控建仓状态而不是模块写进去的值。
 normalize_cpu
+
+# ============================================================================
+# 1+4+1 六核拓扑的调度基线
+#
+# 这些原先住在 SM8650Q-Scene-Scheduler 的 set_common()/apply_irq_topology() 里，
+# 只有 Scene 调用 /data/powercfg.sh <mode> 时才会落地。2026-08-25 之后 Scene 不再
+# 调用（scheduler.log 三天无新记录），于是全部静默失效：IRQ 全回 CPU0、
+# default_smp_affinity=03、sched_upmigrate 回到 95、input_boost 关着、
+# cpuset background 回到 0,3-4。用户直接感受到的就是"依旧卡顿"。
+#
+# 判据是「Scene 卸载了这条改动是否还必须成立」——是，所以搬到这里，开机一次性
+# 写入，不做常驻轮询。调度模块只保留随模式变化的量（fmax_cap、rate_limit、
+# hispeed、group_migrate、input_boost 的 ms/freq、kgsl min_freq）。
+# ============================================================================
+# 写入计数器：_sched_ok 落值成功、_sched_skip 节点不存在/不可写、
+# _sched_same 已经是目标值。以前这些写全是静默的，日志只有最后一行读回，
+# 于是"某个节点在这台机器上根本不存在"和"写了但被覆盖"看起来一模一样。
+_sched_ok=0
+_sched_skip=0
+_sched_same=0
+
+sched_write() {
+    _v=$1
+    _n=$2
+    [ -w "$_n" ] || { _sched_skip=$((_sched_skip + 1)); return 0; }
+    [ "$(cat "$_n" 2>/dev/null)" = "$_v" ] && { _sched_same=$((_sched_same + 1)); return 0; }
+    if echo "$_v" >"$_n" 2>/dev/null; then
+        _sched_ok=$((_sched_ok + 1))
+    else
+        _sched_skip=$((_sched_skip + 1))
+        log_msg "sched baseline: 写入被拒 $_n <- $_v"
+    fi
+}
+
+sched_irq_by_name() {
+    awk -v name="$1" '$NF == name { gsub(":", "", $1); print $1 }' /proc/interrupts 2>/dev/null
+}
+
+sched_set_irq() {
+    _cpu=$1
+    for _irq in $(sched_irq_by_name "$2"); do
+        _node="/proc/irq/$_irq/smp_affinity_list"
+        [ -w "$_node" ] || continue
+        [ "$(cat "/proc/irq/$_irq/effective_affinity_list" 2>/dev/null)" = "$_cpu" ] && continue
+        echo "$_cpu" >"$_node" 2>/dev/null
+    done
+}
+
+apply_sched_baseline() {
+    # 只认这台机器的拓扑：SM8650Q/pineapple、present=0-5、有 policy0/1/3/5、无 policy7。
+    case "$(getprop ro.soc.model)/$(cat /sys/devices/system/cpu/present 2>/dev/null)" in
+        *SM8650Q*/0-5) ;;
+        *) log_msg "sched baseline: 拓扑不匹配，跳过"; return 0 ;;
+    esac
+    [ -d /sys/devices/system/cpu/cpufreq/policy7 ] && { log_msg "sched baseline: 检出 policy7，跳过"; return 0; }
+
+    # --- IRQ 拓扑 ---------------------------------------------------------
+    # 源机 SM8850 的 bootargs 带 irqaffinity=0-1，在 1+4+1 上会把可迁移中断全部
+    # 压到唯一的弱核 CPU0（容量 379，中核 867、X4 1024）。默认掩码改为四颗中核。
+    sched_write 1e /proc/irq/default_smp_affinity
+    sched_set_irq 1 glink-native-adsp
+    sched_set_irq 1 apps_rsc-drv-2
+    sched_set_irq 1 ipcc_0
+    sched_set_irq 2 hfi
+    sched_set_irq 2 ufshcd
+    sched_set_irq 2 dwc3
+    sched_set_irq 2 msm-vidc          # 硬件编解码与其固件接口 hfi 同核，避免每帧跨核
+    sched_set_irq 3 msm_drm
+    sched_set_irq 3 NVT-ts
+    sched_set_irq 3 spi_geni
+    sched_set_irq 4 240b7400.qcom,bwmon-llcc
+    sched_set_irq 4 24091000.qcom,bwmon-ddr
+    sched_set_irq 4 msm_serial_geni0
+    # i2c_geni 有多个实例（触控以外的传感器/PMIC 总线），统一挪到 CPU1。
+    for _irq in $(awk 'index($NF, "i2c_geni") == 1 { gsub(":", "", $1); print $1 }' /proc/interrupts 2>/dev/null); do
+        sched_write 1 "/proc/irq/$_irq/smp_affinity_list"
+    done
+    # WLAN 的 14 条中断（合计约 43.6 万次）同样钉在 CPU0，但 QCA 驱动给它们置了
+    # IRQ_NO_BALANCING，写 smp_affinity 一律 EIO。硬中断搬不动，只能靠下面的 RPS
+    # 把随后的 softirq 协议栈处理转到中核。这里不做注定失败的写。
+
+    # --- wlan/p2p RPS -----------------------------------------------------
+    # 原厂 init.qcom.post_boot.sh 只给 rmnet 配了 RPS，wlan 从未配置；源机八核上
+    # QCA 自己的 NAPI 亲和能把 CE/DP 铺到大核簇，本机没有这个余地。
+    # RPS 只搬 softirq、不触碰硬中断，属标准内核机制，清零即回滚。
+    if [ -w /proc/sys/net/core/rps_sock_flow_entries ]; then
+        _cur=$(cat /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null)
+        case "$_cur" in ''|*[!0-9]*) _cur=0 ;; esac
+        # rps_flow_cnt 只有在全局 rps_sock_flow_entries 非零时才允许写，顺序不能反。
+        [ "$_cur" -lt 32768 ] && sched_write 32768 /proc/sys/net/core/rps_sock_flow_entries
+    fi
+    _rps=0
+    for _dev in wlan0 p2p0; do
+        [ -d "/sys/class/net/$_dev" ] || continue
+        for _q in /sys/class/net/"$_dev"/queues/rx-*; do
+            [ -w "$_q/rps_cpus" ] || continue
+            [ "$(cat "$_q/rps_cpus" 2>/dev/null)" = 1e ] && continue
+            sched_write 1e "$_q/rps_cpus"
+            sched_write 4096 "$_q/rps_flow_cnt"
+            _rps=$((_rps + 1))
+        done
+    done
+
+    # --- cpuset 拓扑修正 ---------------------------------------------------
+    # 中间四核虽被固件拆成 policy1/policy3 两个频域，调度上仍是同容量的一簇。
+    # 原厂给 background 的 0,3-4 会无故闲置 CPU1/CPU2，并在解锁时形成积压突发。
+    sched_write '0-4' /dev/cpuset/background/cpus
+    sched_write '0-4' /dev/cpuset/system-background/cpus
+    sched_write '0-5' /dev/cpuset/foreground/cpus
+    sched_write '0-5' /dev/cpuset/top-app/cpus
+    # 144Hz 合成线程避开唯一的弱小核，同时可按需使用 Prime 核。
+    sched_write '1-5' /dev/cpuset/sf/cpus
+
+    # --- walt 常量 ---------------------------------------------------------
+    sched_write 1 /proc/sys/walt/sched_sbt_enable
+    sched_write 119 /proc/sys/walt/walt_rtg_cfs_boost_prio
+    sched_write 400 /proc/sys/walt/sched_pipeline_util_thres
+    sched_write 325 /proc/sys/walt/walt_low_latency_task_threshold
+    sched_write 'libunity.so, libfb.so' /proc/sys/walt/sched_lib_name
+    sched_write UnityMain /proc/sys/walt/sched_lib_task
+    sched_write 3000 /proc/sys/walt/sched_disable_mvp_thres
+    sched_write 0 /proc/sys/walt/sched_boost
+
+    # 清掉源机留下的过高最小频率；scaling_max_freq 仍归温控与原厂 HAL。
+    for policy in 0:364800 1:499200 3:499200 5:480000; do
+        _p=/sys/devices/system/cpu/cpufreq/policy${policy%%:*}
+        [ -d "$_p" ] || continue
+        chmod 0644 "$_p/scaling_min_freq" 2>/dev/null
+        sched_write "${policy##*:}" "$_p/scaling_min_freq"
+    done
+
+    # --- 迁移门槛基线（balance 档实测值）------------------------------------
+    # 三位分别是 CPU0→中核、中核→中核、中核→X4。第一位在源系统里是 90：SM8850
+    # 有四颗小核可以铺开负载，本机只有 CPU0 一颗弱核，90% 意味着它必然先饱和才
+    # 开始搬运（实测空闲下 CPU0 忙 62% 而 X4 只有 7%）。
+    # 交叉采样（settings 冷启动 TotalTime，6 轮轮换取中位）：
+    #   [90 95 82] 1136ms / [60 95 82] 939ms / [60 60 60] 942ms
+    # 收益完全来自弱核这一个边界，后两位保持原值。
+    # WALT 拒绝 down >= up 的中间状态，必须先把 up 临时抬到 100 再原子落值。
+    sched_write '100 100 100' /proc/sys/walt/sched_upmigrate
+    sched_write '50 85 70' /proc/sys/walt/sched_downmigrate
+    sched_write '60 95 82' /proc/sys/walt/sched_upmigrate
+    sched_write 90 /proc/sys/walt/sched_group_upmigrate
+    sched_write 80 /proc/sys/walt/sched_group_downmigrate
+
+    # --- WALT 调频上限解限 --------------------------------------------------
+    # 2026-08-29 实测设备上是 `1804800 2707200 2707200 2147483647`——四个槽分别来
+    # 自 powersave 档、balance 档和内核默认，是调度模块旧版本留下的僵尸拼盘。
+    # Scene 自 2026-08-25 起不再调用调度模块，没人再覆盖它，于是 CPU0 被永久钉在
+    # 1804800（cpuinfo_max 2265600，低 20%）、四颗中核钉在 2707200（低 8.4%）。
+    # 后果就是"中小核爆满而 X4 闲置"：小核和中核实时频率正好贴死在 cap 上、忙
+    # 63~73%，X4 却停在 902MHz、只忙 49%。手工写回硬件上限后当场变成
+    # X4 满频 3302400、六核忙 20~27%。
+    #
+    # 这里写各簇 cpuinfo_max_freq，等价于不限频——真正的限频交还温控与原厂 HAL，
+    # 这才是原厂语义。两个坑：
+    #   1. 节点固定吃 4 个值，给不满会把剩余槽补 0（实测 `a b c` => `a b c 0`），
+    #      而 0 是"钉死在最低频"，比不写还糟。必须永远写满 4 个。
+    #   2. 槽位对应 WALT cluster 而非 policy，中间四核占两槽（policy1/policy3）。
+    sched_write '2265600 2956800 2956800 3302400' /proc/sys/walt/sched_fmax_cap
+
+    # 触摸升频基线。调度模块的 powersave 档会把它关掉，但那是用户主动选的；
+    # 缺省绝不能是关着的——没有 input boost 时滑动起手必然从低频爬。
+    sched_write 1 /proc/sys/walt/input_boost/sched_boost_on_input
+    sched_write 120 /proc/sys/walt/input_boost/input_boost_ms
+    sched_write '1248000 1497600 1497600 1497600 1497600 1478400 0 0' /proc/sys/walt/input_boost/input_boost_freq
+
+    log_msg "sched baseline applied: irq_default=$(cat /proc/irq/default_smp_affinity 2>/dev/null) upmigrate=$(cat /proc/sys/walt/sched_upmigrate 2>/dev/null | tr '\t' ' ') downmigrate=$(cat /proc/sys/walt/sched_downmigrate 2>/dev/null | tr '\t' ' ') fmax_cap=$(cat /proc/sys/walt/sched_fmax_cap 2>/dev/null | tr '\t' ' ') boost=$(cat /proc/sys/walt/input_boost/sched_boost_on_input 2>/dev/null) bg_cpus=$(cat /dev/cpuset/background/cpus 2>/dev/null) sf_cpus=$(cat /dev/cpuset/sf/cpus 2>/dev/null) rps_queues=$_rps writes=${_sched_ok}写/${_sched_same}已是/${_sched_skip}跳过"
+}
+
+# ============================================================================
+# 必须等原厂的 post-boot 脚本先跑完，否则我们是在和它掷骰子。
+#
+# 高通的两个 oneshot 服务同样挂在 `sys.boot_completed=1` 上：
+#     init.qti.kernel.rc:  on property:sys.boot_completed=1
+#                              start kernel-boot / kernel-post-boot / memory-post-boot
+#     init.qcom.rc:        on property:sys.boot_completed=1
+#                              start qcom-post-boot
+# kernel-post-boot 最终会按 soc_id 分派到 init.kernel.post_boot-pineapple.sh
+# （本机 ro.soc.id=696 命中该分支），那个脚本才是原厂写 WALT 参数、cpuset、
+# input_boost、各簇 min/max freq 和 governor 的地方。
+#
+# init **不保证** property trigger 之间的先后，所以本脚本此前与它完全并发：
+# 我们写的 upmigrate/cpuset/min_freq 可能在几百毫秒后被原厂整体覆盖，而
+# "sched baseline applied" 那行日志读回的只是那一瞬间的快照，看着成功而已。
+# 这正是"基线明明写了却像没写"的根因，不是节点不可写。
+#
+# 改成等它们跑完：oneshot 服务执行结束后 init.svc.<name> 会变成 stopped。
+# 有界轮询最多 60 秒，超时也照写（写晚了总比不写强），并把等待时长记进日志，
+# 这样下次看日志就能判断是否真的排在了原厂之后。不挂常驻守护。
+# ============================================================================
+wait_for_stock_post_boot() {
+    _waited=0
+    while [ "$_waited" -lt 60 ]; do
+        _kpb=$(getprop init.svc.kernel-post-boot)
+        _qpb=$(getprop init.svc.qcom-post-boot)
+        # 服务不存在时 getprop 返回空串，视同"无需等待"。
+        case "$_kpb" in running) ;; *) case "$_qpb" in running) ;; *) break ;; esac ;; esac
+        sleep 1
+        _waited=$((_waited + 1))
+    done
+    log_msg "stock post_boot settled after ${_waited}s (kernel-post-boot=${_kpb:-absent} qcom-post-boot=${_qpb:-absent})"
+}
+
+wait_for_stock_post_boot
+apply_sched_baseline
+
+# 读回 CPU 策略放在基线之后，否则显示的是原厂/温控的建仓状态，
+# 反映不出模块自己写进去的 min_freq，属于误导性日志。
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     log_msg "cpu $(basename "$policy") gov=$(cat "$policy/scaling_governor" 2>/dev/null) min=$(cat "$policy/scaling_min_freq" 2>/dev/null) max=$(cat "$policy/scaling_max_freq" 2>/dev/null)"
 done
 
+# ============================================================================
+# hybridswap：把原厂自己算出来、却漏发给内核的 ub_zram2ufs_ratio 补下去。
+#
+# 原厂 /product/bin/init.oplus.nandswap.sh 的 configure_hybridswap_parameters()
+# 会按 MemTotal 分档算出 zram2ufs_ratio（本机 7.4G 走 else 档 = 15），但这个值
+# 只被用来决定预留 dd 区的大小（dd_mb_cnt），**从未写进 swapd_memcgs_param**；
+# 第 212 行下发的是硬编码的 "3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0"，
+# 每一级的 ub_zram2ufs_ratio 都是 0。后果是 8G eswap 挂上了、hybridswap_enable
+# 三段全 enable、hybridswapd 也活着，但 ESU_C 恒为 0、reclaimin_cnt 恒为 0，
+# 一页都没往 UFS 写过，zram 里的冷数据全程占着物理内存。
+#
+# 2026-08-27 实机验证（8G 机型，写入 15 后 4 分钟）：reclaimin_cnt 0→101、
+# 落盘 286MB（loop51 diskstats 587264 扇区独立佐证）、ZSU_O 4295124→3519536 KB
+# 即 zram 腾出 776MB、MemAvailable 1277788→1446704 KB。读回仅 34MB，无换入风暴，
+# dmesg 无告警。速率收敛（T+2→T+3 增量为 0），属于一次性排积压而非持续狂写，
+# 且原厂 hybridswap_quota_day=10GB/天 的闸仍在兜底。
+#
+# 注意两点：
+#  1) mem2zram 那两列（本机开机后是 80/70）是 perf HAL
+#     /odm/bin/hw/vendor-oplus-hardware-performance-V1-service 在运行时从
+#     60/50 抬上去的，**必须读回原值原样写回**，不能硬编码，否则会把 HAL 的
+#     场景决策打回去。
+#  2) 这是一次性写入，不挂常驻守卫。HAL 若在之后重写整串会把 15 冲回 0；
+#     实测 4 分钟内没有发生。要确认现状用 action.sh 里那行 zram2ufs 读数。
+# ============================================================================
+tune_zram2ufs() {
+    param=/dev/memcg/memory.swapd_memcgs_param
+    [ -w "$param" ] || { log_msg "hybridswap: $param 不可写，跳过"; return 0; }
+    # 只在原厂那三级（level 0/1/2）上工作，level 3~9 原厂就是全 0 的占位。
+    m1=$(awk '/level 1 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
+    m2=$(awk '/level 2 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
+    case "$m1" in ''|*[!0-9]*) m1= ;; esac
+    case "$m2" in ''|*[!0-9]*) m2= ;; esac
+    # 读不到就用原厂脚本第 212 行的硬编码值兜底，绝不猜。
+    [ -n "$m1" ] || m1=60
+    [ -n "$m2" ] || m2=50
+    # 格式：级数, 然后每级 min_score max_score ub_mem2zram ub_zram2ufs refault
+    echo "3 0 99 0 0 0 100 399 $m1 15 0 400 499 $m2 15 0 " >"$param" 2>/dev/null
+    log_msg "hybridswap: zram2ufs 15 已下发 (保留 HAL 的 mem2zram $m1/$m2)，实际=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' "$param" 2>/dev/null)"
+}
+
+# ============================================================================
+# hybridswap 第二处移植缺陷：swapd 的唤醒下限是按大内存机型标定的，本机永远够不到。
+#
+# 原厂 configure_hybridswap_parameters() 按 MemTotal 分四档给 avail_buffers
+# （四个值依次是 avail / min / high / free_swap_threshold，单位 MB）：
+#     ≤3G  "200  100  200  512"
+#     ≤4G  "1200 1000 1200 716"
+#     ≤6G  "2000 1600 2000 1536"
+#     否则 "2200 1800 2200 1536"      ← 本机 7763232kB 落这一档
+#
+# 最后一档是**开口的**：8G 和 16G 共用 min=1800。移植源机（一加 Pad 3 Pro）
+# 12/16G 空闲时可用内存有八九个 G，这个门槛一辈子碰不到，swapd 全程睡觉；
+# 本机 8G 跑同一套 ColorOS，实测空闲 MemAvailable 稳定在 1.78~2.13G、
+# 连开六个应用的负载低点也只到 1577M，**永远在门槛以下**。
+# 于是 swapd 进入永久追赶：回收 → 应用立刻把热页 refault 换回来 → 可用内存
+# 又掉下去 → 继续回收。系统零内存压力却持续换页，白烧 CPU、UFS 写入和 major fault。
+#
+# 佐证（详见 memory/project_reclaim_is_all_memcg.md）：静置态本机 pgscan_kswapd
+# 与 pgscan_direct **恒为 0**，pgscan_anon 却每分钟涨数万——说明静置期的回收
+# 全部走 try_to_free_mem_cgroup_pages()，即 swapd 一家干的。
+# （开机头两分钟例外：2026-08-29 的解锁现场里 pgscan_direct 累计 375 万、
+#   kswapd0 进过 top3，那一段是真的全局吃紧，属于另一个问题。）
+#
+# 实测（2026-08-29，四窗口 ABAB，全程无人操作、前台与进程数均无变化）：
+#   空闲 60s     min=2000: pswpout +20988/+23795  pgscan_anon +18003/+51051 PSI 0.08
+#                min=1200: pswpout  +2288/    +0  pgscan_anon  +7820/    +0 PSI 0.00
+#   相同负载序列 min=1800: pswpout 262664 → 64360
+#                min=1200: pswpout  53328 → 13185     两次 A→B 均降约 80%
+# 写入后连续 90 秒未被性能 HAL 改回，所以一次性写入即可，不挂常驻守卫。
+#
+# 取值理由：min 要低于本机满载低点（1577M）才不会常驻触发，又要留出真正
+# 吃紧时的提前量，故取 1200/high 1500。free_swap_threshold 读回原值不动。
+# 若日后 RAM 占用面貌变化，判据是"满载低水位"，不是拍脑袋调数。
+# 撤销：把本函数的调用注释掉即可回到原厂分档值。
+# ============================================================================
+tune_avail_buffers() {
+    node=/dev/memcg/memory.avail_buffers
+    [ -w "$node" ] || { log_msg "hybridswap: $node 不可写，跳过"; return 0; }
+    # free_swap_threshold 是原厂按档给的，读回来原样写回，不猜也不硬编码。
+    fst=$(awk '/free_swap_threshold/{print $NF}' "$node" 2>/dev/null)
+    case "$fst" in ''|*[!0-9]*) fst=1536 ;; esac
+    before=$(tr '\n' ' ' <"$node" 2>/dev/null)
+    # 写入格式必须是**四个**数：avail min high free_swap_threshold。三个数会被拒。
+    echo "1500 1200 1500 $fst" >"$node" 2>/dev/null
+    log_msg "hybridswap: avail_buffers 改为 1500/1200/1500/$fst（原 [$before]），实际=[$(tr '\n' ' ' <"$node" 2>/dev/null)]"
+}
+
+# 原厂 nandswap 服务在开机约 53 秒才跑完（ro.boottime.init.oplus.nandswap.sh），
+# 而本脚本开头只等到 sys.boot_completed（约 30~45 秒），先到先写会被它覆盖。
+# 不用盲睡，直接有界轮询我们依赖的那个状态本身：等 hybridswap_enable 里出现
+# "swapd enable"（原厂脚本第 233 行写完才会有）且 swapd_pid 非 0。
+# 注意不能拿 persist.sys.oplus.hybridswap_app_memcg 当标志——它是 persist 属性，
+# 上次开机的值会一直留着，看不出本次是否已完成。
+#
+# 位置：这一段必须排在 service.sh 靠前，理由见文件末尾那段注释。轮询本身
+# 就是它的同步点，提前放不会抢在原厂前面，只会少等前面那堆 pm 命令。
+if [ -e /sys/block/zram0/hybridswap_enable ]; then
+    waited=0
+    while [ "$waited" -lt 180 ]; do
+        st=$(cat /sys/block/zram0/hybridswap_enable 2>/dev/null)
+        pid=$(cat /dev/memcg/memory.swapd_pid 2>/dev/null)
+        case "$st" in
+            *"swapd enable"*)
+                case "$pid" in
+                    ''|0|*[!0-9]*) ;;
+                    *) break ;;
+                esac
+                ;;
+        esac
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if [ "$waited" -ge 180 ]; then
+        log_msg "hybridswap: 等原厂 nandswap 就绪超时 ${waited}s（state=$st pid=$pid）"
+        # --------------------------------------------------------------------
+        # 自愈：超时到这一步，说明 init 压根没跑成 nandswap 服务，整次开机
+        # 没有 eswap —— 这比参数不对严重得多，光补写节点没有任何意义
+        # （swapd 都没起来）。已知一种成因：我们 bind 上去的脚本落在 nosuid
+        # 挂载上，init 转不进 nandswap 域（详见 post-fs-data.sh 里的注释和
+        # sepolicy.rule）。那种情况下脚本本身是好的，只是没人执行它。
+        #
+        # 所以这里手动跑一次。实测以 root 身份跑得通，收尾 state 会变成
+        # "hybridswap enable reclaim_in enable swapd enable"；少数几个写入
+        # （swapd_bind、oplus_healthinfo/swappiness_para）会因为域不同或节点
+        # 不存在而失败，都不影响主链路。
+        #
+        # 只跑一次，跑完立刻复检；不轮询、不常驻。
+        # --------------------------------------------------------------------
+        if [ -x /product/bin/init.oplus.nandswap.sh ]; then
+            sh /product/bin/init.oplus.nandswap.sh boot_completed >/dev/null 2>&1
+            st=$(cat /sys/block/zram0/hybridswap_enable 2>/dev/null)
+            pid=$(cat /dev/memcg/memory.swapd_pid 2>/dev/null)
+            log_msg "hybridswap: 已手动补跑原厂脚本一次，state=$st pid=$pid"
+        fi
+    else
+        log_msg "hybridswap: 原厂 nandswap 已就绪（等待 ${waited}s，swapd_pid=$pid）"
+    fi
+    # 原厂脚本写完 enable 之后还会继续写参数，留 1 秒交接窗口即可（原为 3 秒）。
+    sleep 1
+
+    # ------------------------------------------------------------------------
+    # 2026-08-29：这里原本无条件调 tune_zram2ufs / tune_avail_buffers 抢写。
+    # 现在 post-fs-data 阶段已经把 /product/bin/init.oplus.nandswap.sh 本身
+    # patch 过并 bind 上去了（≤9G 档 1500/1200/1500/1536，且把它自己算出来的
+    # $zram2ufs_ratio 真正下发到 swapd_memcgs_param），所以正常路径下原厂脚本
+    # 出来的值**就已经是对的**，不需要我们再写一遍。
+    #
+    # 这里只做核对：值对就什么都不干，只记一行；值不对（说明 bind 没成、
+    # 或 ROM 更新后特征串没匹配上被跳过了）才回落到运行时写入。
+    # 一个坏掉的 patch 不该让参数悄悄退回原厂的 16G 档。
+    # ------------------------------------------------------------------------
+    _z_now=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)
+    _a_now=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
+    if [ "$_z_now" = 15 ] && [ "$_a_now" = 1500 ]; then
+        log_msg "hybridswap: 原厂脚本已给出正确值（zram2ufs=$_z_now avail_buffers=$_a_now），无需运行时写入"
+    else
+        log_msg "hybridswap: 原厂脚本给的是 zram2ufs=$_z_now avail_buffers=$_a_now，nandswap patch 未生效，回落到运行时写入"
+        tune_zram2ufs
+        tune_avail_buffers
+    fi
+
+    # ------------------------------------------------------------------------
+    # 唯一保留的运行时写入：perf HAL 的场景推送兜底。
+    #
+    # 为什么这一路没法像 nandswap 那样改配置源头：
+    # /odm/bin/hw/vendor-oplus-hardware-performance-V1-service（220608 字节）
+    # 里 strings 只搜得到 "memory.avail_buffers" 和 "memory.swapd_memcgs_param"
+    # 两个**节点名**，一个 .xml/.conf/.json 路径都没有；全盘 grep
+    # /odm/etc /vendor/etc /product/etc /my_product/etc /system/etc 也找不到任何
+    # 含 zram2ufs / avail_buffers / swapd_memcgs / mem2zram 的配置文件；
+    # 运行时看它的 fd 也只有 trace_marker。结论：这些值硬编码在 native 代码里，
+    # 没有可 patch 的配置。改不了源头，就只能在它写完之后补一次。
+    #
+    # 它的行为：开机 +55~80 秒之间**整串重写** swapd_memcgs_param，把
+    # level1 ub_mem2zram_ratio 从 60 抬到 80、同时把 zram2ufs 两列抹成 0，
+    # avail_buffers 推成 2300/2000/2300。同一批值在 +189s 手写下去连盯 90 秒
+    # 零变化，证明覆盖是**开机阶段一次性**的，不需要常驻看守。
+    #
+    # 这不是守护进程：最多写一次、最长 120 秒、写完或超时都 break 退出。
+    # 判据用"我们期望的 15 还在不在"，比猜 HAL 什么时候动手可靠。
+    # ------------------------------------------------------------------------
+    (
+        _w=0
+        _hit=0
+        while [ "$_w" -lt 120 ]; do
+            _z=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)
+            _a=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
+            if [ "$_z" != 15 ] || [ "$_a" != 1500 ]; then
+                _hit=1
+                break
+            fi
+            sleep 2
+            _w=$((_w + 2))
+        done
+        if [ "$_hit" = 1 ]; then
+            # 让 HAL 把整串写完再补，避免和它对写。
+            sleep 3
+            tune_zram2ufs
+            tune_avail_buffers
+            # 迁移门槛同样被推回过（upmigrate 第三位 82→95、downmigrate 70→85），
+            # 顺手一起补。WALT 拒绝 down >= up，仍要三步原子写。
+            sched_write '100 100 100' /proc/sys/walt/sched_upmigrate
+            sched_write '50 85 70' /proc/sys/walt/sched_downmigrate
+            sched_write '60 95 82' /proc/sys/walt/sched_upmigrate
+            log_msg "hybridswap: 在 +${_w}s 检出 perf HAL 覆盖，已补写一次并退出（zram2ufs=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null) avail=[$(tr '\n' ' ' </dev/memcg/memory.avail_buffers 2>/dev/null)] upmigrate=$(tr '\t' ' ' </proc/sys/walt/sched_upmigrate 2>/dev/null))"
+        else
+            log_msg "hybridswap: 120s 内未被覆盖，无需补写"
+        fi
+    ) &
+else
+    log_msg "hybridswap: 节点不存在，跳过 zram2ufs 调整"
+fi
+
+# ============================================================================
+# 常驻系统进程的 memcg 豁免（原厂缺口）
+#
+# ColorOS 的 per-uid memcg 模式下，`memory.app_score` 只有一个写入者：
+# OplusOsenseCompressAction.setMemcgAppScore()，由 Nirvana 在**前台 app 切换**时
+# 调用——前台那一个 uid 写 0，切走写回 300。链路本身是通的（我们在 2.x 补的三个
+# 属性，见 post-fs-data.sh），实测桌面在前台时 uid_10091=0、切走后被框架改回 300。
+#
+# 缺口在于：**system_server 和 SystemUI 永远不会成为"前台 app"**，
+# 框架的 uid 观察器根本不覆盖它们，于是它们永久停在内核默认的 300，
+# 落进 level 1（score 100-399, ub_mem2zram_ratio=80）被当成普通后台按 80% 压。
+#
+# 实测代价（L1117/L1119，静置 60s 窗口）：
+#
+#   写豁免前  com.android.systemui  majflt 339.3/s  swap 178 MB   adj=-800
+#             system_server         majflt  35.5/s  swap 222 MB   adj=-900
+#   写豁免后  com.android.systemui  majflt   5.6/s
+#             system_server         majflt   5.2/s
+#
+# 60 倍。而且这是 100% refault（换进来的每一页都是刚换出去的），纯颠簸零收益；
+# SystemUI 是状态栏/通知/最近任务，每一次触摸都要它，这就是可感知卡顿的直接来源。
+#
+# 两个已核实的前提：
+#  1. app_score 对**全局 kswapd** 同样有效。同窗口 hybridswapd +0 tick、
+#     pgscan_direct=0，扫页的全是 kswapd0（3918/s），写完分数照样降 60 倍——
+#     一加内核把 app_score 接进了全局回收路径，不只是 swapd 的分档。
+#  2. 写进去**不会被框架改回**。同一 60s 窗口里框架把 uid_10091 从 0 改成了 300，
+#     却没碰 uid_1000 / uid_10094，证明它在写、只是不管这两个。
+#     所以一次性写入即可，不需要守护脚本。
+#
+# 取值 0 而不是 -1：0 正是 Nirvana 给前台写的值，落进 level 0（ratio=0，完全豁免），
+# 语义与原厂一致；-1 是原厂给 /dev/memcg/apps/{active,launcher,systemserver}
+# 那三个**包名模式专用、本机全空**的死目录用的。
+#
+# 名单不写死 uid（各机安装后 appid 不同），按 oom_score_adj <= -700 现场枚举：
+# 这正好是 AOSP 的 PERSISTENT_PROC_ADJ(-800) / SYSTEM_ADJ(-900) / PERSISTENT_SERVICE_ADJ(-700)
+# 三档，即"内核眼里绝不该被换出"的那批。普通应用最低也只到 0（前台）。
+# ============================================================================
+exempt_persistent_memcg() {
+    [ -d /dev/memcg/apps ] || { log_msg "memcg-exempt: /dev/memcg/apps 不存在，跳过"; return 0; }
+
+    _n=0
+    _seen=" "
+    _names=""
+    for _p in /proc/[0-9]*; do
+        _adj=$(cat "$_p/oom_score_adj" 2>/dev/null) || continue
+        case "$_adj" in
+            -*) ;;                     # 只看负 adj，其余直接跳过
+            *) continue ;;
+        esac
+        [ "$_adj" -le -700 ] 2>/dev/null || continue
+
+        _uid=$(awk '/^Uid:/{print $2; exit}' "$_p/status" 2>/dev/null)
+        [ -n "$_uid" ] || continue
+        # 同一个 uid 下往往有几十个进程（uid_0/uid_1000 尤其），去重，否则重复写几百次
+        case "$_seen" in *" $_uid "*) continue ;; esac
+        _seen="$_seen$_uid "
+
+        _d=/dev/memcg/apps/uid_$_uid
+        [ -f "$_d/memory.app_score" ] || continue
+
+        # uid 层与它下面所有 pid 层都写：匿名页是记在叶子 memcg 上的。
+        echo 0 > "$_d/memory.app_score" 2>/dev/null
+        for _pd in "$_d"/pid_*/; do
+            [ -f "$_pd/memory.app_score" ] && echo 0 > "$_pd/memory.app_score" 2>/dev/null
+        done
+
+        if [ "$(cat "$_d/memory.app_score" 2>/dev/null)" = 0 ]; then
+            _n=$((_n + 1))
+            _names="$_names $_uid"
+        fi
+    done
+
+    if [ "$_n" -gt 0 ]; then
+        log_msg "memcg-exempt: 已给 $_n 个常驻 uid 写 app_score=0 —— uid:$_names"
+    else
+        log_msg "WARN: memcg-exempt: 没找到任何 adj<=-700 的 uid memcg，前台豁免链路可能没起来"
+    fi
+}
+
+exempt_persistent_memcg
+
 # The port's tango translator repeatedly aborts on this tablet's 32-bit
 # runtime. Keep the native secondary zygote stopped instead of respawning it.
 stop zygote_tango
-sleep 2
 resetprop -p persist.sys.horae.enable 1
 apply_serial_fix
 
@@ -373,6 +890,167 @@ disable_wlan_diag_logging() {
 
 disable_wlan_diag_logging
 
+# ============================================================================
+# 停用无蜂窝机型上永不使用的电话栈
+#
+# 本机 ro.baseband=apq、ro.carrier=wifi-only，没有 modem 硬件。移植 ROM 却把
+# 一加平板的整套电话用户态原样带了过来，并且用 lib-virtual-modem-radio.so 起了
+# 两个"假 RIL"去喂框架，好让 telephony 不至于崩。这套东西 CPU 时间恒为
+# 00:00:00，但吃内存（2026-08-28 实测）：
+#
+#   org.codeaurora.ims           RSS 37.9MB + zram 73.7MB  ≈ 111MB
+#   subsys_daemon ×3（含两个假 RIL） RSS 14.1MB + zram  9.1MB
+#   imsdaemon / ims_rtp_daemon / ims-dataservice-daemon
+#                                RSS 16.9MB + zram  6.5MB
+#   vendor.dpmd + dpmQmiMgr      RSS  5.4MB + zram  1.9MB
+#
+# 合计约 190MB 匿名内存、其中约 95MB 压在 zram 里。这机器只有 8GB，同期
+# MemFree 只剩 282MB、换页速率 7668 in / 10360 out 页每秒——这批常驻是在
+# 白占换页预算。此前 #43 判定"代价为零"，那次只看了 CPU 时间，漏了内存，是错的。
+#
+# 关的顺序有讲究，必须先摘 feature 再停守护进程：
+#   framework 侧的 telephony 由 PackageManager 的 feature 位决定。feature 还在
+#   的时候直接停 RIL，com.android.phone 会一直重连不上而刷屏甚至崩溃循环；
+#   feature 摘掉后 telephony 栈根本不初始化，假 RIL 就没有客户端了。
+#   feature 的摘除靠 system/etc/permissions/apq_excluded_telephony_features.xml
+#   （ROM 自带、放在 noRil/ 子目录里从没被扫到的那份），开机时由 PackageManager
+#   读取，见那个文件里的注释。所以本段必须在**该文件已生效的那次开机**才有意义。
+#
+# 明确不动的：cnss-daemon（WLAN 子系统守护，同名不同源）、per_mgr / per_proxy /
+# qmipriod / ssgqmigd / nvram_qmi（共用 QMI 基础设施，GPS 与 WiFi 也挂在上面）、
+# qti-modem-daemon-0（真 QTI radio service 装载器，留着当框架万一回头找 RIL 的
+# 兜底）。也不动 com.android.phone——它是 persistent 进程，杀了会立刻重生。
+#
+# 分级开关：出问题就把 BASEBAND_STOP_LEVEL 调回 1（只停 IMS/DPM，保留假 RIL），
+# 或调成 0 完全还原。全部是一次性 stop，不留守护脚本。
+# ============================================================================
+BASEBAND_STOP_LEVEL=2
+
+BASEBAND_SVC_IMS="vendor.imsdaemon vendor.ims_rtp_daemon vendor.ims-dataservice-daemon vendor.dpmd dpmQmiMgr"
+BASEBAND_SVC_RIL="virtual-ril-daemon-0 virtual-ril-daemon-1 qti-modem-daemon-0"
+
+stop_dead_telephony_stack() {
+    [ "$BASEBAND_STOP_LEVEL" -ge 1 ] 2>/dev/null || return 0
+
+    # 前提校验：只在确实没有蜂窝硬件时动手。任一条不成立就整段跳过，
+    # 这样万一将来换了带 modem 的底包，本段自动失效而不是把电话打瘸。
+    baseband=$(getprop ro.baseband)
+    case "$baseband" in
+        apq|apq_*|""|unknown) ;;
+        *) log_msg "telephony-strip: skipped, ro.baseband=$baseband"; return 0 ;;
+    esac
+    # 第二道 ro 判据。刻意**不**用 gsm.version.baseband：本机那个值是
+    # "Virtual RILD Modem,Virtual RILD Modem"，是假 RIL 自己写上去的，
+    # 2026-08-28 第一版拿"它非空"当"有真 modem"而整段跳过，等于让要清理的目标
+    # 自己签发免死金牌。而且本段末尾会把这个属性抹成 unknown，再拿它当判据就
+    # 变成了自我指涉。ro.baseband / ro.carrier 是底包烧死的只读属性，
+    # 不受本模块任何操作影响，是唯一可靠的依据。
+    carrier=$(getprop ro.carrier)
+    case "$carrier" in
+        wifi-only|""|unknown) ;;
+        *) log_msg "telephony-strip: skipped, ro.carrier=$carrier"; return 0 ;;
+    esac
+
+    # feature 必须已经被摘掉才继续。判据故意用 telephony.ims 而不是
+    # android.hardware.telephony：后者在本机开机时本来就不存在（联想 odm 没声明），
+    # 拿它当判据等于没判。telephony.ims 是 /odm/etc/permissions/
+    # android.hardware.telephony.ims.xml 声明的、当前确实在册的那一条——它消失了，
+    # 才能证明我们那份 apq_excluded_telephony_features.xml 这次真的被扫到并生效了。
+    if pm list features 2>/dev/null | grep -q '^feature:android.hardware.telephony.ims$'; then
+        log_msg "telephony-strip: skipped, telephony.ims feature still present (permissions overlay not in effect)"
+        return 0
+    fi
+    # telecom 是微信/QQ 语音通话要用的，必须还在。它没了说明排除清单误伤，立刻收手。
+    if ! pm list features 2>/dev/null | grep -q '^feature:android.software.telecom$'; then
+        log_msg "telephony-strip: ABORT, android.software.telecom was removed by mistake"
+        return 0
+    fi
+
+    targets="$BASEBAND_SVC_IMS"
+    [ "$BASEBAND_STOP_LEVEL" -ge 2 ] && targets="$targets $BASEBAND_SVC_RIL"
+
+    stopped=""
+    for svc in $targets; do
+        [ "$(getprop "init.svc.$svc")" = running ] || continue
+        stop "$svc" 2>/dev/null
+        stopped="$stopped $svc"
+    done
+    [ -n "$stopped" ] && sleep 1
+
+    still=""
+    for svc in $stopped; do
+        [ "$(getprop "init.svc.$svc")" = running ] && still="$still $svc"
+    done
+
+    # IMS 的应用侧进程 org.codeaurora.ims，全栈里最大的一块（实测 RSS 99.7MB +
+    # zram 30.2MB）。2026-08-28 第一版只做 am force-stop，指望"feature 没了就不会
+    # 再被 bind"——实测**杀了立刻回来**：这个包在 manifest 里是 persistent 的，
+    # system_server 会无条件重启它，跟有没有 telephony feature 无关。
+    # 所以必须改包状态。用 pm disable（而不是卸载）：一条 pm enable 就能原样恢复，
+    # 不动 APK、不动数据。本机 ro.carrier=wifi-only、telephony feature 已全部摘除，
+    # 这个 IMS 实现没有任何可服务的对象。
+    ims_pid=$(pidof org.codeaurora.ims 2>/dev/null | awk '{print $1}')
+    if [ -n "$ims_pid" ]; then
+        ims_rss=$(awk '/^VmRSS:/{print $2}' "/proc/$ims_pid/status" 2>/dev/null)
+        ims_swap=$(awk '/^VmSwap:/{print $2}' "/proc/$ims_pid/status" 2>/dev/null)
+    fi
+    # com.android.phone 是 org.codeaurora.ims 的上游宿主：它握着 ImsService /
+    # QtiImsExtService / ImsRilService 三个 binding，只要它活着，IMS 就会被反复拉起。
+    # 它自己也是纯电话栈（TeleService），本机没有 modem，整个进程无事可做。
+    # 注意 telecom（微信/QQ 语音走的 ConnectionService）在 com.android.server.telecom
+    # 里，是另一个包，本段完全不碰，已用 pm list packages 核实。
+    #
+    # 这个包带 PERSISTENT 标志。实测（2026-08-28）：当场 pm disable + kill -9 之后
+    # 它仍然重生，logcat 明写 "Process com.android.phone has died: pers PER" —— AMS
+    # 的常驻进程表是开机时一次性建好的，之后改包状态不会从表里摘掉它。所以这一刀
+    # 只在**下次开机**生效（PMS 在建表前就把 disabled 的包滤掉了）。
+    # 也就是说本函数当场杀不掉它是预期行为，不要据此判定失败。
+    # 撤销：pm enable --user 0 com.android.phone && reboot
+    phone_state=$(pm list packages -d 2>/dev/null | grep -c '^package:com.android.phone$')
+    if [ "$phone_state" = 0 ]; then
+        pm disable --user 0 com.android.phone >/dev/null 2>&1 &&
+            log_msg "telephony-strip: disabled com.android.phone (takes effect next boot); revert with: pm enable --user 0 com.android.phone"
+    fi
+
+    ims_state=$(pm list packages -d 2>/dev/null | grep -c '^package:org.codeaurora.ims$')
+    if [ "$ims_state" = 0 ]; then
+        if pm disable --user 0 org.codeaurora.ims >/dev/null 2>&1; then
+            log_msg "telephony-strip: disabled org.codeaurora.ims (was rss=${ims_rss:-0}kB swap=${ims_swap:-0}kB); revert with: pm enable --user 0 org.codeaurora.ims"
+        else
+            am force-stop --user 0 org.codeaurora.ims >/dev/null 2>&1
+            log_msg "telephony-strip: WARN pm disable failed for org.codeaurora.ims, fell back to force-stop"
+        fi
+    else
+        log_msg "telephony-strip: org.codeaurora.ims already disabled"
+    fi
+    am force-stop --user 0 org.codeaurora.ims >/dev/null 2>&1
+    # force-stop 对它无效——实测 pm disable + am force-stop 之后 pid 一动不动，
+    # 因为 com.android.phone 正握着三个活的 binding。补一刀 kill -9。
+    # 但同样受上面 "pers PER" 那条限制：只要 com.android.phone 这一轮还活着，
+    # 杀掉的 IMS 就会被它重新 bind 起来。两个包都 disabled 之后，下一次开机
+    # 二者都不会再出现，这才是真正的了结。本轮杀一刀只为回收当前这份内存。
+    for p in $(pidof org.codeaurora.ims 2>/dev/null); do
+        kill -9 "$p" 2>/dev/null &&
+            log_msg "telephony-strip: killed lingering org.codeaurora.ims pid=$p"
+    done
+
+    # 抹掉显示层残留的假基带字符串。设置里"关于本机 → 基带版本"读的就是这个属性，
+    # 它是假 RIL 启动时自己写的；RIL 停掉之后这个值就是一句无主的谎话。
+    # 这一步纯粹改显示、不省内存，且不是 persist 属性，重启即回到底包默认，
+    # 由本脚本每次开机重新设置。判据不依赖它（见上面 ro.carrier 那段）。
+    case "$(getprop gsm.version.baseband)" in
+        ''|unknown) ;;
+        *)
+            resetprop gsm.version.baseband unknown 2>/dev/null &&
+                log_msg "telephony-strip: masked stale gsm.version.baseband"
+            ;;
+    esac
+
+    log_msg "telephony-strip: level=$BASEBAND_STOP_LEVEL stopped=[${stopped# }] still_running=[${still# }] memfree=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)kB"
+}
+
+stop_dead_telephony_stack
+
 # The port ships the genuine OVoice service but the source ROM leaves its
 # companion SpeechAssist package disabled. Keep the user-facing XiaoBu path
 # available and restore the same global switches used by the source ROM.
@@ -504,7 +1182,9 @@ if [ "$(settings get system os.charge.settings.batterysettings.batteryhealth 2>/
     log_msg "battery health entry enabled"
 fi
 
-log_msg "stable LSPosed Hook payload verified"
+# （删除了一行 log_msg "stable LSPosed Hook payload verified" —— 它上面没有任何
+#   校验动作，是无条件打印的假日志，只会在排障时把人往错方向带。真正的路径固定
+#   与校验在本脚本开头的 LsposedPathSync 那段，成功失败都有日志。）
 if pm path com.aclaniakea.colorosaonlifecycle >/dev/null 2>&1; then
     if pm uninstall --user 0 com.aclaniakea.colorosaonlifecycle >>"$LOGFILE" 2>&1; then
         log_msg "removed standalone AON lifecycle package after integration"
@@ -543,6 +1223,23 @@ if [ -x "$MODDIR/bin/voice-power-guard.sh" ]; then
     log_msg "event-driven voice power guard started"
 fi
 
+# ============================================================================
+# KGSL 显存前后台状态同步
+#
+# 移植包里没有任何组件写 /sys/class/kgsl/kgsl/proc/<pid>/state，导致高通自带的
+# GPU 显存回收从未运行过一次（所有进程恒为 foreground、gpumem_reclaimed 全 0）。
+# 详细定性与"为什么这里必须破例常驻"写在 bin/kgsl-state-sync.sh 的文件头。
+# ============================================================================
+if [ -r "$MODDIR/kgsl-state-sync.pid" ]; then
+    kill "$(cat "$MODDIR/kgsl-state-sync.pid" 2>/dev/null)" 2>/dev/null
+    rm -f "$MODDIR/kgsl-state-sync.pid"
+fi
+if [ -x "$MODDIR/bin/kgsl-state-sync.sh" ] && [ -d /sys/class/kgsl/kgsl/proc ]; then
+    "$MODDIR/bin/kgsl-state-sync.sh" "$MODDIR" &
+    echo $! >"$MODDIR/kgsl-state-sync.pid"
+    log_msg "kgsl state sync started (page_alloc=$(($(cat /sys/class/kgsl/kgsl/page_alloc 2>/dev/null || echo 0) / 1048576))MB)"
+fi
+
 log_msg "identity=$(getprop ro.product.brand)/$(getprop ro.product.name)/$(getprop ro.product.device)/$(getprop ro.product.model)"
 log_msg "zygote_tango=$(getprop init.svc.zygote_tango) horae=$(getprop init.svc.horae) gameopt=$(getprop init.svc.gameopt_hal_service-1-0)"
 log_msg "late service end"
@@ -557,13 +1254,18 @@ log_msg "late service end"
 # the registered package on every boot needlessly wakes PackageManager and
 # dex2oat while Launcher is still restoring its working set.
 
-sleep 8
-latest_verbose=$(ls -t /data/adb/lspd/log/verbose_*.log 2>/dev/null | head -1)
-if [ -n "$latest_verbose" ] && grep -q "AmbientColorSensorBridge: installed" "$latest_verbose"; then
-    log_msg "ambient light bridge loaded"
-else
-    log_msg "ambient light bridge not loaded this boot; no destructive recovery attempted"
-fi
+# 这只是一条**诊断**日志，却曾经用一个前台 sleep 8 把整条脚本卡住 8 秒。
+# 挪进后台子 shell：它不影响任何后续步骤，也没人依赖它的结果。
+# 不是守护进程——睡一次、读一次日志、写一行、退出。
+(
+    sleep 8
+    latest_verbose=$(ls -t /data/adb/lspd/log/verbose_*.log 2>/dev/null | head -1)
+    if [ -n "$latest_verbose" ] && grep -q "AmbientColorSensorBridge: installed" "$latest_verbose"; then
+        log_msg "ambient light bridge loaded"
+    else
+        log_msg "ambient light bridge not loaded this boot; no destructive recovery attempted"
+    fi
+) &
 
 # ============================================================================
 # 调优部分（原 coloros_port_tuning）：service 阶段 —— 已整体撤销
@@ -587,77 +1289,26 @@ fi
 setprop sys.oplus.hmbird.manager.enable 0
 
 # ============================================================================
-# hybridswap：把原厂自己算出来、却漏发给内核的 ub_zram2ufs_ratio 补下去。
+# hybridswap 的两处修正已上移到本脚本开头（2026-08-29）。
 #
-# 原厂 /product/bin/init.oplus.nandswap.sh 的 configure_hybridswap_parameters()
-# 会按 MemTotal 分档算出 zram2ufs_ratio（本机 7.4G 走 else 档 = 15），但这个值
-# 只被用来决定预留 dd 区的大小（dd_mb_cnt），**从未写进 swapd_memcgs_param**；
-# 第 212 行下发的是硬编码的 "3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0"，
-# 每一级的 ub_zram2ufs_ratio 都是 0。后果是 8G eswap 挂上了、hybridswap_enable
-# 三段全 enable、hybridswapd 也活着，但 ESU_C 恒为 0、reclaimin_cnt 恒为 0，
-# 一页都没往 UFS 写过，zram 里的冷数据全程占着物理内存。
+# 原因：它们是**开机路径上的内存策略**，越早生效越好，可原先排在 900 多行
+# 包管理/语音唤醒/LSPosed 诊断之后，实测要到开机 +79~82 秒才落地，而用户
+# 在 +89 秒就解锁了 —— 等于整个开机换页高峰全程跑的是源机 12/16G 的门槛。
+# service.sh 是一条串行脚本，谁排在前面谁先生效，这就是唯一的杠杆。
 #
-# 2026-08-27 实机验证（8G 机型，写入 15 后 4 分钟）：reclaimin_cnt 0→101、
-# 落盘 286MB（loop51 diskstats 587264 扇区独立佐证）、ZSU_O 4295124→3519536 KB
-# 即 zram 腾出 776MB、MemAvailable 1277788→1446704 KB。读回仅 34MB，无换入风暴，
-# dmesg 无告警。速率收敛（T+2→T+3 增量为 0），属于一次性排积压而非持续狂写，
-# 且原厂 hybridswap_quota_day=10GB/天 的闸仍在兜底。
-#
-# 注意两点：
-#  1) mem2zram 那两列（本机开机后是 80/70）是 perf HAL
-#     /odm/bin/hw/vendor-oplus-hardware-performance-V1-service 在运行时从
-#     60/50 抬上去的，**必须读回原值原样写回**，不能硬编码，否则会把 HAL 的
-#     场景决策打回去。
-#  2) 这是一次性写入，不挂常驻守卫。HAL 若在之后重写整串会把 15 冲回 0；
-#     实测 4 分钟内没有发生。要确认现状用 action.sh 里那行 zram2ufs 读数。
+# 上移是安全的：那段本来就自带有界轮询，等的是
+# /sys/block/zram0/hybridswap_enable 出现 "swapd enable" 且 swapd_pid 非 0，
+# 也就是原厂 init.oplus.nandswap.sh 真正跑完的标志，与它在文件里的位置无关。
+# 提前之后它会阻塞在轮询上而不是空等前面的 pm 命令，净收益约 25 秒。
 # ============================================================================
-tune_zram2ufs() {
-    param=/dev/memcg/memory.swapd_memcgs_param
-    [ -w "$param" ] || { log_msg "hybridswap: $param 不可写，跳过"; return 0; }
-    # 只在原厂那三级（level 0/1/2）上工作，level 3~9 原厂就是全 0 的占位。
-    m1=$(awk '/level 1 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
-    m2=$(awk '/level 2 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
-    case "$m1" in ''|*[!0-9]*) m1= ;; esac
-    case "$m2" in ''|*[!0-9]*) m2= ;; esac
-    # 读不到就用原厂脚本第 212 行的硬编码值兜底，绝不猜。
-    [ -n "$m1" ] || m1=60
-    [ -n "$m2" ] || m2=50
-    # 格式：级数, 然后每级 min_score max_score ub_mem2zram ub_zram2ufs refault
-    echo "3 0 99 0 0 0 100 399 $m1 15 0 400 499 $m2 15 0 " >"$param" 2>/dev/null
-    log_msg "hybridswap: zram2ufs 15 已下发 (保留 HAL 的 mem2zram $m1/$m2)，实际=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' "$param" 2>/dev/null)"
-}
 
-# 原厂 nandswap 服务在开机约 57 秒才跑完（ro.boottime.init.oplus.nandswap.sh），
-# 而本脚本第 30 行只等到 sys.boot_completed（约 30~45 秒），先到先写会被它覆盖。
-# 不用盲睡，直接有界轮询我们依赖的那个状态本身：等 hybridswap_enable 里出现
-# "swapd enable"（原厂脚本第 233 行写完才会有）且 swapd_pid 非 0。
-# 注意不能拿 persist.sys.oplus.hybridswap_app_memcg 当标志——它是 persist 属性，
-# 上次开机的值会一直留着，看不出本次是否已完成。
-if [ -e /sys/block/zram0/hybridswap_enable ]; then
-    waited=0
-    while [ "$waited" -lt 180 ]; do
-        st=$(cat /sys/block/zram0/hybridswap_enable 2>/dev/null)
-        pid=$(cat /dev/memcg/memory.swapd_pid 2>/dev/null)
-        case "$st" in
-            *"swapd enable"*)
-                case "$pid" in
-                    ''|0|*[!0-9]*) ;;
-                    *) break ;;
-                esac
-                ;;
-        esac
-        sleep 3
-        waited=$((waited + 3))
-    done
-    if [ "$waited" -ge 180 ]; then
-        log_msg "hybridswap: 等原厂 nandswap 就绪超时 ${waited}s，仍尝试下发（state=$st pid=$pid）"
-    else
-        log_msg "hybridswap: 原厂 nandswap 已就绪（等待 ${waited}s，swapd_pid=$pid）"
-    fi
-    sleep 3
-    tune_zram2ufs
-else
-    log_msg "hybridswap: 节点不存在，跳过 zram2ufs 调整"
-fi
+log_msg "tuning handed back to stock: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root_memcg=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) zram2ufs=$(awk '/level 1 ub_zram2ufs_ratio/{print \$NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null) avail_buffers=[$(tr '\n' ' ' </dev/memcg/memory.avail_buffers 2>/dev/null)]"
 
-log_msg "tuning handed back to stock: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root_memcg=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null) min_free_kbytes=$(cat /proc/sys/vm/min_free_kbytes 2>/dev/null) watermark=$(cat /proc/sys/vm/watermark_scale_factor 2>/dev/null) zram2ufs=$(awk '/level 1 ub_zram2ufs_ratio/{print \$NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)"
+# ============================================================================
+# 联想 aispeech uuid 实验的安全网已撤（2026-08-29）
+#
+# 这里原本有一段开机 +90s 检查 ADSP 崩溃计数、超标就自动摘掉 lenovo_uuid_enable
+# 的一次性任务。实验换了投递方式（改模块自带的 my_product/etc/OVMS_settings.xml
+# 覆盖文件，而不是 mount --bind），uuid 现在原地可改可回滚、不需要重启，
+# 也就不需要开机安全网了。开关文件 lenovo_uuid_enable 一并作废。
+# ============================================================================

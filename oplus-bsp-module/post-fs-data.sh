@@ -71,6 +71,12 @@ done
 # sched_assist 导出的符号被后面一大票 cpu_sched 模块依赖，oplus_ipc 要在
 # 它之后，hybridswap 依赖 mm_osvelte / sched_info，exit_mm_optimize 依赖
 # hybridswap。
+#
+# 备忘（2026-08-28）：sched_assist 的源码其实就在内核树 drivers/oplus/cpu/sched/
+#   sched_assist/ 里（一个没接进 drivers/Makefile 的孤儿目录），实测可以编进
+#   vmlinux 内建。但**不采纳**：设备上这个 ko 本来就装得好好的，内建版与预编 ko
+#   撞名 411 个符号、二选一，等于用刷内核的风险换零功能增量；而且原厂 ColorOS
+#   上它本来就是 vendor_dlkm 里的 ko，内建反而偏离原厂。保持 ko 形式。
 # ---------------------------------------------------------------------------
 MODULES="
 oplus_cpu_sched_sched_assist
@@ -95,7 +101,68 @@ oplus_cpu_sched_task_sched
 oplus_cpu_waker_identify
 oplus_mm_hybridswap_zram
 oplus_mm_exit_mm_optimize
+ua_cpu_ioctl
+oplus_bsp_game_opt
+oplus_hans
+oplus_freeze_process
+kp_freeze_detect
+oplus_bsp_lz4k
+cpufreq_effiency
+oplus_resctrl
 "
+
+# ---------------------------------------------------------------------------
+# 末尾三个是自行补编的（sweep 脚本当年漏掉了它们）：
+#
+# ua_cpu_ioctl —— frame_boost 的 proc/ioctl 那半边。依赖
+#   oplus_cpu_sched_frame_boost（在上面），所以必须排它后面。建
+#   /proc/oplus_frame_boost/{ctrl,sys_ctrl,stune_boost,info,game_ed_info}
+#   与 /proc/oplus_cpu/ua_ctrl，system_server 靠这些节点标记 UX 线程。
+#   源码审计：零 vendor hook，init 失败路径干净，可 rmmod。低风险。
+#
+# oplus_bsp_game_opt —— /proc/game_opt/*，
+#   /odm/bin/hw/vendor.oplus.hardware.gameopt-service 的对端。
+#   ★ 单向门：注册 8 个 hook，其中 2 个 rvh（show_max_freq、
+#   try_to_wake_up_success），而 game_ctrl_exit 一个都不注销 →
+#   装上就永远不能 rmmod。try_to_wake_up_success 的另一槽被
+#   oplus_cpu_waker_identify 占着，两槽正好用满，别再往这个钩子上加东西。
+#   2026-08-27 手动 insmod 实测通过（25 个 proc 节点、dmesg 干净）。
+#
+# oplus_hans —— ColorOS 后台冻结子系统的内核侧（2026-08-28 补编）。
+#   源码在 modules/vendor/oplus/kernel/hans/，自带 Kbuild，模块名是
+#   oplus_hans 而不是 oplus_bsp_hans。注册 genl family "oplus_hans"，
+#   /system_ext/bin/hans 靠它建通道。
+#
+#   ★ 缺它的后果比看上去严重得多：hans 守护进程 genl_get_family_id 失败
+#   → 自己退出 → system_server 的 OplusHansManager 收到 MSG_HANS_DISABLED
+#   → 整套后台冻结关闭 → 后台应用一个不冻、全在跑 → swapd 把它们换出去、
+#   它们立刻踩回来 → 静置态 100% refault 颠簸（pswpin 733/s，熄屏更是
+#   6219/s），这是卡顿的主因。详见 project_hans_freezer_missing 记录。
+#
+#   风险低：五个钩子全是普通 vh（binder_preset/trans/reply/
+#   alloc_new_buf_locked、do_send_sig_info），init 失败会自己回滚，
+#   没有 rvh，可 rmmod。无依赖，位置随意。
+#
+# ---- 2026-08-28 第二批：从 53 个自编 ko 里筛出来的 5 个 ----
+# 筛选过程见 task #49。全部单独 insmod 实测通过、且 rmmod 得掉（可回退）。
+# 各自 20~32 KB，都不建顶层 /proc 节点，无依赖，顺序随意。
+#
+# oplus_freeze_process —— 冻结钩子。dmesg 报
+#   "[freeze_process_hook] module init successfully!"。冲的是断点二：
+#   HANS 已经算出冻结名单（enter FF, frzUids:[...]）但没有一个进程真被冻。
+#   这一批里唯一有明确目标的，其余四个是顺带。
+# kp_freeze_detect —— 冻结相关的内核异常检测，配合上面那个。
+# oplus_bsp_lz4k —— lz4k 压缩算法。zram comp_algorithm 列表里已经列着 lz4k
+#   但当前选的是 [lz4]；装上它才真正可选。**暂不切算法**，先备着。
+# cpufreq_effiency —— "cpufreq bouncing" 抑制，5 个模块参数，全用默认。
+# oplus_resctrl —— cache/带宽分区。
+#
+# 同批被否掉的，别再试：
+#   oplus_bsp_healthinfo      撞 oplus_cpu_sched_sched_info 的 ohm_get_cur_cpuload
+#   oplus_bsp_binder_strategy 撞 oplus_ipc 的 oblist_dequeue_topapp_change
+#   oplus_procs_load          init_module 里 Out of memory + 内核 oops，危险
+#   crypto_zstdn              本内核没编 crypto_register_scomp
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # 给 hybridswap 腾位置：卸掉标准 zram

@@ -1,11 +1,11 @@
 <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<!-- format: mode_auto-mode_90-mode_60-mode_120
+<!-- format: mode_auto-mode_90-mode_60-mode_144
      value: 0(unspecified), 1(90Hz), 2(60Hz), 4(144Hz)
      rateId="4-0-2-4" the preferred refresh rate id per setting mode
      setting mode: auto  ,90hz     ,60hz  ,144hz
      refresh rate: 144hz ,default,  60hz  ,144hz
 -->
-<refresh_rate_config version="2026080601" ratemagic="8750R60_90_120">
+<refresh_rate_config version="2026082801" ratemagic="8750R60_90_120_144">
 
   <item package="com.wudaokou.hippo" activity="com.wudaokou.hippo/.detail.activity.DetailActivity" disableViewOverride="true"  rateId="2-1-2-4" />
   <item package="com.baidu.netdisk" activity="com.baidu.netdisk/com.baidu.flutter.netdisk.devicemanager.DeviceManagerActivity" disableViewOverride="true"  rateId="2-1-2-4" />

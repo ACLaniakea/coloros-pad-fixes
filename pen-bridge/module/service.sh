@@ -184,6 +184,26 @@ monitor_pen_wake() {
 # disconnect emitted during a normal reboot must not block the next boot.
 # Bluetooth recovery below is intentionally independent of the physical Hall
 # pair; Hall is only used by the CPS and magnetic-capsule paths.
+# 刷新率策略交还原厂。OplusRefreshRatePolicyImpl 读 settings_enable_oppo_pencil
+# 作为 isIPEPencilConnected，笔在用时自己投 ipePencilRateId(120Hz)，那条通路已经
+# 在 publish_hall_state / monitor_real_bt_state 里写好了。这里原本又额外改
+# system min_refresh_rate / peak_refresh_rate 去锁 120，属于我们自造的第二层：
+#   1. 与原厂投票重复；
+#   2. 这两个键是用户设置项，写下去会覆盖用户在设置里选的峰值刷新率，
+#      模块若在笔连接时退出，用户就永久卡在 120；
+#   3. 两处调用点（Hall 发布 + BT 对账轮询）各自独立判定 docked，
+#      短暂不一致就会让 peak 在 144/120 之间来回跳，每跳一次就是一次
+#      DisplayModeDirector 策略变更 → 真实模式切换 → 肉眼可见的闪屏。
+# 所以整条自造通路删除，只保留开机时把历史残留擦回去。
+clear_refresh_residue() {
+    peak=$(settings get system peak_refresh_rate 2>/dev/null | tr -d '\r')
+    minr=$(settings get system min_refresh_rate 2>/dev/null | tr -d '\r')
+    # 本机设置界面只提供 自动/60/144，120 不是用户可选值，出现即为旧版本残留。
+    [ "$peak" = 120 ] && settings put system peak_refresh_rate 144 >/dev/null 2>&1
+    [ "$minr" = 120 ] && settings put system min_refresh_rate 0 >/dev/null 2>&1
+    return 0
+}
+
 reset_pen_state_mirror() {
     for key in \
             lenovo_pen_link_connected \
@@ -200,6 +220,7 @@ reset_pen_state_mirror() {
     settings put global lenovo_pen_physical_docked 0 >/dev/null 2>&1
     settings put global lenovo_pen_hardware_battery_valid 0 >/dev/null 2>&1
     settings put global lenovo_pen_oem_charge_valid 0 >/dev/null 2>&1
+    clear_refresh_residue
     echo "[$(date '+%F %T')] stale v1.0.61 connection mirror cleared"
 }
 
@@ -720,7 +741,6 @@ publish_hall_state() {
         --es source hardware_hall \
         --ez hardware_battery "$hardware_battery" \
         --ez hardware_identity_known true >/dev/null 2>&1
-    apply_refresh_policy "$connected" "$docked"
     echo "[$(date '+%F %T')] real Hall state docked=$docked battery=$battery trusted=$hardware_battery charging=$charging connected=$connected mac=$mac"
 }
 
@@ -792,21 +812,9 @@ real_bt_connected() {
         | grep -E "$tail .*hogp connection state=2" >/dev/null 2>&1
 }
 
-# Refresh-rate policy: the pen counts as "in use" only while it is connected
-# and not magnetically docked/charging. Lock 120 Hz then; otherwise release to
-# the 144 Hz maximum. Writes happen only on state transitions, never per pen
-# event, so the input pipeline is not disturbed.
-apply_refresh_policy() {
-    connected="$1"
-    docked="$2"
-    if [ "$connected" = 1 ] && [ "$docked" != 1 ]; then
-        settings put system min_refresh_rate 120 >/dev/null 2>&1
-        settings put system peak_refresh_rate 120 >/dev/null 2>&1
-    else
-        settings put system min_refresh_rate 0 >/dev/null 2>&1
-        settings put system peak_refresh_rate 144 >/dev/null 2>&1
-    fi
-}
+# 刷新率策略见文件上方 clear_refresh_residue：笔在用时的 120Hz 由原厂
+# OplusRefreshRatePolicyImpl 依据 settings_enable_oppo_pencil 自行投票，
+# 本模块不再直接改 system min_refresh_rate / peak_refresh_rate。
 
 # The OEM mirrors can lag or be overridden by a stale disconnect latch. Poll
 # the actual Bluetooth stack at low rate and republish the connection
@@ -870,7 +878,6 @@ monitor_real_bt_state() {
             [ "$connected" = 1 ] && [ "$docked" != 1 ] && pen_in_use=1
             settings put global settings_enable_oppo_pencil "$pen_in_use" >/dev/null 2>&1
             settings put global ipe_pencil_present "$connected" >/dev/null 2>&1
-            apply_refresh_policy "$connected" "$docked"
             if [ "$connected" = 1 ]; then
                 user_requested=$(settings get global lenovo_pen_user_disconnect_requested 2>/dev/null | tr -d '\r')
                 if [ "$user_requested" = 1 ]; then

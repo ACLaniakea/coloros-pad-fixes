@@ -82,88 +82,11 @@ find_irq_by_prefix() {
         /proc/interrupts 2>/dev/null
 }
 
-# 把一组同前缀的 IRQ 轮流铺到给定的 CPU 列表上。QCA 数据面每条队列的负载
-# 差了一个数量级（dp_14 约 9.5 万次，dp_13 约 6 千次），因此按 /proc/interrupts
-# 里的实际计数从多到少排序后再轮转，让最重的几条先落到不同核上。
-spread_irq_by_prefix() {
-    prefix=$1
-    shift
-    cpus="$*"
-    [ -n "$cpus" ] || return 0
-    idx=0
-    for irq in $(awk -v p="$prefix" '
-            index($NF, p) == 1 {
-                tot = 0
-                for (i = 2; i <= 7; i++) tot += $i
-                gsub(":", "", $1)
-                print tot, $1
-            }' /proc/interrupts 2>/dev/null | sort -rn | awk '{print $2}'); do
-        cpu=$(echo "$cpus" | awk -v n="$idx" '{print $((n % NF) + 1)}')
-        node="/proc/irq/$irq/smp_affinity_list"
-        [ -w "$node" ] || continue
-        before=$(cat "$node" 2>/dev/null)
-        [ "$before" = "$cpu" ] && { idx=$((idx + 1)); continue; }
-        echo "$cpu" >"$node" 2>/dev/null || continue
-        after=$(cat "/proc/irq/$irq/effective_affinity_list" 2>/dev/null)
-        log "irq=$irq prefix=$prefix cpu=$cpu effective=${after:-unknown} previous=${before:-unknown}"
-        idx=$((idx + 1))
-    done
-}
-
-set_irq_cpu() {
-    cpu=$1
-    name=$2
-    for irq in $(find_irq_by_name "$name"); do
-        node="/proc/irq/$irq/smp_affinity_list"
-        [ -w "$node" ] || continue
-        before=$(cat "/proc/irq/$irq/effective_affinity_list" 2>/dev/null)
-        [ "$before" = "$cpu" ] && continue
-        echo "$cpu" >"$node" 2>/dev/null || continue
-        after=$(cat "/proc/irq/$irq/effective_affinity_list" 2>/dev/null)
-        log "irq=$irq name=$name cpu=$cpu effective=${after:-unknown} previous=${before:-unknown}"
-    done
-}
-
-apply_irq_topology() {
-    # 源 SM8850 系统的 bootargs 带 irqaffinity=0-1；在本机 1+4+1 拓扑上会把
-    # 可迁移中断集中到唯一弱核 CPU0。默认把后注册的普通 IRQ 放在四颗中核，
-    # 再将已注册的高频设备 IRQ 按功能静态分散。Prime CPU5 留给交互突发。
-    write_node 1e /proc/irq/default_smp_affinity
-
-    set_irq_cpu 1 glink-native-adsp
-    set_irq_cpu 1 apps_rsc-drv-2
-    set_irq_cpu 1 ipcc_0
-
-    set_irq_cpu 2 hfi
-    set_irq_cpu 2 ufshcd
-    set_irq_cpu 2 dwc3
-
-    set_irq_cpu 3 msm_drm
-    set_irq_cpu 3 NVT-ts
-    set_irq_cpu 3 spi_geni
-
-    set_irq_cpu 4 240b7400.qcom,bwmon-llcc
-    set_irq_cpu 4 24091000.qcom,bwmon-ddr
-    set_irq_cpu 4 msm_serial_geni0
-
-    # 以上按名字静态分散的是 default_smp_affinity 覆盖不到的一部分。实机
-    # /proc/interrupts 显示真正的大户根本不在其中：WLAN 的 14 条中断把
-    # smp_affinity_list 显式钉在 0（不是默认漂移），合计约 43.6 万次全部落在
-    # 唯一弱核 CPU0；msm-vidc（硬件编解码）与两条 i2c_geni 同样有效落在 CPU0。
-    # 与此同时 CPU3/CPU4 各只有约 10 万次。投屏这类场景要同时吃 Wi-Fi 数据面
-    # 和视频编码，两者却挤在同一颗 379 容量的核上。
-    #
-    # WLAN 的 14 条中断同样全钉在 CPU0，但 QCA 驱动给它们置了 IRQ_NO_BALANCING：
-    # 实测对 irq 308/319/326 写 smp_affinity 与 smp_affinity_list 一律失败
-    # （rc=1/EIO），硬中断无法迁移，只能由 apply_net_rps 把随后的 softirq
-    # 协议栈处理转到中核。这里不再尝试，避免每次开机做十几次注定失败的写。
-
-    # 硬件编解码中断与其固件接口 hfi 同核，避免每帧跨核。
-    set_irq_cpu 2 msm-vidc
-
-    # i2c_geni 有多个实例（触控以外的传感器/PMIC 总线），统一挪到 CPU1。
-    spread_irq_by_prefix i2c_geni 1
-}
+# 说明：IRQ 铺核（原 spread_irq_by_prefix / set_irq_cpu）已整体移交 fix 模块的
+# apply_sched_baseline —— 原因见那边的注释：调度模块依赖 Scene 主动回调，
+# 三天没调用就让 IRQ 亲和全静默失效，基础修复不能挂在这种触发条件上。
+# 这里刻意不再保留这两个函数，避免"源码里有、实际不跑"的死代码再次误导排查。
+# find_irq_by_name 保留，status() 还在用它做只读展示。
 
 # CPU1-4 掩码；Prime CPU5 不参与网络软中断，留给交互突发。
 RPS_CPUS=1e
@@ -204,28 +127,18 @@ apply_net_rps() {
 }
 
 set_common() {
-    # 原厂 HAL 和温控继续拥有 scaling_max_freq；这里只清除错误的高最小频率。
-    write_policy scaling_min_freq 364800 499200 499200 480000
+    # 基础修复（IRQ 拓扑、wlan RPS、cpuset 拓扑、scaling_min_freq、walt 常量、
+    # 迁移门槛基线、input boost 基线）已全部搬到 ColorOS-Port-Base-Fix 的
+    # service.sh:apply_sched_baseline，开机一次性写入。
+    #
+    # 搬家原因：这些与 Scene 模式无关的东西原先只有 Scene 调用本脚本时才落地。
+    # 2026-08-25 之后 Scene 停止调用，scheduler.log 三天无新记录，于是 IRQ 全回
+    # CPU0、sched_upmigrate 回到 95、input_boost 关闭、cpuset 回到 0,3-4——
+    # 基础修复静默失效而没有任何征兆。判据是「Scene 卸载了这条是否还必须成立」。
+    #
+    # 本模块自此只负责随模式变化的量。governor 仍在这里兜一次底：Scene 的其它
+    # 功能可能把某个 policy 钉成 powersave，切模式时顺手解开。
     write_policy scaling_governor walt walt walt walt
-
-    write_node 1 /proc/sys/walt/sched_sbt_enable
-    write_node 119 /proc/sys/walt/walt_rtg_cfs_boost_prio
-    write_node 400 /proc/sys/walt/sched_pipeline_util_thres
-    write_node 325 /proc/sys/walt/walt_low_latency_task_threshold
-    write_node 'libunity.so, libfb.so' /proc/sys/walt/sched_lib_name
-    write_node UnityMain /proc/sys/walt/sched_lib_task
-    write_node 3000 /proc/sys/walt/sched_disable_mvp_thres
-    write_node 0 /proc/sys/walt/sched_boost
-
-    # SM8650Q 的容量拓扑是 1+4+1：CPU0=379，CPU1-4=867，CPU5=1024。
-    # 中间四核虽被固件拆为 policy1/3 两个频域，调度上仍是同容量的一簇；
-    # 后台若只给 0,3-4 会无故闲置其中两颗中核并在解锁时形成积压突发。
-    write_node '0-4' /dev/cpuset/background/cpus
-    write_node '0-4' /dev/cpuset/system-background/cpus
-    write_node '0-5' /dev/cpuset/foreground/cpus
-    write_node '0-5' /dev/cpuset/top-app/cpus
-    # 144Hz 合成线程避开唯一的弱小核，同时可按需使用 Prime 核。
-    write_node '1-5' /dev/cpuset/sf/cpus
 }
 
 set_mode() {
@@ -344,10 +257,10 @@ while ! mkdir "$LOCK" 2>/dev/null; do
 done
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
+# IRQ 拓扑已移交 fix 模块的 apply_sched_baseline；这里只保留 wlan RPS 的补写，
+# 因为 wlan0/p2p0 会在关开 Wi-Fi、投屏建组时被重建并清零 rps_cpus。
 if [ "$action" = irq-init ]; then
-    apply_irq_topology
     apply_net_rps
-    log "applied 1+4+1 irq topology default=$(cat /proc/irq/default_smp_affinity 2>/dev/null)"
     exit 0
 fi
 set_common

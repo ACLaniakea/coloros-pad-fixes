@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the base-fix LSPosed Hook APK from source (ACLaniakea 1.1.14).
+"""Build the base-fix LSPosed Hook APK from source (ACLaniakea 1.1.16).
 
 Produces a signed APK for com.aclaniakea.colorosostatsguard:
   javac (android.jar + Xposed stubs) -> d8 -> classes.dex
@@ -91,7 +91,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1114", "--version-name", "1.1.14"])
+             "--version-code", "1115", "--version-name", "1.1.15"])
         # 2. compile java
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    内容取自本机 ROM 自带的
+        /vendor/etc/permissions/noRil/apq_excluded_telephony_features.xml
+    （高通原文，Copyright (c) 2021 Qualcomm Technologies, Inc.）
+
+    这是高通给"无 modem 机型"（modem-less targets）准备的 feature 排除清单。
+    本机 ro.baseband=apq、ro.carrier=wifi-only，正是它的目标场景。但它被放在
+    permissions 的 noRil/ **子目录**里，而 SystemConfig 只扫描各分区 permissions
+    的**顶层**、不递归子目录 —— 所以这份文件在本机从未被读到过。
+
+    投递方式：bind mount 覆盖 /vendor/etc/permissions/android.hardware.telephony.mbms.xml
+    （见 post-fs-data.sh）。选这个挂载点有三个理由：
+      1. bind 要求挂载点已存在，而 /vendor 只读、加不了新文件；
+      2. 它就在被扫描的顶层目录里，且已经是 vendor_configs_file 标签；
+      3. 那份文件的全部内容就是声明 android.hardware.telephony.mbms —— 而 mbms
+         正是我们要摘掉的 feature 之一，顶掉它没有任何附带损失。
+    SystemConfig 读 /vendor/etc/permissions 时带 ALLOW_FEATURES，unavailable-feature
+    标签在该分区被接受（高通把原件放在 vendor 下也正是这个原因）。
+
+    2026-08-28 第一次投递失败的教训：原先放在模块的 system/etc/permissions/ 下，
+    指望 KernelSU 的 system 覆盖把它加进去，重启后 /system/etc/permissions/ 里
+    根本没有这个文件。**新增**文件走覆盖不可靠，只有 bind 到已存在的路径才稳。
+
+    刻意**不**移除 android.software.telecom：
+    /odm/etc/permissions/android.hardware.telephony.ims.xml 里同时声明了
+    telephony.ims 和 software.telecom。直接删那份 odm 文件会一并干掉 telecom，
+    而 telecom 的 ConnectionService 是微信/QQ 做语音通话要用的，与蜂窝无关。
+    unavailable-feature 的移除是在所有 permissions 文件解析完毕后统一执行的，
+    所以本清单能精确摘掉 telephony.*，让 odm 那份里的 telecom 完好留下。
+
+    实测动机（2026-08-28，重启后采样）：这些 feature 撑着一整套在无蜂窝平板上
+    永不被使用的电话栈，合计 182 MB 匿名内存（其中 org.codeaurora.ims 单进程
+    RSS 58.1 MB + zram 66.9 MB = 125 MB），而全栈 CPU 时间恒为 00:00:00。
+-->
+<permissions>
+    <!-- This should be used to exclude these features from modem-less targets. -->
+    <unavailable-feature name="android.hardware.telephony" />
+    <unavailable-feature name="android.hardware.telephony.gsm" />
+    <unavailable-feature name="android.hardware.telephony.cdma" />
+    <unavailable-feature name="android.hardware.telephony.ims" />
+    <unavailable-feature name="android.hardware.telephony.calling" />
+    <unavailable-feature name="android.hardware.telephony.data" />
+    <unavailable-feature name="android.hardware.telephony.mbms" />
+    <unavailable-feature name="android.hardware.telephony.messaging" />
+    <unavailable-feature name="android.hardware.telephony.subscription" />
+    <unavailable-feature name="android.hardware.telephony.radio.access" />
+</permissions>

@@ -16,7 +16,6 @@ INCLUDE = (
     "bin/pen-cps-gpio",
     "customize.sh",
     "module.prop",
-    "payload/refresh_rate_config.tb710fu.xml",
     "post-fs-data.sh",
     "service.sh",
     "system/etc/permissions/privapp-permissions-com.aclaniakea.penhidctl.xml",

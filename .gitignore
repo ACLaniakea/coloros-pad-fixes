@@ -38,3 +38,8 @@ experimental/find-device/releases/
 fix-module/module/.presync-*/
 fix-module/module/.retired-dead-files/
 fix-module/module/payload/osense/.retired-handed-back-to-stock/
+
+# 自建内核产物：30 个一加 BSP ko 由 kernel-compat/tools/sweep_oplus_modules.sh
+# 从 kernel-compat/ 下的源码与补丁重建，发布包 OplusBSP-Modules-*.zip 里带成品，
+# 不把 30MB 二进制塞进版本库（与上面 OEM 预编译件同一政策）。
+oplus-bsp-module/ko/

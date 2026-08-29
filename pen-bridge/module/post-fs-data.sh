@@ -1,8 +1,7 @@
 #!/system/bin/sh
 
-# Keep the TB710FU global refresh policy in this independently updateable
-# Root package. It is a display-policy bind only at this early stage; the
-# service writes the vendor pen-wakeup proc nodes once after boot/CPS is ready.
+# The service writes the vendor pen-wakeup proc nodes once after boot/CPS is
+# ready; this early stage only pins the LSPosed hook path.
 MODDIR=${0%/*}
 
 # LSPosed parses enabled modules before PackageManager restores random
@@ -30,12 +29,9 @@ if [ -f "$LSP_DB" ] && [ -f "$LSP_APK" ] && [ -f "$LSP_SYNC" ]; then
     done
 fi
 
-REFRESH_TARGET=/my_product/etc/refresh_rate_config.xml
-REFRESH_PAYLOAD="$MODDIR/payload/refresh_rate_config.tb710fu.xml"
-if [ -f "$REFRESH_TARGET" ] && [ -f "$REFRESH_PAYLOAD" ]; then
-    chown 0:0 "$REFRESH_PAYLOAD"
-    chmod 0644 "$REFRESH_PAYLOAD"
-    chcon u:object_r:system_file:s0 "$REFRESH_PAYLOAD" 2>/dev/null
-    mount --bind "$REFRESH_PAYLOAD" "$REFRESH_TARGET" 2>/dev/null
-fi
+# 刷新率配置（refresh_rate_config.xml）的 bind 已迁回 fix 模块。
+# 它是整机显示基线，与笔无关：笔在用时的 120Hz 由原厂
+# OplusRefreshRatePolicyImpl 依 settings_enable_oppo_pencil 自行投票，
+# 本模块只负责把那个键写对。放在这里曾导致 ratemagic 被误删 144，
+# 面板被长期钉在 60Hz——详见 fix-module/module/post-fs-data.sh 里的说明。
 exit 0

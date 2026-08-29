@@ -32,3 +32,72 @@ allow nandswap adb_data_file dir search;
 allow nandswap vendor_file file getattr;
 allow nandswap vendor_qti_init_shell_exec file getattr;
 allow nandswap unlabeled dir getattr;
+
+# ---------------------------------------------------------------------------
+# 让 init 能从 nosuid 文件系统上的可执行文件切进 nandswap 域
+#
+# 2026-08-29 v2.8.0 起，post-fs-data 会把改过的
+# /product/bin/init.oplus.nandswap.sh bind 上去（补出 ≤9G 档、把原厂自己算出
+# 却漏发的 zram2ufs_ratio 真正下发）。产物落在 /data 上时服务一次都没起来：
+#
+#   avc: denied { execute_no_trans } path=".../init.oplus.nandswap.sh" dev="sda14"
+#   avc: denied { nosuid_transition } scontext=u:r:init:s0 tcontext=u:r:nandswap:s0 tclass=process2
+#   op=security_bounded_transition seresult=denied oldcontext=u:r:init:s0 newcontext=u:r:nandswap:s0
+#
+# sda14 就是 /data，挂载选项带 nosuid。内核在 nosuid 文件系统上不做常规域切换，
+# 只接受"被 bound 的域"或显式的 process2:nosuid_transition 许可；两者都没有，
+# 于是 init 退回 execute_no_trans（在原域里直接执行），那条也没许可 ⇒ 服务不执行,
+# 整次开机 hybridswap 全程 disable。
+#
+# 这一条只放开 init → nandswap 这一对，且只放开"允许在 nosuid 挂载上切域"这一件事，
+# 不新增任何文件/网络访问；目标域 nandswap 的权限集完全没变。
+# 有了它，产物放 /data 或 tmpfs 都能跑（post-fs-data 里仍优先用 tmpfs，
+# 那条路径本身就不触发这个检查，本规则是兜底）。
+# 撤销：删掉本行即可，nandswap 会退回执行原厂脚本。
+# ---------------------------------------------------------------------------
+allow init nandswap process2 nosuid_transition;
+
+# ---------------------------------------------------------------------------
+# 放行 oplus binder UX 通路（2026-08-29 v2.10.0）
+#
+# dmesg 里 33 条 avc denied 中有 40 条命中同一个目标（去重后 5 类，累计 40 次）：
+#
+#   avc: denied { ioctl } C="android.anim"    path="/proc/oplus_binder/ux_flag"
+#        ioctlcmd=0x6900 scontext=u:r:system_server:s0
+#        tcontext=u:object_r:oplus_binder_proc:s0 tclass=file permissive=0
+#   同样的还有 android.display / android.ui / binder:2473_B / binder:2473_1B
+#
+# 被拦的全是 system_server 的 UI 关键线程。它们在往 ux_flag 下发
+# "这笔 binder 事务属于 UX 关键路径" 的标记，好让 oplus_binder 把服务端线程
+# 一起提到 UX 优先级（binder 优先级继承）。SELinux 挡掉 ioctl 之后，
+# 这个继承整条都不生效 —— 前台应用发起的 binder 调用在 system_server 侧
+# 被当普通任务调度，正好对得上 SystemUI/桌面 9.8% 的掉帧率里
+# SlowDraw > SlowUI 的形态。
+#
+# 节点本身是 ROM 自带的（oplus_binder ko 创建，标签 oplus_binder_proc，
+# 权限 0666），源策略里本该有对应的 allow，是移植过程中丢掉的那一条。
+# 这属于"把原厂机制修回去"，不是我们自造的新行为。
+#
+# 两条规则的关系：
+#   allow      —— 补基础 ioctl 权限（这是 avc 直接报的那一项）
+#   allowxperm —— 全范围放开，避免万一策略里已存在窄 xperm 规则时被二次拦截；
+#                 给全范围等价于不加限制，不会比现在更严。
+#
+# 验证方法：重启后 `dmesg | grep -c 'oplus_binder/ux_flag'` 应为 0。
+# 撤销：删掉下面 4 行。
+# ---------------------------------------------------------------------------
+allow system_server oplus_binder_proc file { open read write ioctl getattr };
+allowxperm system_server oplus_binder_proc file ioctl { 0x0000-0xffff };
+
+# 同一条 UX 链路的应用侧入口：应用把自己的关键线程 tid 写进 ux_task_app，
+# sched_assist 据此把它们标成 UX 任务。dmesg 里有
+#   avc: denied { read write } C="oloros.weather2" name="ux_task_app"
+#        scontext=u:r:untrusted_app:s0:c53,c257,c512,c768
+# 节点权限同样是 0666（proc_create("ux_task_app", 0666, ...)，见
+# sched_assist/sa_sysfs.c:1243），原厂就是让普通应用直接写的。
+allow untrusted_app oplus_ux_task_app_proc file { open read write ioctl getattr };
+allow platform_app oplus_ux_task_app_proc file { open read write ioctl getattr };
+allow system_app oplus_ux_task_app_proc file { open read write ioctl getattr };
+allowxperm untrusted_app oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allowxperm platform_app oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allowxperm system_app oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };

@@ -4,6 +4,12 @@ MODDIR=${0%/*}
 
 [ -f "$MODDIR/app-suggestion.pid" ] && kill "$(cat "$MODDIR/app-suggestion.pid")" 2>/dev/null
 [ -f "$MODDIR/voice-power-guard.pid" ] && kill "$(cat "$MODDIR/voice-power-guard.pid")" 2>/dev/null
+[ -f "$MODDIR/kgsl-state-sync.pid" ] && kill "$(cat "$MODDIR/kgsl-state-sync.pid")" 2>/dev/null
+# 停掉同步器后必须把状态全部还原：内核不会自己把 state 写回 foreground，
+# 留下 background 标记会让这些进程的显存持续被 shrinker 拿走。
+for _d in /sys/class/kgsl/kgsl/proc/*; do
+    [ -w "$_d/state" ] && printf 'foreground' >"$_d/state" 2>/dev/null
+done
 resetprop persist.sys.horae.enable 0
 resetprop -p persist.sys.tango_zygote32.start 1
 

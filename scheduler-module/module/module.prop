@@ -1,6 +1,6 @@
 id=sm8650q_scene_scheduler
 name=SM8650Q 专用调度（Scene）
 author=ACLaniakea
-version=1.0.9
-versionCode=100009
-description=TB710FU/SM8650Q 六核 1+4+1 专用调度：把钉在弱核 CPU0 的 WLAN 数据面、硬件编解码与 i2c 中断按实测负载铺到空闲中核，修正八核 IRQ 集中与 X4 跨簇迁移门槛；通过 Scene 标准接口切换模式，无常驻守护。
+version=1.1.0
+versionCode=100100
+description=SM8650Q 六核 1+4+1 的 Scene 模式桥接：省电/均衡/性能/极速四档下发调频区间、迁移门槛与 cpuset。开机自启，无常驻守护。

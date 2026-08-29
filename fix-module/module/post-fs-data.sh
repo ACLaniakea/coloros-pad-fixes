@@ -31,6 +31,27 @@ if ! is_supported_device; then
 fi
 
 # ============================================================================
+# IRQ 默认亲和掩码：必须在 post-fs-data 就写，写晚了对已注册的中断毫无作用。
+#
+# /proc/irq/default_smp_affinity 只影响**此后**才注册的中断；已经存在的
+# /proc/irq/N/smp_affinity 一个都不会被它改动。service.sh 在 boot_completed
+# 之后再写，等于绝大多数驱动早就注册完了，这一行基本是空转。
+#
+# 为什么要改：源机 SM8850 的 bootargs 带 irqaffinity=0-1，在本机 1+4+1 的
+# 六核上会把可迁移中断压到唯一那颗弱小核 CPU0（容量 379，中核 867、X4 1024）。
+# 1e = CPU1~CPU4，即四颗 A720 中核。
+#
+# 原厂 init.kernel.post_boot-pineapple.sh 从不碰这个节点，所以不存在抢写。
+# service.sh 里那一行保留作兜底（幂等，值相同时直接 return）。
+# 撤销：写回 3f 即恢复"任意核"，写回 03 即恢复源机 bootargs 的行为。
+# ============================================================================
+if [ -w /proc/irq/default_smp_affinity ]; then
+    _irqaff_before=$(cat /proc/irq/default_smp_affinity 2>/dev/null)
+    echo 1e >/proc/irq/default_smp_affinity 2>/dev/null
+    log_msg "irq default_smp_affinity ${_irqaff_before} -> $(cat /proc/irq/default_smp_affinity 2>/dev/null)"
+fi
+
+# ============================================================================
 # 内存扩展 / 压缩交换：已交还给原厂
 #
 # 这里原本有三段替代层，全部因为自建 GKI 内核缺少一加 BSP 能力而存在：
@@ -97,6 +118,288 @@ done
 bind_vendor_config "$MODDIR/payload/perf/targetconfig.xml" \
     /vendor/etc/perf/targetconfig.xml
 
+# ----------------------------------------------------------------------------
+# 小布语音唤醒：把 CUSTOM_VOICE_UI 的 vendor_uuid 对上 OVMS 实际发的那个
+#
+# OVMS（com.oplus.ovoicemanager.wakeup）按 /my_product/etc/OVMS_settings.xml
+# 里的 <vender_uuid> 发起 loadPhraseSoundModel，值是
+#   68ac2d41-e861-11e4-95ed-0002a5d5c51c
+# 而本机 vendor 侧这份 resourcemanager 的 CUSTOM_VOICE_UI 段挂的是
+#   dc90a99a-0aba-500e-81b5-79830d49d398
+# （另外四份 sku 用的是高通出厂占位 c51c508a-…，只有 mtp 这份被改过。）
+# uuid 对不上 ⇒ PAL 查不到平台信息 ⇒ -22 ⇒ STHAL 抛异常 ⇒
+# SoundTriggerHalEnforcer 重启 HAL。ST HAL 就活在 audioserver 里，
+# 每 5~6 秒重启一次，用户侧表现为**音频播放每隔几秒断一下**。
+#
+# ---- 走过的弯路（留着当反例）----
+# 先前的版本是复刻 QC_VOICE_UI 新增一段 OPLUS_VOICE_UI。那条路必然失败：
+# QC_VOICE_UI 走高通 SVA 解析器，会去解 SML 头，而小布的
+# /my_product/etc/OVMS_1st_wakeup.bin 是 BreenoSpeech 私有格式
+# （头 `20 00 00 00 …` / `33 00 00 00 …`，不是 SML 的 `c8 0c 18 00 …`），
+# 于是卡在 `SVAInterface: QuerySoundModel: GetSoundModelHeader_ failed, err 6`。
+# 当时据此断言「缺中文高通 SML 模型，DSP 不可能通」——**结论是错的**。
+#
+# ---- 2026-08-29 用一台 OPPO 手机（PKX110 / sun）实机对照推翻 ----
+# 那台机上 DSP 完全跑通：
+#   LOAD_PHRASE_MODEL ("7d5b82e9-…") -> 0 / START_RECOGNITION -> ok / RECOGNITION
+# 而它送进去的模型 md5 e49c092d618ad9eeb2f993070355e93c、119663 字节，
+# **和本机 /my_product/etc/breenospeech2/OVMS_1st_wakeup.bin 完全同一份**。
+# 差别不在模型，在**走哪条解析路**：OPPO 走的是 CUSTOM_VOICE_UI ——
+#   interface_plugin_lib="libcustomva_intf.so" + module_type="CUSTOM1"
+# 这条路压根不解析 SML 头，模型直接交给 ADSP 里的 CUSTOM1 模块。
+# 而 libcustomva_intf.so、libvui_{intf,dmgr,dmgr_client}.so、那四个 module id
+# （0x0800104C/0x08001049/0x08001044/0x08001051）本机 vendor 一件不缺。
+#
+# 于是当时的修法是：把本机 CUSTOM_VOICE_UI 整段换成 OPPO 手机上那段
+# （DUAL_MIC profile + vendor_uuid 改成 OVMS 实际发的 68ac2d41-…）。
+#
+# ---- 2026-08-29 晚：这个修法必须撤掉，方向是反的 ----
+# 两家的 ADSP 各带各的自定义唤醒模块，不通用：
+#   平板(联想固件)  capi_aispeech_wakeup / capi_aispeech_ecns
+#   手机(OPPO 固件) capi_breeno_ecns、"Breeno Wakeup load model version V5.0"
+# 把手机那份配置灌到平板，等于让联想的 aispeech 模块去吃 breeno 的图，
+# 结果是 ADSP 每 1.2 秒崩一次：
+#   qcom_q6v5_pas: fatal error received: EX:audio_process:0x2:GC_E00001D1
+#   remoteproc0: handling crash #286
+# 用户侧同样表现为播放每隔几秒断一下（成因和 uuid 不匹配那条不同，症状一样）。
+#
+# 另外「dc90a99a-… 是移植包留的占位、全机无人引用」也是错的：
+# 它出现在联想原厂 vendor dump 的同一个文件里，是**联想自己唤醒词的 uuid**。
+#
+# 所以这里改成不动 PAL 配置，保持联想原样（dc90a99a + aispeech + SINGLE_MIC）。
+# 要走通 DSP 的正确方向是反过来——改 OVMS 让它发 dc90a99a，
+# 即 bind /my_product/etc/OVMS_settings.xml 的 <vender_uuid>。
+# 那件事得在这里做（见下方 bind_app_config），因为 zygote 有独立的挂载
+# 命名空间，开机后再 mount --bind 应用进程永远看不见。
+# ----------------------------------------------------------------------------
+# bind_vendor_config "$MODDIR/payload/audio/resourcemanager_pineapple_mtp.xml" \
+#     /vendor/etc/audio/sku_pineapple/resourcemanager_pineapple_mtp.xml
+
+# ----------------------------------------------------------------------------
+# 让 OVMS 发联想自己的 vendor uuid，走联想 ADSP 里的 aispeech 唤醒模块
+#
+# ★ 这里不再有代码，而且 2.11.2 写在这里的"正确投递方式"也是错的，一并纠正。
+#
+# ---- 2026-08-29 实测：三条投递路子全废 ----
+#   1) 开机后运行时 mount --bind —— zygote 有独立挂载命名空间，应用永远看不见；
+#   2) post-fs-data 里 bind —— bind 本身成功，但 KernelSU 随后在整个
+#      /my_product/etc 目录上盖 overlay，文件级 bind 被整体遮住；
+#   3) 直接改本模块自带的 my_product/etc/OVMS_settings.xml（2.11.2 认为可行）——
+#      **也是错的**。KernelSU 对所有普通应用进程卸载模块挂载：
+#          system_server        my_product/etc overlay = 1
+#          com.android.settings                        = 0
+#          OVMS                                        = 0
+#      应用读到的永远是 /my_product 分区原件，而它在只读 dm 上，写不了。
+#      判据要读目标进程视角：grep -c "my_product/etc " /proc/<pid>/mounts。
+#
+# ---- DSP 一阶段已实测判死，这条线到此为止 ----
+# 只换 vendor_uuid、保留联想全部图和 SINGLE_MIC profile（最小改动），
+# PAL 全线打通：ParseSoundModel status 0 / VUI module type:CUSTOM1 /
+# LoadSoundModel status 0 —— 模型确实加载成功了。
+# 紧接着 ADSP 连环崩，20 秒 15 次：
+#   qcom_q6v5_pas: fatal error received: EX:audio_process:0x2:GC_E00001D1
+# 即联想 ADSP 的 capi_aispeech_wakeup 收得下小布的 BreenoSpeech blob 但解不了。
+# 除非拿到"小布小布"的 aispeech 格式模型，DSP 无解。
+#
+# 所以 uuid 相关的一切到 Hook 侧收口：base-fix hook 默认永久走 BWV，
+# 并把 SoundTrigger 模块枚举掐成空表，OVMS 全程不碰 HAL。
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# force-BWV 标记：DSP 走不通时把小布唤醒钉在 CPU 路径
+#
+# /data/local/tmp/ovoice_force_bwv 是 ColorOSVoiceWakeupBridge 里的开关：
+# 存在则 WakeupService.s() 直接 setResult(-1003) 转 BWV(CPU) 路径。
+#
+# 立着是安全默认值：uuid 对不上会每 5~6 秒重启一次 ST HAL，而 ST HAL 活在
+# audioserver 里，用户侧就是播放每隔几秒断一下。要试 DSP 通路时手工删掉它
+# 再重启 OVMS 即可，不用重启机器。
+#
+# 判定 DSP 是否真通：dumpsys soundtrigger_middleware 里 LOAD_PHRASE_MODEL
+# 出现 `-> <数字>`，且 dmesg 里 ADSP 崩溃计数不涨。
+#   注意那个数字是 model handle 不是状态码，判成功要 grep -E '\-> [0-9]+'，
+#   失败长这样 `-> ERROR: android.os.ServiceSpecificException`。
+#   曾经因为按 `-> 0` 判成功，把一次本来成功的部署自动回滚掉。
+#
+# ---- 2026-08-29 更正：这个文件开关**从来没生效过** ----
+# 应用域读不到 shell_data_file，Hook 里的 File.exists() 恒为 false，
+# 于是一直跑的是"DSP 优先、失败再降级"，白搭 9 秒探测窗口。
+# base-fix hook v1.1.16 起改为默认恒走 BWV，不再依赖这个文件；
+# 这里仍然立起它，只是给 root 侧脚本和人工排查留一个可见状态位。
+# 要做 DSP 对照实验用：settings put global aclaniakea_ovoice_dsp 1
+# ----------------------------------------------------------------------------
+if [ ! -e /data/local/tmp/ovoice_force_bwv ]; then
+    : > /data/local/tmp/ovoice_force_bwv 2>/dev/null && \
+        log_msg "ovoice force-BWV flag set (DSP first stage has no usable uuid)"
+fi
+
+# ============================================================================
+# 改原厂 nandswap 脚本本身，取代 service.sh 里的运行时抢写
+#
+# /product/bin/init.oplus.nandswap.sh 的 configure_hybridswap_parameters() 有
+# 两处对 8GB 机型不成立的地方，都是移植源机（一加 Pad 3 Pro 12/16G）的遗留：
+#
+#   A. 分档表最后一档是**开口**的（第 41-44 行）：
+#          elif [ $mem_total -le 6291456 ]; then   "2000 1600 2000 1536"
+#          else                                    "2200 1800 2200 1536"
+#      8G 和 16G 共用 min=1800。16G 机空闲可用内存八九个 G，这门槛一辈子碰不到，
+#      swapd 全程睡觉；本机 8G 实测空闲 MemAvailable 只有 1.78~2.13G，
+#      连开六个应用的低点 1577M，**永远在门槛以下** —— swapd 进入永久追赶。
+#
+#   B. 第 212 行下发的是硬编码串，两列 ub_zram2ufs_ratio 全是 0：
+#          "3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0 "
+#      而同一个函数第 42 行明明按 MemTotal 算出了 zram2ufs_ratio=15，这个值
+#      只被拿去算预留 dd 区大小（dd_mb_cnt），**从未写进内核**。后果是 8G eswap
+#      挂上了、hybridswapd 也活着，却一页都没往 UFS 写过（ESU_C / reclaimin_cnt
+#      恒为 0），zram 里的冷数据全程占着物理内存。这是原厂自己的漏发，不是我们
+#      要"调优"什么 —— 补上等于让它按自己算出来的值执行。
+#
+# 为什么改脚本而不是事后写节点：
+#   之前是在 service.sh 里等 nandswap 跑完再覆盖，但 perf HAL
+#   （/odm/bin/hw/vendor-oplus-hardware-performance-V1-service）会在开机
+#   +55~80 秒推它的场景值，而且是**整串重写** swapd_memcgs_param，把我们的 15
+#   抹回 0。两边谁先谁后随机，v2.7.0 那次就输了。改脚本则是从一开始就正确，
+#   而且开机头 50 秒（脚本执行前）之外的整个窗口都不再有竞争。
+#   HAL 那一路无法用同样办法解决：它的参数硬编码在二进制里，没有配置文件
+#   （strings 只有两个节点名，零个 .xml/.conf 路径），所以 service.sh 里那个
+#   一次性补写块仍需保留作兜底。
+#
+# 安全措施：不预存整份副本（ROM 一更新就会脏），而是每次开机从**当前**原件
+# 现场生成。两处特征串必须都能匹配上才动手，任一不中就整体跳过并记日志，
+# 绝不盲改。撤销：删掉本函数调用，bind 消失后自动回到原件。
+#
+# ---- 2026-08-29 踩坑：改后的脚本**不能**直接从 /data 上 bind ----
+# 第一版把产物放在 $MODDIR/payload/bin/ 里 bind 过去，bind 成功、权限和
+# context 都对（-rwxr-xr-x u:object_r:nandswap_exec:s0），init 也确实找到了它，
+# 但服务一次都没跑起来，整晚 hybridswap disable。审计日志：
+#     avc: denied { execute_no_trans } path=".../init.oplus.nandswap.sh" dev="sda14"
+#     avc: denied { nosuid_transition } scontext=u:r:init:s0 tcontext=u:r:nandswap:s0
+#     op=security_bounded_transition seresult=denied
+# sda14 就是 /data，挂载选项里带 **nosuid**。内核在 nosuid 文件系统上拒绝
+# SELinux 域切换（除非新域被旧域 bound，这里不是），于是 init 转不进 nandswap 域。
+#
+# ⇒ **规律：init 要 exec 的文件，一律不能从 /data bind 过去。** 只被 read 的
+#    配置文件（thermal conf、targetconfig.xml）不受影响，因为不涉及域切换。
+#
+# 解法：先挂一个我们自己的 tmpfs（手动 mount 默认不带 nosuid），产物放里面
+# 再 bind。挂完立刻回读 /proc/mounts 确认没有 nosuid，带了就直接放弃并卸载，
+# 宁可回到原厂脚本，也不能又白瞎一次开机。
+# ============================================================================
+patch_stock_nandswap() {
+    _src=/product/bin/init.oplus.nandswap.sh
+    _mnt=/dev/aclnsw
+    _work="$_mnt/init.oplus.nandswap.sh"
+
+    [ -f "$_src" ] || { log_msg "nandswap-patch: 原件不存在，跳过"; return 0; }
+
+    # 特征 A：开口的最后一档。
+    if ! grep -q 'threshold_wakeup_hybridswapd="2200 1800 2200 1536"' "$_src"; then
+        log_msg "nandswap-patch: 未匹配到 8G/16G 共用档，原件已变，跳过"
+        return 0
+    fi
+    # 特征 B：zram2ufs 两列写死为 0 的硬编码串。
+    if ! grep -q '3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0 ' "$_src"; then
+        log_msg "nandswap-patch: 未匹配到硬编码 swapd_memcgs_param，原件已变，跳过"
+        return 0
+    fi
+    # 特征 C：内存扩展档位的 4/8/12 硬编码链。
+    if ! grep -q 'if \[\[ "$prop_nandswap_size" == "4" \]\]; then' "$_src"; then
+        log_msg "nandswap-patch: 未匹配到内存扩展档位链，原件已变，跳过 C"
+    fi
+
+    # ---- 载体：自建 tmpfs，必须不带 nosuid，否则 init 转不进 nandswap 域 ----
+    mkdir -p "$_mnt" 2>/dev/null
+    if ! grep -q " $_mnt " /proc/mounts 2>/dev/null; then
+        mount -t tmpfs -o mode=0755 aclnsw "$_mnt" 2>/dev/null
+    fi
+    if ! grep -q " $_mnt " /proc/mounts 2>/dev/null; then
+        log_msg "nandswap-patch: tmpfs 挂载失败，放弃（保持原厂脚本）"
+        return 0
+    fi
+    if grep " $_mnt " /proc/mounts | grep -q nosuid; then
+        log_msg "nandswap-patch: tmpfs 竟然带 nosuid，init 会转不进 nandswap 域，放弃并卸载"
+        umount "$_mnt" 2>/dev/null
+        return 0
+    fi
+
+    # A：把开口档拆成 ≤9G 与更大两段。取值理由见 memory 里的实测记录：
+    #    min 要低于本机满载低点 1577M 才不会常驻触发，又要留提前量，故 1200/1500。
+    #    free_swap_threshold 沿用原厂该档的 1536，不动。
+    # B：把 $zram2ufs_ratio 填进本该由它占据的两列。调用顺序已核对：
+    #    main() 先跑 configure_zram_parameters（内含 configure_hybridswap_parameters）
+    #    才跑 nandswap_init，所以第 212 行处这个变量一定有值；且第 18 行有默认 30 兜底。
+    # C：内存扩展档位。原件只认 4/8/12：
+    #        if   [[ "$prop_nandswap_size" == "4"  ]]; then swap_size_mb=4096
+    #        elif [[ "$prop_nandswap_size" == "8"  ]]; then swap_size_mb=8192
+    #        elif [[ "$prop_nandswap_size" == "12" ]]; then swap_size_mb=12288
+    #        else swap_size_mb=4096; zram_increase_limit=2048; fi
+    #    本机 persist.sys.oplus.nandswap.cfg 是 "4,6,8"，6 档没有对应分支；而且
+    #    $prop_nandswap_size 是脚本**第 13 行、加载时**就 getprop 好的，真正干活
+    #    的那次调用发生在开机 154ms 的 post-fs-data（第 123 行 sys.oplus.nandswap.init
+    #    一次性闸门决定只有第一次生效，boot_completed 那次直接 exit）。结果无论
+    #    用户在设置里选几 GB，都落进兜底分支 → disksize = 4096+2048 = 6144M，
+    #    /proc/swaps 恒显示 6GB，而 eswap 那半边（第 142 行读 swapsize.curr）却
+    #    老老实实按 8GB 走 —— 用户看到的"改成 8GB 重启后还是 6GB"就是这么来的。
+    #    改法：在原链最前面插一段通用换算，2~16 GB 一律 size*1024；swapsize 读空
+    #    时回落到 swapsize.curr（第 142 行证明这个属性在那一刻是读得到的）。
+    #    zram_increase_limit 保持 0 不动 —— 原厂对"认识的档位"就是这么设计的，
+    #    disksize 正好等于用户选的容量。
+    sed -e 's|threshold_wakeup_hybridswapd="2200 1800 2200 1536"|if [ $mem_total -le 9437184 ]; then threshold_wakeup_hybridswapd="1500 1200 1500 1536"; else threshold_wakeup_hybridswapd="2200 1800 2200 1536"; fi|' \
+        -e 's|"3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0 "|"3 0 99 0 0 0 100 399 60 $zram2ufs_ratio 0 400 499 50 $zram2ufs_ratio 0 "|' \
+        -e 's%if \[\[ "$prop_nandswap_size" == "4" \]\]; then%prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize); if ! [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null; then prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize.curr); fi; if [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null \&\& [ "$prop_nandswap_size" -le 16 ] 2>/dev/null; then swap_size_mb=$((prop_nandswap_size * 1024)); elif [[ "$prop_nandswap_size" == "4" ]]; then%' \
+        "$_src" >"$_work" 2>/dev/null
+
+    # 改完必须还是合法脚本，否则 nandswap 服务整个起不来，eswap 全没。
+    # 注意用**相对**判据：原件第 30 行是 `function xxx()` 的 mksh/bash 写法，
+    # 换成 dash 一类的 shell 检原件就会报错。只有"原件过、产物不过"才算是
+    # 我们改坏了；原件本来就不过就别拿这个门去误杀好产物。
+    if sh -n "$_src" 2>/dev/null && ! sh -n "$_work" 2>/dev/null; then
+        log_msg "ERROR: nandswap-patch 产物语法检查未过，放弃 bind"
+        rm -f "$_work"; umount "$_mnt" 2>/dev/null
+        return 0
+    fi
+    # A、B 两处改动必须在产物里，防止 sed 静默没匹配上。
+    if ! grep -q 'mem_total -le 9437184' "$_work" || \
+       ! grep -q '399 60 \$zram2ufs_ratio 0' "$_work"; then
+        log_msg "ERROR: nandswap-patch 产物缺少预期改动，放弃 bind"
+        rm -f "$_work"; umount "$_mnt" 2>/dev/null
+        return 0
+    fi
+    # C 单独判：没匹配上只是内存扩展档位没修好，不该连累 A/B 一起放弃。
+    if grep -qF 'swap_size_mb=$((prop_nandswap_size * 1024))' "$_work"; then
+        _c_ok="档位通用换算已插入"
+    else
+        _c_ok="WARN 档位链未匹配，内存扩展仍会锁在 6144M"
+    fi
+
+    chown 0:0 "$_work"
+    chmod 0755 "$_work"
+    # 原件的 context 是 u:object_r:nandswap_exec:s0，init 靠它给这个服务定域，
+    # 挂错 context 服务会直接起不来 —— 这里读原件的实际 context，不硬编码。
+    _ctx=$(ls -Z "$_src" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i ~ /^u:object_r:/) {print $i; exit}}')
+    [ -n "$_ctx" ] || _ctx=u:object_r:nandswap_exec:s0
+    if ! chcon "$_ctx" "$_work" 2>/dev/null; then
+        log_msg "nandswap-patch: chcon $_ctx 失败，放弃（保持原厂脚本）"
+        rm -f "$_work"; umount "$_mnt" 2>/dev/null
+        return 0
+    fi
+
+    if mount --bind "$_work" "$_src" 2>/dev/null; then
+        log_msg "nandswap-patch: 已 bind 改后脚本（tmpfs 载体，≤9G 档 1500/1200/1500/1536；zram2ufs 由 \$zram2ufs_ratio 下发；$_c_ok；ctx=$_ctx）"
+    else
+        log_msg "WARN: nandswap-patch bind 失败，回落到 service.sh 的运行时写入"
+        umount "$_mnt" 2>/dev/null
+    fi
+}
+
+patch_stock_nandswap
+
+# 无蜂窝机型的 telephony feature 排除清单。顶掉 mbms 那份声明文件——它的全部内容
+# 就是声明 android.hardware.telephony.mbms，而 mbms 正是要摘的 feature 之一，
+# 所以这是个零损失的挂载点。详见该 payload 文件内的注释。
+bind_vendor_config "$MODDIR/payload/permissions/apq_excluded_telephony_features.xml" \
+    /vendor/etc/permissions/android.hardware.telephony.mbms.xml
+
 SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
 if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
     # Also publishes the skin-msm-therm-usr thermal zone that this board's
@@ -162,6 +465,49 @@ fi
 # 时就要往 /dev/memcg/apps/memory.app_score 写值。只建目录、不写任何策略值，
 # swappiness 一律留给原厂/OSense 决定。
 # ============================================================================
+
+# ---------------------------------------------------------------------------
+# per-app memcg 模式：本移植丢了 ro.config.per_app_memcg，导致 swapd 从不豁免前台
+#
+# ColorOS 的 memcg 打分有两条互斥的路，由 ro.config.per_app_memcg 二选一：
+#
+#   true  → AOSP libprocessgroup 的 UsePerAppMemcg() 成立，
+#           createProcessGroup() 建出 /dev/memcg/apps/uid_<uid>/pid_<pid>；
+#           MemcgControlManager.isFeatureSupport() = !mUsePerAppMemcg && mFeatureEnable
+#           为 false，OSense 的包名管理器主动让位；
+#           OplusOsenseCompressAction.setMemcgAppScore() 往
+#           /dev/memcg/apps/uid_<uid>/memory.app_score 写 TOP=0 / BG=300。
+#
+#   空/false → 退回 OSense 包名模式，建出 /dev/memcg/apps/<pkgname>，
+#           但 ROM 里**不存在**按包名路径写 app_score 的代码
+#           （strings 扫过 classes{1,2,3}.dex 与 /system,/system_ext,/vendor,/odm
+#             的 lib64 与 bin，唯一的拼接形式就是 "/dev/memcg/apps/uid_" + uid）。
+#
+# 本移植落在了后一条：99 个包名 memcg 建好了却没人打分，全员停在内核默认
+# app_score=300，落进 swapd_memcgs_param 的 level 1，被按 ub_mem2zram_ratio=80
+# 回收——正在用的前台应用也不例外。实测刚冷启的 QQ 被规划压掉 243620 页（950MB），
+# 压完一滑动就 refault，这是掉帧的直接来源。
+#
+# 手工写 app_score=0 可让该 memcg 的 ub_mem2zram_ratio 立刻变 0、彻底退出
+# calc_shrink_ratio 与 swapd_shrink_anon（已实测），所以链路本身是通的，
+# 缺的只是这个开关。ro.* 属性只能在 post-fs-data 阶段 resetprop，
+# 必须早于 zygote/system_server 起来。
+#
+# 配套的 persist 属性由下面一行保证（persist 的，写一次即可，但每次开机对齐更省心）。
+# ---------------------------------------------------------------------------
+resetprop ro.config.per_app_memcg true
+resetprop -p persist.sys.oplus.hybridswap_app_uid_memcg true
+
+# 第三道闸：setMemcgAppScore() 里 score==0（前台豁免）那一支还额外要求
+# mFgMemcgScoreEnabled，链路是
+#   NirvanaConfigHelper.<clinit>: sys.nirvana.enable_fg_memcg_score → DEFAULT_ENABLE_FG_MEMCG_SCORE（默认 false）
+#   NirvanaManager.initCommon(): CompressAction.updateFgMemcgScoreEnable(isEnableFgMemcgScore())
+# 不开这个，框架只会写 BG 的 300、永远不会写 FG 的 0（已实测：手工把 chrome 打成
+# 999，切后台被框架改回 300，但切前台不会变成 0）。
+# 静态初始化在 system_server 首次加载该类时发生，post-fs-data 阶段设置足够早。
+# 注：/my_stock/etc/extension 里的 memoryReleasePolicyConfig 若显式给了
+# EnableFgMemcgScore，会覆盖此属性。
+resetprop sys.nirvana.enable_fg_memcg_score true
 
 if [ -d /dev/memcg ]; then
     if [ ! -d /dev/memcg/apps ]; then
@@ -464,6 +810,45 @@ else
     log_msg "ERROR: ambient color capability target or payload missing"
 fi
 
+# ============================================================================
+# 刷新率配置：面板能力声明必须包含 144。
+#
+# 这份配置 2026-08-06 曾被挪进 pen-bridge，并在那里把 ratemagic 从
+# 8750R60_90_120_144 改成 8750R60_90_120（去掉 144），本意是消除
+# 120/144 之间的闪屏。实际后果相反：文件里的图例仍是 4(144Hz)，
+# 且 800 多个条目（launcher / systemui / uxdesign 在内）的 rateId 都在用 4，
+# OplusRefreshRatePolicyImpl 拿 4 去 ratemagic 声明的速率集合里解析不出来，
+# 整块落进降级路径——实测面板被长期钉在 60Hz，SF 侧一度出现
+# render=[0.00 Hz, 90.00 Hz] 这种 DisplayModeDirector 六条投票里
+# 根本没人投出来的怪值（90 恰好是残缺 ratemagic 里有的速率）。
+#
+# 改回 8750R60_90_120_144 后实测：activeMode 变成 id=1 / 144.00 Hz、
+# measured_fps 115，桌面与浏览器都真正跑到 144，切 App 时策略
+# primaryRanges 全程稳定在 [144,144] 不再抖动。
+#
+# rateId 取值：0=未指定 1=90Hz 2=60Hz 3=120Hz 4=144Hz。文件图例只列了
+# 0/1/2/4，但 3 是合法的——com.oplus.ipemanager 笔设置页的 3-1-2-3 是
+# 原厂让它跑 120Hz，不要当成非法值去"修"。
+#
+# 它是整机显示基线，与笔无关（笔在用时的 120Hz 由原厂
+# OplusRefreshRatePolicyImpl 依 settings_enable_oppo_pencil 自行投票），
+# 所以放回 fix 模块。
+# ============================================================================
+REFRESH_TARGET=/my_product/etc/refresh_rate_config.xml
+REFRESH_PAYLOAD="$MODDIR/payload/refresh_rate_config.tb710fu.xml"
+if [ -f "$REFRESH_TARGET" ] && [ -f "$REFRESH_PAYLOAD" ]; then
+    chown 0:0 "$REFRESH_PAYLOAD"
+    chmod 0644 "$REFRESH_PAYLOAD"
+    chcon u:object_r:system_file:s0 "$REFRESH_PAYLOAD" 2>/dev/null
+    if mount --bind "$REFRESH_PAYLOAD" "$REFRESH_TARGET" 2>/dev/null; then
+        log_msg "refresh rate config mounted (ratemagic 8750R60_90_120_144)"
+    else
+        log_msg "WARN: refresh rate config bind failed"
+    fi
+else
+    log_msg "ERROR: refresh rate config target or payload missing"
+fi
+
 # The source ROM capture path is tuned for the source phone's mics.  Pin the
 # TB710FU capture gains (speaker-mic TX_DEC 96 / ADC 16) at HAL level so every
 # recording session natively applies them; this must not depend on the
@@ -481,6 +866,71 @@ else
 fi
 
 apply_serial_fix
+
+# ============================================================================
+# 2026-08-27：补 /odm/lib64 缺库，修 gameopt HAL 的开机崩溃循环。
+#
+# 现象：init.svc.gameopt_hal_service-1-0 一直是 restarting，从开机循环到关机。
+#   F linker: CANNOT LINK EXECUTABLE "/odm/bin/hw/vendor.oplus.hardware.gameopt-service":
+#             library "android.frameworks.stats-V1-ndk.so" not found
+# 根因：/odm/bin/hw 下的可执行文件走 vendor linker namespace，搜索路径只有
+#   /odm/lib64 与 /vendor/lib64。这两个库在本机只存在于 /system/lib64，
+#   一加原机的 vendor 侧带了，移植底包的 vendor 分区没有 → 永久崩溃循环。
+# 为什么模块里早就放了库却没用上：module/odm/lib64/ 从来没被挂载过。
+#   本机的 KSU/hybrid_mount 只覆盖了 /odm/etc，odm 的其它子目录一个没上，
+#   和上面 mixer_paths 那段注释说的是同一个毛病（模块 overlay 层不保证覆盖）。
+# 修法：/odm 是只读 EROFS，加不了新文件，只能叠一层**只读** overlay。
+#   lowerdir 把 upper 放前、原 /odm/lib64 放后，原有 71 个文件一个不动，只多出新库。
+#   只读 overlay 不需要 upperdir/workdir，也就不需要 tmpfs 的 xattr 支持，
+#   和系统自己给 /vendor/lib64 挂 opex 用的是同一个套路。
+# 只搬 gameopt 真正需要的两个：libaiboost.so 由上面 AON 那段单独处理，不重复搬。
+# 已实机验证：挂载后 HAL 从 restarting 变 running，并成功注册进 servicemanager
+#   （384 vendor.oplus.hardware.gameopt.IGameOptHalService/default）。
+# 遗留：HAL 起来后仍报 "failed to open ofb_game_path" / "open es4g ctrl node failed"，
+#   因为 /proc/game_opt 这组内核节点还没有，那是内核侧 ko 的事，另案。
+# 安全网：挂完立刻数文件数并回读一个原有库，只要发现原文件被遮住就立刻 umount 还原。
+# ============================================================================
+ODMLIB_SRC="$MODDIR/odm/lib64"
+ODMLIB_OVL=/dev/coloros_fix_odmlib64
+ODMLIB_WANT="android.frameworks.stats-V1-ndk.so libc++_runtime_fix.so"
+if [ -d "$ODMLIB_SRC" ] && [ -d /odm/lib64 ]; then
+    _odm_before=$(ls /odm/lib64 2>/dev/null | wc -l)
+    _odm_ref=$(ls /odm/lib64/*.so 2>/dev/null | head -1)
+    _odm_lbl=$(ls -Zd "$_odm_ref" 2>/dev/null | awk '{print $1}')
+    [ -z "$_odm_lbl" ] && _odm_lbl=u:object_r:vendor_file:s0
+    rm -rf "$ODMLIB_OVL"
+    _odm_staged=0
+    if mkdir -p "$ODMLIB_OVL"; then
+        for _l in $ODMLIB_WANT; do
+            if [ -f "$ODMLIB_SRC/$_l" ] && [ ! -e "/odm/lib64/$_l" ]; then
+                cp "$ODMLIB_SRC/$_l" "$ODMLIB_OVL/" 2>/dev/null && _odm_staged=$((_odm_staged+1))
+            fi
+        done
+    fi
+    if [ "$_odm_staged" -gt 0 ]; then
+        chown 0:0 "$ODMLIB_OVL"/*.so 2>/dev/null
+        chmod 0644 "$ODMLIB_OVL"/*.so 2>/dev/null
+        chcon "$_odm_lbl" "$ODMLIB_OVL" 2>/dev/null
+        chcon "$_odm_lbl" "$ODMLIB_OVL"/*.so 2>/dev/null
+        if mount -t overlay coloros_fix_odmlib \
+                -o ro,lowerdir="$ODMLIB_OVL:/odm/lib64" /odm/lib64 2>/dev/null; then
+            _odm_after=$(ls /odm/lib64 2>/dev/null | wc -l)
+            if [ "$_odm_after" -lt "$_odm_before" ] || [ ! -r "$_odm_ref" ]; then
+                umount /odm/lib64 2>/dev/null
+                rm -rf "$ODMLIB_OVL"
+                log_msg "ERROR: /odm/lib64 overlay hid stock libs, rolled back ($_odm_before -> $_odm_after)"
+            else
+                log_msg "/odm/lib64 overlay mounted: +$_odm_staged libs ($_odm_before -> $_odm_after)"
+            fi
+        else
+            rm -rf "$ODMLIB_OVL"
+            log_msg "ERROR: /odm/lib64 overlay mount failed"
+        fi
+    else
+        rm -rf "$ODMLIB_OVL"
+        log_msg "/odm/lib64 overlay skipped (nothing missing)"
+    fi
+fi
 
 # ============================================================================
 # 关闭移植 ColorOS 在启动/渲染/业务路径上的 DEBUG/INFO 日志刷屏。
@@ -516,6 +966,31 @@ for _logtag in \
     Synergy_SynergyCoreService Task Transition ViewRootImplExtImpl \
     VirtualCommChannel WindowManager com.aiunit.aon jnicat nativeloader \
     vendor.oplus.hardware.wifi-aidl-service vendor.qti.camera.provider-service_64; do
+    resetprop "log.tag.$_logtag" WARN 2>/dev/null
+done
+
+# ---------------------------------------------------------------------------
+# 2026-08-27 追加：按实测 logcat 普查补的第二批。
+# 普查方法：logcat -b all -d -v long -t 12000，按 tag 计数排序。
+# 当时 main buffer 的 Logspan 只有 2 分 53 秒（累计写入 990MB），即缓冲区被刷屏
+# 冲刷到只剩 3 分钟历史，排障时根本翻不到现场。下面这批占了采样窗口约 6 成。
+# 只收 V/D/I 级的刷屏源；W/E 级的（libc、ServiceManagerCppClient、HwcComposer、
+# GC13A2、qsap_voiceui、horae、linker）抬到 WARN 也压不掉，且有诊断价值，不动。
+# jank_cuj_events_* 是掉帧 CUJ 埋点，正在排查掉帧，故意保留。
+# 注意：OplusGpuMinidump 的根因是某 vendor 守护进程以 1Hz 轮询一个不存在的文件
+# （"gpu minidump control openfile error ... sleep for a while!"），这里只是消掉
+# 日志，那个空转还在。connection::networking（互联 QoE 探测，占 14%）和
+# DRS_LOG_*、vendor.qti.bluetooth@1.1-* 的 tag 含 : @ / [ 等非法字符，
+# 属性名不接受，无法用 log.tag 压制。
+# ---------------------------------------------------------------------------
+for _logtag in \
+    PowerManagerService surfaceview_callback mgulk AICCTModule OplusGpuMinidump \
+    OplusWindowManagerService SettingsShellCmd flags_health_check midasd \
+    VendorWifiService ScorerUtils OplusWifiPower_TriggerCenter \
+    BluetoothQualityReportNativeInterface Osense-BaseDecisionMaker \
+    android.hardware.power.stats-impl.oplus vui_dmgr_server AudioPolicyService \
+    CamX ThermalEngine btm_acl SDM sysui_multi_action SavePaintHelper \
+    AdapterProperties ShellSubscriberWorkerThread; do
     resetprop "log.tag.$_logtag" WARN 2>/dev/null
 done
 log_msg "debug/verbose log suppression applied ($(getprop 'log.tag.ActivityTaskManager'))"

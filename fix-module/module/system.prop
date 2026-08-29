@@ -29,3 +29,26 @@ sys.oplus.hmbird.manager.enable=0
 # 更要紧的是原厂 init.oplus.nandswap.sh 把 persist.sys.oplus.nandswap.swapsize
 # 当作**输入**（disksize = swapsize + zram_increase），我们回写等于每次开机
 # 让它自我膨胀。现在 hybridswap 与内存扩展整条链路都交还给原厂脚本。
+
+# ---------------------------------------------------------------------------
+# 压掉基带残留造成的日志刷屏（v2.10.0）
+#
+# 摘除虚拟基带栈之后，7 个调制解调器相关进程还在以精确 1 Hz 死等 7 个
+# vintf / init.rc 里根本没有声明的 HAL（IDpmService、IQHDC、IIWlan/slot1、
+# ITxPwrService、ISubsysRadio/slot1、ISubsys、IRadio/vircommslot1）。
+# 每轮打两行：
+#   W ServiceManagerCppClient: Waited one second for <iface> (is service started?...)
+#   W libc: Unable to set property "ctl.interface_start" ... PROP_ERROR_HANDLE_CONTROL_MESSAGE
+# 实测安静期 25 秒 1111 行日志里有 500 行（45%）是这个循环，logd 因此常驻 2.3% CPU，
+# 256 KiB 的 main 环几分钟就被冲干净，真出问题时根本抓不到现场。
+#
+# 这里只堵 ServiceManagerCppClient 一个 tag。实机验证过 log.tag=S 对 W 级别有效
+# （最近 400 行内 77 条 → 0 条），不是只对 V/D/I 生效。
+# 故意不堵 libc —— 那个 tag 承载着大量真正有用的告警，堵掉得不偿失。
+#
+# 注意这只是止血：进程仍在 1 Hz 空转（阻塞等待，几乎不吃 CPU）。
+# 真正的清理是让这几个孤儿客户端别起来，但电话栈很脆
+# （历史教训：SIM 槽数置 0 会崩溃死循环），留待单独验证。
+# 撤销：删掉下面一行。
+# ---------------------------------------------------------------------------
+persist.log.tag.ServiceManagerCppClient=S
