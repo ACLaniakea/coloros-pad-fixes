@@ -87,7 +87,7 @@ if [ "$HOOK_EXPECTED" -gt "$HOOK_INSTALLED" ] 2>/dev/null && \
         [ -f "$MODDIR/hook/BaseFix-Hook.apk" ]; then
     # `cmd package install` is rejected by this port's package binder when
     # called from a KernelSU service.  The platform `pm` frontend uses the
-    # accepted install path and was verified on-device for 1117 -> 1118.
+    # accepted install path and was verified on-device for a Hook upgrade.
     if pm install -r "$MODDIR/hook/BaseFix-Hook.apk" >>"$LOGFILE" 2>&1; then
         log_msg "Hook APK upgraded $HOOK_INSTALLED -> $HOOK_EXPECTED"
         # Processes already spawned with the old dex must not keep stale UI

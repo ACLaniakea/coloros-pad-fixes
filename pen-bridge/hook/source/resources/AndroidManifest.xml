@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="1127"
-    android:versionName="1.1.27"
+    android:versionCode="300000"
+    android:versionName="3.0.0"
     android:compileSdkVersion="36"
     android:compileSdkVersionCodename="16"
     package="com.aclaniakea.lenovopenbridge"

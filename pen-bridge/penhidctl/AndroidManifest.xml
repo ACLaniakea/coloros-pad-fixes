@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="1100"
-    android:versionName="1.1.0"
+    android:versionCode="300000"
+    android:versionName="3.0.0"
     package="com.aclaniakea.penhidctl">
     <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.BLUETOOTH" />

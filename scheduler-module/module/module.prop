@@ -1,6 +1,6 @@
 id=sm8650q_scene_scheduler
 name=SM8650Q 专用调度（Scene）
 author=ACLaniakea
-version=1.1.0
-versionCode=100100
+version=3.0.0
+versionCode=300000
 description=SM8650Q 六核 1+4+1 的 Scene 模式桥接：省电/均衡/性能/极速四档下发调频区间、迁移门槛与 cpuset。开机自启，无常驻守护。
