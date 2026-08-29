@@ -58,6 +58,15 @@ def _manifest_version(manifest):
     return m.group(1)
 
 
+def _manifest_version_code(manifest):
+    """Read versionCode from the manifest; keep aapt2 metadata in sync."""
+    import re
+    m = re.search(r'android:versionCode="([^"]+)"', manifest.read_text(encoding="utf-8"))
+    if not m:
+        raise SystemExit("AndroidManifest has no android:versionCode")
+    return m.group(1)
+
+
 OUT_APK = OUT_DIR / f"BaseFix-Hook-v{_manifest_version(MANIFEST)}.apk"
 
 
@@ -91,7 +100,8 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "1115", "--version-name", "1.1.15"])
+             "--version-code", _manifest_version_code(MANIFEST),
+             "--version-name", _manifest_version(MANIFEST)])
         # 2. compile java
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)

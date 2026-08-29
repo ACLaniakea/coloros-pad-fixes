@@ -1162,7 +1162,17 @@ ensure_voice_wakeup() {
     fi
 }
 
-ensure_voice_wakeup
+disable_voice_wakeup() {
+    # 用户明确不使用小布唤醒：关闭总开关并隐藏入口，但保留 SpeechAssist 本体，
+    # 不影响小布的非唤醒能力。Hook 也会据此拒绝后台重新拉起 BWV。
+    for key in hotword_detection_enabled voice_to_wakeup aclaniakea_xiaobu_wakeup_entry; do
+        settings put global "$key" 0 >/dev/null 2>&1
+    done
+    am force-stop --user 0 com.oplus.ovoicemanager.wakeup >/dev/null 2>&1
+    log_msg "voice wake disabled and XiaoBu wake entry hidden by user policy"
+}
+
+disable_voice_wakeup
 
 # Lengthen each BWV listening window from 2600ms to 6000ms so the engine
 # restarts far less often and the wake word is not missed during restart gaps.
@@ -1217,11 +1227,8 @@ if [ -r "$MODDIR/voice-power-guard.pid" ]; then
     kill "$(cat "$MODDIR/voice-power-guard.pid" 2>/dev/null)" 2>/dev/null
     rm -f "$MODDIR/voice-power-guard.pid"
 fi
-if [ -x "$MODDIR/bin/voice-power-guard.sh" ]; then
-    "$MODDIR/bin/voice-power-guard.sh" "$MODDIR" &
-    echo $! >"$MODDIR/voice-power-guard.pid"
-    log_msg "event-driven voice power guard started"
-fi
+# 唤醒已由用户关闭；不要再启动其事件订阅守护，避免无意义的 logcat 连接和 taskset 调用。
+log_msg "voice power guard skipped: XiaoBu wakeup disabled"
 
 # ============================================================================
 # KGSL 显存前后台状态同步
