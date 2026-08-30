@@ -11,10 +11,16 @@ supported_device() {
         *SM8650Q*/*pineapple*/0-5) ;;
         *) return 1 ;;
     esac
-    for policy in 0 1 3 5; do
+    # policy3 is optional: some kernels merge the four middle CPUs into
+    # policy1.  policy0/1/5 are the required 1+4+1 leaders.
+    for policy in 0 1 5; do
         [ -d "/sys/devices/system/cpu/cpufreq/policy$policy" ] || return 1
     done
     [ ! -d /sys/devices/system/cpu/cpufreq/policy7 ]
+}
+
+has_split_middle_policy() {
+    [ -d /sys/devices/system/cpu/cpufreq/policy3 ]
 }
 
 log() {
@@ -41,7 +47,10 @@ write_policy() {
     value5=$5
     write_node "$value0" "/sys/devices/system/cpu/cpufreq/policy0/$suffix"
     write_node "$value1" "/sys/devices/system/cpu/cpufreq/policy1/$suffix"
-    write_node "$value3" "/sys/devices/system/cpu/cpufreq/policy3/$suffix"
+    # policy1/3 use identical values in every profile.  Skipping policy3 on
+    # merged-middle kernels is therefore lossless and avoids a false reject.
+    has_split_middle_policy && \
+        write_node "$value3" "/sys/devices/system/cpu/cpufreq/policy3/$suffix"
     write_node "$value5" "/sys/devices/system/cpu/cpufreq/policy5/$suffix"
 }
 
@@ -209,6 +218,7 @@ status() {
     echo "mode=$(cat "$STATE_FILE" 2>/dev/null)"
     echo "device=$(getprop ro.soc.model)/$(getprop ro.board.platform) cpu=$(cat /sys/devices/system/cpu/present 2>/dev/null)"
     echo "policies=$(ls -d /sys/devices/system/cpu/cpufreq/policy* 2>/dev/null | sed 's#^.*/policy##' | tr '\n' ' ')"
+    has_split_middle_policy && echo "middle_policy=split(policy1+policy3)" || echo "middle_policy=merged(policy1)"
     echo "fmax=$(cat /proc/sys/walt/sched_fmax_cap 2>/dev/null)"
     echo "boost=$(cat /proc/sys/walt/input_boost/sched_boost_on_input 2>/dev/null) input_ms=$(cat /proc/sys/walt/input_boost/input_boost_ms 2>/dev/null)"
     echo "migration=$(cat /proc/sys/walt/sched_group_upmigrate 2>/dev/null)/$(cat /proc/sys/walt/sched_group_downmigrate 2>/dev/null)"

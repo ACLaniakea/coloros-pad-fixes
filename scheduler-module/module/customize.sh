@@ -14,10 +14,18 @@ case "$soc/$platform/$present" in
     *) abort "仅支持 SM8650Q/pineapple 六核设备，当前：$soc/$platform/$present" ;;
 esac
 
-for policy in 0 1 3 5; do
+for policy in 0 1 5; do
     [ -d "/sys/devices/system/cpu/cpufreq/policy$policy" ] || \
         abort "缺少 policy$policy，拒绝安装以免错误调度"
 done
+# policy 编号是 cpufreq 的 leader CPU，不是性能簇序号。部分兼容内核把
+# CPU1-4 合成一个 policy1，此时没有 policy3 仍是合法的 1+4+1 拓扑。
+# 运行期会自动使用出现的 policy3；安装阶段绝不能因它尚未注册或被合并而拒装。
+if [ -d /sys/devices/system/cpu/cpufreq/policy3 ]; then
+    ui_print "- 检测到分离中核频域：policy1 + policy3"
+else
+    ui_print "- policy3 未出现：按合并中核 policy1 安装（兼容模式）"
+fi
 [ ! -d /sys/devices/system/cpu/cpufreq/policy7 ] || \
     abort "检测到非六核拓扑，拒绝安装"
 
