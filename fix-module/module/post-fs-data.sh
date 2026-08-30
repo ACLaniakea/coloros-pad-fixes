@@ -376,9 +376,20 @@ patch_stock_nandswap() {
         rm -f "$_work"; umount "$_mnt" 2>/dev/null
         return 0
     fi
-    # A、B 两处改动必须在产物里，防止 sed 静默没匹配上。
-    if ! grep -q 'mem_total -le 9437184' "$_work" || \
-       ! grep -q '399 60 \$zram2ufs_ratio 0' "$_work"; then
+    # 改动必须真的在产物里，防止 sed 静默没匹配上。
+    #
+    # ★ 2026-08-30：这道门检的是**现在还在做的那几处改动**。A 段（改
+    #   threshold_wakeup_hybridswapd）撤销之后，这里一度还在检 'mem_total -le 9437184'
+    #   —— 它永远不可能出现在产物里，于是每次开机都判"缺少预期改动"、整个 bind
+    #   被放弃，连带 B（zram2ufs 下发）和 C（内存扩展档位）一起失效。表现是
+    #   "内存扩展改了重启没用"。改判据的时候，务必同步改这里。
+    #
+    # ★ 判据一律用 grep -F（固定串），别用正则：上一版写成
+    #   grep -q 'prop_nandswap_size -ge 2'，而产物里实际是
+    #   [ "$prop_nandswap_size" -ge 2 ] —— 中间夹着一个引号，永远匹配不上，
+    #   于是又白白放弃了一次 bind。判据要从产物里原样抄，不要凭印象写。
+    if ! grep -qF '399 60 $zram2ufs_ratio 0' "$_work" || \
+       ! grep -qF 'prop_nandswap_size * 1024' "$_work"; then
         log_msg "ERROR: nandswap-patch 产物缺少预期改动，放弃 bind"
         rm -f "$_work"; umount "$_mnt" 2>/dev/null
         return 0
@@ -403,7 +414,7 @@ patch_stock_nandswap() {
     fi
 
     if mount --bind "$_work" "$_src" 2>/dev/null; then
-        log_msg "nandswap-patch: 已 bind 改后脚本（tmpfs 载体，≤9G 档 1500/1200/1500/1536；zram2ufs 由 \$zram2ufs_ratio 下发；$_c_ok；ctx=$_ctx）"
+        log_msg "nandswap-patch: 已 bind 改后脚本（tmpfs 载体，avail_buffers 保持原厂档；zram2ufs 由 \$zram2ufs_ratio 下发；$_c_ok；ctx=$_ctx）"
     else
         log_msg "WARN: nandswap-patch bind 失败，回落到 service.sh 的运行时写入"
         umount "$_mnt" 2>/dev/null
