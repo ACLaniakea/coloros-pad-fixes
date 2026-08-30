@@ -1,0 +1,3 @@
+# GitHub 侧边栏「Sponsor this project」按钮指向 README 的赞助小节。
+# 微信支付不在 FUNDING.yml 支持的平台列表里，只能走 custom 链接。
+custom: ["https://github.com/ACLaniakea/coloros-pad-fixes#十二请我喝杯咖啡"]
