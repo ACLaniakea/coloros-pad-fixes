@@ -23,6 +23,31 @@ has_split_middle_policy() {
     [ -d /sys/devices/system/cpu/cpufreq/policy3 ]
 }
 
+# 中核（CPU1-4）到底被哪些 policy 管着。
+#
+# 为什么要单独查一遍：上面那个函数只知道"policy3 在不在"，据此断定
+# 合并/分离是**假设**，不是事实。真出现 policy1 只管 CPU1-2、而 CPU3-4
+# 压根没注册 cpufreq（或被离线）的内核，判定会理直气壮地说"合并模式"，
+# 实际上那两颗核一个参数都没写进去，而且日志上看不出任何异常。
+# 这里直接读 related_cpus 把话说实。
+middle_cpus() {
+    for policy in 1 3; do
+        cat "/sys/devices/system/cpu/cpufreq/policy$policy/related_cpus" 2>/dev/null
+    done | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' '
+}
+
+# CPU1-4 是否全被覆盖。
+middle_fully_covered() {
+    got=" $(middle_cpus) "
+    for cpu in 1 2 3 4; do
+        case "$got" in
+            *" $cpu "*) ;;
+            *) return 1 ;;
+        esac
+    done
+    return 0
+}
+
 log() {
     mkdir -p "$STATE_DIR"
     size=0
@@ -31,12 +56,24 @@ log() {
     echo "[$(date '+%F %T')] $*" >>"$LOGFILE"
 }
 
+# 写一个节点，并**回读确认**。
+#
+# 原来是 `echo ... 2>/dev/null` 写完就走：节点不存在、内核拒绝写（比如档位里
+# 那些具体频点不在这块内核的 OPP 表里）全都悄无声息，而 status 照样报告档位
+# 已生效。回读一次就能把"以为写进去了"和"真的写进去了"分开，失败留一行日志。
 write_node() {
     value=$1
     node=$2
-    [ -w "$node" ] || return 0
+    if [ ! -w "$node" ]; then
+        log "skip $node (不存在或不可写)"
+        return 0
+    fi
     current=$(cat "$node" 2>/dev/null)
-    [ "$current" = "$value" ] || echo "$value" >"$node" 2>/dev/null
+    [ "$current" = "$value" ] && return 0
+    ( echo "$value" >"$node" ) 2>/dev/null
+    readback=$(cat "$node" 2>/dev/null)
+    [ "$readback" = "$value" ] || \
+        log "write rejected $node: 想写 $value，读回 $readback（原值 $current）"
 }
 
 write_policy() {
@@ -136,6 +173,16 @@ apply_net_rps() {
 }
 
 set_common() {
+    # 每次切档记一行中核覆盖情况：分离/合并只是现象，真正要盯的是 CPU1-4
+    # 有没有全被 cpufreq 管到。不覆盖时不中止——那两颗核本来也没有可写的
+    # 节点，中止只会连能配的部分一起丢——但必须在日志里留痕，别让"档位已生效"
+    # 这句话掩盖了半个中核集群没被配置的事实。
+    if middle_fully_covered; then
+        log "middle policy: $(has_split_middle_policy && echo split || echo merged), cpus=[$(middle_cpus)]"
+    else
+        log "WARN middle policy: cpus=[$(middle_cpus)]，CPU1-4 未被完全覆盖，缺的那几颗没有下发档位参数"
+    fi
+
     # 基础修复（IRQ 拓扑、wlan RPS、cpuset 拓扑、scaling_min_freq、walt 常量、
     # 迁移门槛基线、input boost 基线）已全部搬到 ColorOS-Port-Base-Fix 的
     # service.sh:apply_sched_baseline，开机一次性写入。
@@ -218,7 +265,12 @@ status() {
     echo "mode=$(cat "$STATE_FILE" 2>/dev/null)"
     echo "device=$(getprop ro.soc.model)/$(getprop ro.board.platform) cpu=$(cat /sys/devices/system/cpu/present 2>/dev/null)"
     echo "policies=$(ls -d /sys/devices/system/cpu/cpufreq/policy* 2>/dev/null | sed 's#^.*/policy##' | tr '\n' ' ')"
-    has_split_middle_policy && echo "middle_policy=split(policy1+policy3)" || echo "middle_policy=merged(policy1)"
+    if has_split_middle_policy; then
+        echo "middle_policy=split(policy1+policy3) middle_cpus=[$(middle_cpus)]"
+    else
+        echo "middle_policy=merged(policy1) middle_cpus=[$(middle_cpus)]"
+    fi
+    middle_fully_covered || echo "middle_coverage=INCOMPLETE(CPU1-4 未被 cpufreq 完全覆盖，部分核心的档位参数没有下发)"
     echo "fmax=$(cat /proc/sys/walt/sched_fmax_cap 2>/dev/null)"
     echo "boost=$(cat /proc/sys/walt/input_boost/sched_boost_on_input 2>/dev/null) input_ms=$(cat /proc/sys/walt/input_boost/input_boost_ms 2>/dev/null)"
     echo "migration=$(cat /proc/sys/walt/sched_group_upmigrate 2>/dev/null)/$(cat /proc/sys/walt/sched_group_downmigrate 2>/dev/null)"

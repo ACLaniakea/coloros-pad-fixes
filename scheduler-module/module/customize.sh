@@ -21,11 +21,23 @@ done
 # policy 编号是 cpufreq 的 leader CPU，不是性能簇序号。部分兼容内核把
 # CPU1-4 合成一个 policy1，此时没有 policy3 仍是合法的 1+4+1 拓扑。
 # 运行期会自动使用出现的 policy3；安装阶段绝不能因它尚未注册或被合并而拒装。
+# 只看"policy3 在不在"还不够：那只能区分分离/合并两种写法，说明不了 CPU1-4
+# 是不是真的都被管到。直接读 related_cpus 数一遍，缺核就明确警告——不中止，
+# 因为缺的那几颗本来也没有可写节点，中止只会连能配的部分一起丢。
+_mid=$(for _p in 1 3; do
+    cat "/sys/devices/system/cpu/cpufreq/policy$_p/related_cpus" 2>/dev/null
+done | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -u | tr '\n' ' ')
 if [ -d /sys/devices/system/cpu/cpufreq/policy3 ]; then
-    ui_print "- 检测到分离中核频域：policy1 + policy3"
+    ui_print "- 中核频域：分离（policy1 + policy3），覆盖 CPU [$_mid]"
 else
-    ui_print "- policy3 未出现：按合并中核 policy1 安装（兼容模式）"
+    ui_print "- 中核频域：合并（policy1），覆盖 CPU [$_mid]"
 fi
+for _c in 1 2 3 4; do
+    case " $_mid " in
+        *" $_c "*) ;;
+        *) ui_print "! 警告：CPU$_c 不在任何中核 cpufreq policy 里，它的档位参数不会生效" ;;
+    esac
+done
 [ ! -d /sys/devices/system/cpu/cpufreq/policy7 ] || \
     abort "检测到非六核拓扑，拒绝安装"
 
