@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
 ![Version](https://img.shields.io/badge/version-3.0.0-orange)
-![License](https://img.shields.io/badge/license-MIT-blue)
+![License](https://img.shields.io/badge/license-GPLv3-blue)
 
 移植包刷上去能开机，但不少东西是瘸的：温控曲线用错了传感器、内存扩展档位对不上、一加那套内核调度栈加载不起来、手写笔和 AON 注视感知没人接。这个项目就是把这些一条条接回去。
 
@@ -332,4 +332,10 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 ## 十三、协议
 
-[MIT License](LICENSE)
+主体采用 **[GPL-3.0](LICENSE)**。
+
+**例外：`kernel-compat/` 下的内核模块源码是 [GPL-2.0](kernel-compat/LICENSE)**
+（`oplus_shell_temp_compat.c`、`oplus_mm_compat.c`、`oplus_sched_assist.c`、
+`aclswap/`）。这不是随便挑的：这些模块要与 Linux 内核链接，源码里的
+`MODULE_LICENSE` 声明就是 `GPL v2`，而内核本身是 GPLv2-only，与 GPLv3 不兼容。
+换句话说这部分**只能**是 GPLv2，不是偏好问题。
