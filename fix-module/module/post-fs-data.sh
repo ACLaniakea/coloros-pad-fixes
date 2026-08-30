@@ -322,9 +322,28 @@ patch_stock_nandswap() {
         return 0
     fi
 
-    # A：把开口档拆成 ≤9G 与更大两段。取值理由见 memory 里的实测记录：
-    #    min 要低于本机满载低点 1577M 才不会常驻触发，又要留提前量，故 1200/1500。
-    #    free_swap_threshold 沿用原厂该档的 1536，不动。
+    # A（已撤销，2026-08-30）：这里原本把 threshold_wakeup_hybridswapd 从原厂的
+    #    "2200 1800 2200 1536" 降到 "1500 1200 1500 1536"，理由是"min 要低于本机
+    #    满载低点才不会常驻触发"。三点法实测证明这是**长待机解锁卡顿的直接原因**，
+    #    已改回原厂值。数据（息屏 320s / 解锁 128s 两段分开量）：
+    #
+    #      解锁段            1500/1200        2200/1800
+    #      pgsteal_direct    332,747 (2599/s) 17,167 (188/s)   −93%
+    #      allocstall          5,490   (43/s)    242 (2.7/s)   −94%
+    #      pswpin            218,867          54,553           −75%
+    #      息屏段
+    #      pgsteal_kswapd    353,548          86,167           −76%
+    #
+    #    机制：pgsteal_direct 是**在分配路径上同步做的回收**，谁申请内存谁就卡在
+    #    那里等。息屏段两种配置都是 0，解锁段桌面 +123MB、system_server +137MB
+    #    一起要内存，缓冲垫只有 1200 时没有现成空闲页可给，只能自己下去刨 1.3GB。
+    #    "少留缓冲少回收更省电"这个直觉在这里是反的：缓冲垫砍掉三分之一之后，
+    #    息屏段的 kswapd 回收量反而涨了 4 倍（86k → 353k），因为水位一直贴着线
+    #    在颠簸 —— 换出去马上又缺页换回来（息屏没人用却有 71,965 次 pswpin）。
+    #
+    #    连带修好的还有 zram→UFS 回写：它一直不触发不是"压力不够属正常"，而是
+    #    MemAvailable(≈2.1G) 从来碰不到我们调低的那道闸。抬回 1800 之后
+    #    reclaimin_cnt 0→13、ESU_C 0→38MB，zram 原始占用从 2.90G 降到 2.81G。
     # B：把 $zram2ufs_ratio 填进本该由它占据的两列。调用顺序已核对：
     #    main() 先跑 configure_zram_parameters（内含 configure_hybridswap_parameters）
     #    才跑 nandswap_init，所以第 212 行处这个变量一定有值；且第 18 行有默认 30 兜底。
@@ -344,8 +363,7 @@ patch_stock_nandswap() {
     #    时回落到 swapsize.curr（第 142 行证明这个属性在那一刻是读得到的）。
     #    zram_increase_limit 保持 0 不动 —— 原厂对"认识的档位"就是这么设计的，
     #    disksize 正好等于用户选的容量。
-    sed -e 's|threshold_wakeup_hybridswapd="2200 1800 2200 1536"|if [ $mem_total -le 9437184 ]; then threshold_wakeup_hybridswapd="1500 1200 1500 1536"; else threshold_wakeup_hybridswapd="2200 1800 2200 1536"; fi|' \
-        -e 's|"3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0 "|"3 0 99 0 0 0 100 399 60 $zram2ufs_ratio 0 400 499 50 $zram2ufs_ratio 0 "|' \
+    sed -e 's|"3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0 "|"3 0 99 0 0 0 100 399 60 $zram2ufs_ratio 0 400 499 50 $zram2ufs_ratio 0 "|' \
         -e 's%if \[\[ "$prop_nandswap_size" == "4" \]\]; then%prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize); if ! [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null; then prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize.curr); fi; if [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null \&\& [ "$prop_nandswap_size" -le 16 ] 2>/dev/null; then swap_size_mb=$((prop_nandswap_size * 1024)); elif [[ "$prop_nandswap_size" == "4" ]]; then%' \
         "$_src" >"$_work" 2>/dev/null
 

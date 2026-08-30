@@ -450,7 +450,7 @@ tune_zram2ufs() {
 }
 
 # ============================================================================
-# hybridswap 第二处移植缺陷：swapd 的唤醒下限是按大内存机型标定的，本机永远够不到。
+# hybridswap：avail_buffers 保持原厂分档值（2026-08-30 起）
 #
 # 原厂 configure_hybridswap_parameters() 按 MemTotal 分四档给 avail_buffers
 # （四个值依次是 avail / min / high / free_swap_threshold，单位 MB）：
@@ -459,30 +459,43 @@ tune_zram2ufs() {
 #     ≤6G  "2000 1600 2000 1536"
 #     否则 "2200 1800 2200 1536"      ← 本机 7763232kB 落这一档
 #
-# 最后一档是**开口的**：8G 和 16G 共用 min=1800。移植源机（一加 Pad 3 Pro）
-# 12/16G 空闲时可用内存有八九个 G，这个门槛一辈子碰不到，swapd 全程睡觉；
-# 本机 8G 跑同一套 ColorOS，实测空闲 MemAvailable 稳定在 1.78~2.13G、
-# 连开六个应用的负载低点也只到 1577M，**永远在门槛以下**。
-# 于是 swapd 进入永久追赶：回收 → 应用立刻把热页 refault 换回来 → 可用内存
-# 又掉下去 → 继续回收。系统零内存压力却持续换页，白烧 CPU、UFS 写入和 major fault。
+# ---- 这里曾经把它降到 1500/1200/1500，2026-08-30 已撤销 ----
 #
-# 佐证（详见 memory/project_reclaim_is_all_memcg.md）：静置态本机 pgscan_kswapd
-# 与 pgscan_direct **恒为 0**，pgscan_anon 却每分钟涨数万——说明静置期的回收
-# 全部走 try_to_free_mem_cgroup_pages()，即 swapd 一家干的。
-# （开机头两分钟例外：2026-08-29 的解锁现场里 pgscan_direct 累计 375 万、
-#   kswapd0 进过 top3，那一段是真的全局吃紧，属于另一个问题。）
+# 当时的推理是：最后一档是开口的，8G 和 16G 共用 min=1800；源机 12/16G 空闲时
+# 可用内存八九个 G，这个门槛一辈子碰不到，而本机 8G 的 MemAvailable 稳定在
+# 1.78~2.13G、满载低点 1577M，**永远在门槛以下**，于是 swapd 进入永久追赶。
+# 当时用 60 秒空闲窗口测，min 从 1800 降到 1200 后 pswpout 降了约 80%，看着很像
+# 一个干净的胜利。
 #
-# 实测（2026-08-29，四窗口 ABAB，全程无人操作、前台与进程数均无变化）：
-#   空闲 60s     min=2000: pswpout +20988/+23795  pgscan_anon +18003/+51051 PSI 0.08
-#                min=1200: pswpout  +2288/    +0  pgscan_anon  +7820/    +0 PSI 0.00
-#   相同负载序列 min=1800: pswpout 262664 → 64360
-#                min=1200: pswpout  53328 → 13185     两次 A→B 均降约 80%
-# 写入后连续 90 秒未被性能 HAL 改回，所以一次性写入即可，不挂常驻守卫。
+# 这个测法漏掉了真正要紧的那一段：**解锁瞬间**。三点法（息屏时 / 解锁前 /
+# 解锁后各打一次快照，把息屏段和解锁段分开量）之后才看清：
 #
-# 取值理由：min 要低于本机满载低点（1577M）才不会常驻触发，又要留出真正
-# 吃紧时的提前量，故取 1200/high 1500。free_swap_threshold 读回原值不动。
-# 若日后 RAM 占用面貌变化，判据是"满载低水位"，不是拍脑袋调数。
-# 撤销：把本函数的调用注释掉即可回到原厂分档值。
+#   解锁段            1500/1200        2200/1800（原厂）
+#   pgsteal_direct    332,747 (2599/s) 17,167 (188/s)   −93%
+#   allocstall          5,490   (43/s)    242 (2.7/s)   −94%
+#   pswpin            218,867          54,553           −75%
+#   pgmajfault        227,933          57,396           −75%
+#   息屏段
+#   pgsteal_kswapd    353,548          86,167           −76%
+#   pswpout            92,819          39,110           −58%
+#
+# 关键是 pgsteal_direct：它是**在分配路径上同步做的回收**，谁申请内存谁就卡在
+# 那里等，这才是"长待机后第一次解锁卡一下"的物理来源。两种配置在息屏段的
+# direct 都是 0；解锁瞬间桌面 +123MB、system_server +137MB 一起要内存，缓冲垫
+# 只有 1200 时没有现成空闲页可给，只能自己下去刨 1.3GB。
+#
+# 而且"少留缓冲 = 少回收"这个直觉在这里是反的：缓冲垫砍掉三分之一之后，息屏段
+# 的 kswapd 回收量反而涨了 4 倍（86k → 353k）—— 水位一直贴着线颠簸，换出去马上
+# 又缺页换回来（息屏没人操作却有 71,965 次 pswpin）。当初那个 60 秒窗口只看到
+# pswpout 降了，没看到 pswpin 和 refault 同步在涨。
+#
+# 连带修好的还有 zram→UFS 回写：它长期 reclaimin_cnt=0 不是"压力不够属正常"，
+# 而是 MemAvailable(≈2.1G) 从来碰不到被我们调低的那道闸。抬回 1800 之后立刻
+# reclaimin_cnt 0→13、ESU_C 0→38MB，zram 原始占用 2.90G→2.81G，
+# 等于把 zram 压着的物理内存还了一部分回来。
+#
+# 结论：本机就该用原厂那一档。本函数保留，但写的是原厂值，只在 nandswap patch
+# 没生效、参数退回别的档时兜底。
 # ============================================================================
 tune_avail_buffers() {
     node=/dev/memcg/memory.avail_buffers
@@ -492,8 +505,8 @@ tune_avail_buffers() {
     case "$fst" in ''|*[!0-9]*) fst=1536 ;; esac
     before=$(tr '\n' ' ' <"$node" 2>/dev/null)
     # 写入格式必须是**四个**数：avail min high free_swap_threshold。三个数会被拒。
-    echo "1500 1200 1500 $fst" >"$node" 2>/dev/null
-    log_msg "hybridswap: avail_buffers 改为 1500/1200/1500/$fst（原 [$before]），实际=[$(tr '\n' ' ' <"$node" 2>/dev/null)]"
+    echo "2200 1800 2200 $fst" >"$node" 2>/dev/null
+    log_msg "hybridswap: avail_buffers 写回原厂档 2200/1800/2200/$fst（原 [$before]），实际=[$(tr '\n' ' ' <"$node" 2>/dev/null)]"
 }
 
 # 原厂 nandswap 服务在开机约 53 秒才跑完（ro.boottime.init.oplus.nandswap.sh），
@@ -552,7 +565,7 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
     # ------------------------------------------------------------------------
     # 2026-08-29：这里原本无条件调 tune_zram2ufs / tune_avail_buffers 抢写。
     # 现在 post-fs-data 阶段已经把 /product/bin/init.oplus.nandswap.sh 本身
-    # patch 过并 bind 上去了（≤9G 档 1500/1200/1500/1536，且把它自己算出来的
+    # patch 过并 bind 上去了（avail_buffers 保持原厂 2200/1800/2200/1536，且把它
     # $zram2ufs_ratio 真正下发到 swapd_memcgs_param），所以正常路径下原厂脚本
     # 出来的值**就已经是对的**，不需要我们再写一遍。
     #
@@ -562,7 +575,7 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
     # ------------------------------------------------------------------------
     _z_now=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)
     _a_now=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
-    if [ "$_z_now" = 15 ] && [ "$_a_now" = 1500 ]; then
+    if [ "$_z_now" = 15 ] && [ "$_a_now" = 2200 ]; then
         log_msg "hybridswap: 原厂脚本已给出正确值（zram2ufs=$_z_now avail_buffers=$_a_now），无需运行时写入"
     else
         log_msg "hybridswap: 原厂脚本给的是 zram2ufs=$_z_now avail_buffers=$_a_now，nandswap patch 未生效，回落到运行时写入"
@@ -596,7 +609,7 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
         while [ "$_w" -lt 120 ]; do
             _z=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)
             _a=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
-            if [ "$_z" != 15 ] || [ "$_a" != 1500 ]; then
+            if [ "$_z" != 15 ] || [ "$_a" != 2200 ]; then
                 _hit=1
                 break
             fi
