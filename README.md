@@ -229,12 +229,12 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 ├── fix-module/          主修复模块（活跃）
 ├── base-fix/
 │   ├── hook/            BaseFix LSPosed Hook 源码（活跃）
-│   └── module/          合并前的独立模块，只读参考
+│   └── module/          合并前的独立模块，已归档不要装
 ├── oplus-bsp-module/    30 个一加 BSP ko + 依赖序加载器
 ├── pen-bridge/          手写笔：Root 模块 / Hook / PenHidCtl
 ├── scheduler-module/    Scene 四档调度桥接
 ├── kernel-compat/       自建内核、ABI 门禁、模块移植、救援手册
-├── port-tuning/         早期调优模块，只读参考
+├── port-tuning/         早期调优模块，已归档不要装
 ├── experimental/        试验性内容
 └── tools/build_all.sh   一键全量构建
 ```
@@ -257,6 +257,17 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 ## 九、已知问题
 
 修完之后仍然存在、且已经查过的几件事：
+
+### 开关应用偶发掉帧
+
+**结构性问题，参数已经调到最优。** 本机 `MemTotal` 只有 7.76 GB，而移植包这套
+内存策略是按源机 12/16 GB 标定的。实测连续开关应用两分钟，内核做了 6.3 GB 的
+**同步回收**（`pgsteal_direct`）—— 桌面、SystemUI、system_server 自己的页都会被
+回收走，切回去就要重新换入。
+
+把 `avail_buffers` 调回原厂档之后这个数字已经减半（同一套动作从 24,994/s 降到
+12,494/s），再往下不是调旋钮能解决的。试过把内存扩展降到 4 GB 让系统多杀后台，结果更糟：
+交换空间卡在临界，分配全堵在同步回收上。
 
 ### 手电亮度只有 42–78 这一段
 

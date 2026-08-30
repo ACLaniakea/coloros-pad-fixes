@@ -244,7 +244,12 @@ sched_set_irq() {
 }
 
 apply_sched_baseline() {
-    # 只认这台机器的拓扑：SM8650Q/pineapple、present=0-5、有 policy0/1/3/5、无 policy7。
+    # 只认这台机器的拓扑：SM8650Q + present=0-5 + 无 policy7。
+    #
+    # 刻意**不查 policy3**：policy 编号是 cpufreq 的 leader CPU 号，不是性能簇
+    # 序号。本机中核拆成 policy1(CPU1-2) + policy3(CPU3-4) 两个频域，但把四颗
+    # 中核合成一个 policy1 的内核同样是合法的 1+4+1，查 policy3 会把那种内核
+    # 误判掉。这里写的都是 /proc/sys/walt 和 IRQ 亲和性，本来也不按 policy 分发。
     case "$(getprop ro.soc.model)/$(cat /sys/devices/system/cpu/present 2>/dev/null)" in
         *SM8650Q*/0-5) ;;
         *) log_msg "sched baseline: 拓扑不匹配，跳过"; return 0 ;;

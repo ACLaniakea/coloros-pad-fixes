@@ -1,6 +1,6 @@
 id=aclaniakea_oplus_bsp
 name=OPlus BSP Kernel Modules (TB710FU)
-version=v3.0.0
+version=3.0.0
 versionCode=300000
 author=ACLaniakea
 description=加载一加 BSP 的 30 个内核模块：调度增强、压缩内存、后台冻结。做法是按符号依赖顺序 insmod，并补一个 hyperSched 桩模块满足 sched-walt 的符号校验。

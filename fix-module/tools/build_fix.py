@@ -38,6 +38,20 @@ HOOK_APK = ROOT.parents[1] / "releases" / f"BaseFix-Hook-v{_basefix_version()}.a
 EXCLUDE = {"fix-module.log", "fix-module.log.1", "tuning.log", "daemon.pid",
            "magic.pid", "ram-expand.boot-toggle", ".aclswap.err"}
 
+# 只在仓库里留作参考、不该跟着装到机器上的目录。
+#
+# 之前这些是随包发的：装完 /data/adb/modules/coloros_port_fix 下会多出
+# .presync-2.1.0/（合并前的旧脚本快照，10 万字符）和 .retired-dead-files/
+# （已退役的 aclswap.ko / oplus_mm_compat.ko 等，约 1.5 MB），一个字节都用不上。
+# 它们对读源码的人有价值，对装模块的人只是垃圾，所以留在仓库、剔出安装包。
+EXCLUDE_PREFIXES = (
+    "tools/",
+    ".presync-",
+    ".retired-dead-files/",
+    "payload/osense/.retired-handed-back-to-stock/",
+    "payload/retired/",
+)
+
 
 def verify_hook_payload(apk: Path) -> None:
     """Refuse to ship an LSPosed entry point absent from classes.dex.
@@ -92,7 +106,7 @@ def main() -> None:
     with zipfile.ZipFile(OUT, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as dst:
         for path in sorted(p for p in ROOT.rglob("*") if p.is_file()):
             rel = path.relative_to(ROOT).as_posix()
-            if rel in EXCLUDE or rel.startswith("tools/"):
+            if rel in EXCLUDE or rel.startswith(EXCLUDE_PREFIXES):
                 continue
             if path.suffix.lower() == ".apk":
                 continue

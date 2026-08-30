@@ -15,8 +15,10 @@ MODDIR=${0%/*}
 #      负责充电与弹窗；不使用自定义内核模块；
 #   5) PenHidCtl（priv-app HID 控制器）开机授予蓝牙运行时权限，只调后台
 #      PenHidService，无启动器入口；
-#   6) 屏幕唤醒后延迟回放真实 Hall/连接状态，避免唤醒瞬间写入 DSI/panel
-#      节点导致黑屏；pen_wakeup_* 节点只在开机按需写一次；
+#   6) 不监听屏幕状态、不做唤醒回放：状态只跟随真实 Hall/GATT/Root 事件。
+#      早期版本在唤醒后延迟回放过一次，那是为了绕开"唤醒瞬间写 DSI/panel 节点
+#      导致黑屏"；后来改成 pen_wakeup_* 只在开机按需写一次，回放就没必要了，
+#      代码也早已删除（本文件里搜不到任何屏幕状态监听）。
 #   7) 刷新率策略由 post-fs-data 绑定，本服务不管理亮度/背光/屏幕电源。
 # 仅适用于 SM8650Q / pineapple 平台；Hook 仍独立安装，模块内签名副本
 # 仅用于 LSPosed 在 PackageManager 恢复 /data/app 前稳定读取。
