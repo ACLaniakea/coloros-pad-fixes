@@ -30,7 +30,7 @@
 |---|---|---|
 | `FixModule.zip` | **主修复模块**。六核性能与温控曲线、内存与交换分层、调度基线、显存回收、音频与传感器链路 | ✅ |
 | `BaseFix-Hook.apk` | LSPosed 模块。框架层修复：AON 注视感知、杜比音效、环境光、144Hz、设备标识 | ✅ |
-| `boot-ACLaniakea-*.img` | 自建 GKI 内核（含 KernelSU v3.2.5 LKM） | ✅ **先刷** |
+| `boot-ACLaniakea-*.img` | 自建 GKI 内核 6.1.128，配置对齐 KernelSU LKM 的加载条件 | ✅ **先刷** |
 | `vendor_boot-hyperSched-stub.img` | 配套 vendor_boot，**必须与上面成对刷** | ✅ **先刷** |
 | `OplusBSP-Modules.zip` | 30 个一加 BSP 内核模块：调度增强、压缩内存、后台冻结 | 依赖上面两个 img |
 | `PenBridge-Module.zip` + `PenBridge-Hook.apk` + `PenHidCtl.apk` | 手写笔桥接三件套 | 用笔才装 |
@@ -57,6 +57,12 @@
 
 `boot` 和 `vendor_boot` 必须**成对刷**：vendor_boot 里带的是配套的
 `lenovohyperSched.ko` 桩，只刷一个会在开机早期卡住或直接 panic。
+
+> **刷 `boot` 不会给你 root。** 本机的 root 来自修补 `init_boot` —— KernelSU 是
+> LKM，那个 `kernelsu.ko` 躺在 `init_boot` 的 ramdisk 里，`boot` 里没有它
+> （实测 `boot` 分区搜不到 `kernelsu` 字样，`init_boot` 搜得到）。这里的 `boot`
+> 只提供内核本体，配置是按 KernelSU LKM 的加载条件对齐的。所以刷之前
+> **`init_boot` 必须已经修补好**，顺序别反。
 
 先备份：
 
