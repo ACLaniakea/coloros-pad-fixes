@@ -948,8 +948,14 @@ disable_wlan_diag_logging
 #
 # 分级开关：出问题就把 BASEBAND_STOP_LEVEL 调回 1（只停 IMS/DPM，保留假 RIL），
 # 或调成 0 完全还原。全部是一次性 stop，不留守护脚本。
+#
+# ★ 2026-08-30 起默认 0（完全还原）。摘 telephony feature 把「通信共享」
+#   （平板借手机 SIM 打电话/收短信/上网）整条入口打没了 —— 那个功能不需要真 modem，
+#   但需要 telephony 框架层在册。换来的只是 com.android.phone + org.codeaurora.ims
+#   那 225MB 冷内存，而这俩因为 FLAG_PERSISTENT 本来就杀不掉。不划算，已回滚。
+#   post-fs-data.sh 里那条 feature 排除 bind 也一并注释掉了。
 # ============================================================================
-BASEBAND_STOP_LEVEL=2
+BASEBAND_STOP_LEVEL=0
 
 BASEBAND_SVC_IMS="vendor.imsdaemon vendor.ims_rtp_daemon vendor.ims-dataservice-daemon vendor.dpmd dpmQmiMgr"
 BASEBAND_SVC_RIL="virtual-ril-daemon-0 virtual-ril-daemon-1 qti-modem-daemon-0"

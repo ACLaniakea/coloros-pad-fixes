@@ -394,11 +394,31 @@ patch_stock_nandswap() {
 
 patch_stock_nandswap
 
-# 无蜂窝机型的 telephony feature 排除清单。顶掉 mbms 那份声明文件——它的全部内容
-# 就是声明 android.hardware.telephony.mbms，而 mbms 正是要摘的 feature 之一，
-# 所以这是个零损失的挂载点。详见该 payload 文件内的注释。
-bind_vendor_config "$MODDIR/payload/permissions/apq_excluded_telephony_features.xml" \
-    /vendor/etc/permissions/android.hardware.telephony.mbms.xml
+# ---------------------------------------------------------------------------
+# 无蜂窝机型的 telephony feature 排除清单 —— **2026-08-30 起停用**
+#
+# 原意：本机 ro.baseband=apq / ro.carrier=wifi-only，没有 modem，那套假 RIL
+# （virtual-ril-daemon-0/1）永远无事可做，纯占内存；于是把
+# payload/permissions/apq_excluded_telephony_features.xml 顶到 mbms 那份声明上，
+# 把 android.hardware.telephony* 整组 feature 摘掉。
+#
+# ★ 代价出乎意料：**「通信共享」用不了了。**
+# 那个功能是平板借手机的 SIM 打电话/收短信/上网，走蓝牙+WiFi 与手机通信，
+# 本机确实不需要真 modem —— 但它需要 telephony **框架层**在册：
+# feature 一摘，ColorOS 侧就认为本机没有电话能力，整条通信共享入口失效。
+#
+# 摘 feature 换来的收益是 com.android.phone + org.codeaurora.ims 那 225MB
+# 冷内存（而且这俩因为 FLAG_PERSISTENT 根本杀不掉，见 memory: baseband-stock），
+# 远不如通信共享值钱。故本行注释掉，feature 恢复在册。
+#
+# 连带效果：service.sh 的 stop_dead_telephony_stack() 有一道前置判据是
+# 「telephony.ims feature 必须已消失」，feature 回来之后它会自动整段跳过，
+# 不需要另外改开关。BASEBAND_STOP_LEVEL 同时也调回 0，双保险。
+#
+# 要再关掉：取消下面这行注释，并把 service.sh 的 BASEBAND_STOP_LEVEL 调回 2。
+# ---------------------------------------------------------------------------
+# bind_vendor_config "$MODDIR/payload/permissions/apq_excluded_telephony_features.xml" \
+#     /vendor/etc/permissions/android.hardware.telephony.mbms.xml
 
 SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
 if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
