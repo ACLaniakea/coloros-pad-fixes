@@ -336,6 +336,4 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 **例外：`kernel-compat/` 下的内核模块源码是 [GPL-2.0](kernel-compat/LICENSE)**
 （`oplus_shell_temp_compat.c`、`oplus_mm_compat.c`、`oplus_sched_assist.c`、
-`aclswap/`）。这不是随便挑的：这些模块要与 Linux 内核链接，源码里的
-`MODULE_LICENSE` 声明就是 `GPL v2`，而内核本身是 GPLv2-only，与 GPLv3 不兼容。
-换句话说这部分**只能**是 GPLv2，不是偏好问题。
+`aclswap/`）。
