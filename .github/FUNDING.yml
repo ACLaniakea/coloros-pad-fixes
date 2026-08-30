@@ -1,8 +1,1 @@
-# GitHub 侧边栏 About 区的「Sponsor this project」按钮。
-# 微信支付不在 FUNDING.yml 支持的平台列表里，只能走 custom 链接，指向 README
-# 的赞助小节。链接里的锚点做了 percent-encoding：非 ASCII 直接写进 YAML 有被
-# GitHub 解析器丢掉的风险。
-#
-# ★ 光有这个文件按钮不会出现：还要在 Settings > General > Features 里勾上
-#   Sponsorships，这个开关没有 REST API，只能手动点。
-custom: ["https://github.com/ACLaniakea/coloros-pad-fixes#%E5%8D%81%E4%B8%80%E8%AF%B7%E6%88%91%E5%96%9D%E6%9D%AF%E5%92%96%E5%95%A1"]
+custom: https://github.com/ACLaniakea/coloros-pad-fixes/blob/main/README.md
