@@ -3,4 +3,4 @@ name=联想手写笔桥接服务
 author=ACLaniakea
 version=3.0.0
 versionCode=300000
-description=联想手写笔在 ColorOS 上的桥接：BLE 连接、电量与充电、磁吸与悬停、触觉反馈。需配合 PenBridge-Hook.apk（LSPosed 模块）一起用。
+description=让联想手写笔在 ColorOS 上能用：BLE 连接、电量与充电、磁吸悬停、触觉反馈。做法是常驻一个桥接服务读笔的 HID 报文，翻译成系统认识的状态再喂回框架。

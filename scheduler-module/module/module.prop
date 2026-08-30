@@ -3,4 +3,4 @@ name=SM8650Q 专用调度（Scene）
 author=ACLaniakea
 version=3.0.0
 versionCode=300000
-description=给 Scene（com.omarea.vtools）提供省电/均衡/性能/极速四档调度配置。不用 Scene 就不必装。
+description=给 Scene 提供省电／均衡／性能／极速四档调度配置。四档的 WALT 上下迁门槛与调频参数是按本机 1+4+1 的核心拓扑重算过的，不是照搬源机的 2+4+2。

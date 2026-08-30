@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Pro GT 基础修复</string>
-    <string name="module_description">ColorOS 移植的框架层修复：AON 注视感知、杜比音效、环境光、144Hz 刷新率、设备标识与查找设备。需配合「Pro GT 基础修复」模块。</string>
+    <string name="module_description">修好框架层瘸掉的部分：AON 注视感知、杜比音效、环境光、144Hz 刷新率、手电亮度分档、设备标识与查找设备。做法是挂住 system_server 与 SystemUI 里相关的几个方法，把移植包缺失的返回值和调用补回去。</string>
 </resources>
