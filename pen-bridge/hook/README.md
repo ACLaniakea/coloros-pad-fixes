@@ -1,6 +1,6 @@
 # 联想手写笔桥接 — LSPosed Hook
 
-包名：`com.aclaniakea.lenovopenbridge`，版本 `1.0.0`。
+包名：`com.aclaniakea.lenovopenbridge`。版本以 `AndroidManifest.xml` 与 release 为准（本文不再跟版本号）。
 
 - 桥接联想手写笔 BLE/GATT、System Server、IPeManager、Hall、设备空间与设置逻辑；
 - 设置页断开时反射调用原厂 `BleManager.a()` 的 `BluetoothGatt.disconnect()`，设备/HID 真实离开连接态；
