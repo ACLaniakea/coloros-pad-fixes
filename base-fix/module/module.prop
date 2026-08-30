@@ -3,4 +3,4 @@ name=联想平板 Pro GT - ColorOS 基础修复
 author=ACLaniakea
 version=3.0.0
 versionCode=300000
-description=SM8650Q/pineapple ColorOS 移植基础修复：修正 AON QNN 生命周期与环境光自适应、恢复小布 BWV 语音唤醒链路与录音增益、绑定混音器策略、修复 Tango/序列号/性能 HAL 兼容性。LSPosed Hook APK 独立安装。 1.1.1 小布唤醒改为纯 BWV 并根治三处抖动：DSP 一阶段实测判死（PAL 能加载模型，联想 ADSP 的 aispeech 模块解不了小布 blob，20 秒崩 15 次），Hook 侧永久停用并把 SoundTrigger 模块枚举掐成空表——原先每 2~5 秒把 ST HAL 打挂一次、ST HAL 活在 audioserver 里，就是"播放每隔几秒断一下"，实测 8 次/20 秒归零；BWV 不再把每个 wakeupWord=null 当失败重建管线（原先 2.7 秒一次，且每次把 SDK 音频窗口清零、把跨边界的唤醒词拦腰截断），改为 PCM 断流看门狗；检测窗口 2600→6000ms（改在 DocumentBuilder.parse 返回的 Document 上就地改，模块里那份 XML 应用根本读不到）；并把 OSense VOICE_WAKEUP 场景收敛到真有唤醒候选时才进——它退出时按自己的默认值还原 WALT 迁移门槛，是 fix 模块调度基线"写了像没写"的真凶。
+description=补移植 ROM 缺的用户态资源：AON 注视感知运行时、音效与环境光配置、设备标识。需配合 BaseFix-Hook.apk（LSPosed 模块）一起用。

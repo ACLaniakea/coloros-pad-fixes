@@ -3,4 +3,4 @@ name=联想手写笔桥接服务
 author=ACLaniakea
 version=3.0.0
 versionCode=300000
-description=SM8650Q/pineapple ColorOS 移植手写笔桥接 Root 部分：保留原厂 CoreService BLE、CPS、真实 ACL/GATT/Hall、电量/充电与触觉链路；移除锁屏亮屏沿的重复Hall状态回放，真实事件优先、低频校验兜底，并内置签名Hook副本固定LSPosed早期路径。
+description=联想手写笔在 ColorOS 上的桥接：BLE 连接、电量与充电、磁吸与悬停、触觉反馈。需配合 PenBridge-Hook.apk（LSPosed 模块）一起用。
