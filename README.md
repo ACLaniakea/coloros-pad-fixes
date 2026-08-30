@@ -67,6 +67,16 @@ fastboot reboot
 - **只刷 boot** —— 联想真身的 `lenovohyperSched.ko` 还在，它和一加的 `sched_assist` 抢同一批 restricted vendor hook。那套钩子是**单注册者**语义（`DO_RESTRICTED_HOOK` 只调 `funcs[0]`），第二个注册者静默失效，一加整套调度栈白装。
 - **只刷 vendor_boot** —— 里面那个空壳模块没有对应的内核符号表，`sched_walt` 拒载，开不了机。
 
+校验这两个 img（刷之前对一下）：
+
+```
+boot-ACLaniakea-6.1.128-13.img    34844672 字节   md5 d049b5cc3d790a3c9d96586b19f7e88c
+vendor_boot-hyperSched-stub.img   12402688 字节   md5 42436f9b56fa2ba92216fd1b23b5fdf3
+```
+
+这两份是开发机上**实际在跑**的那一对——用 `dd` 从 `boot_a` / `vendor_boot_a` 读回来逐字节比对过，
+不是"目录里最新的那个文件"。
+
 刷完确认：
 
 ```bash
