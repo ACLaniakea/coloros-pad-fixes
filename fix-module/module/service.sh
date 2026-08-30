@@ -1163,6 +1163,35 @@ if [ -x "$MODDIR/bin/kgsl-state-sync.sh" ] && [ -d /sys/class/kgsl/kgsl/proc ]; 
     log_msg "kgsl state sync started (page_alloc=$(($(cat /sys/class/kgsl/kgsl/page_alloc 2>/dev/null || echo 0) / 1048576))MB)"
 fi
 
+# ============================================================================
+# 手电亮度调节：信箱守望
+#
+# SystemUI(platform_app) 写不了 led:torch_*/brightness —— 节点 chmod 0666 +
+# chcon vendor_sysfs_graphics，再把 file/dir/lnk_file 三类权限全放行之后 open()
+# 仍然 EACCES，且 dmesg 一条 avc 都不落（AOSP 对 appdomain 碰 sysfs 有
+# dontaudit）。不再跟 SELinux 较劲，改成：Hook 把目标电流写进它自己的 DE 数据
+# 目录，这里挂 inotifyd 听着，一变就由 root 落到两颗灯上。
+#
+# 常驻代价：一个阻塞在 read() 上的 inotifyd，不轮询，只有拖滑条时才醒。
+# 目录等待放在后台子 shell 里，避免拖慢 service.sh 这条串行链。
+# ============================================================================
+if [ -r "$MODDIR/torch-level.pid" ]; then
+    kill "$(cat "$MODDIR/torch-level.pid" 2>/dev/null)" 2>/dev/null
+    rm -f "$MODDIR/torch-level.pid"
+fi
+if [ -f "$MODDIR/bin/torch_level_apply.sh" ] && [ -e /sys/class/leds/led:torch_0/brightness ]; then
+    chmod 0755 "$MODDIR/bin/torch_level_apply.sh" 2>/dev/null
+    (
+        _dir=/data/user_de/0/com.android.systemui/files
+        _i=0
+        while [ ! -d "$_dir" ] && [ "$_i" -lt 60 ]; do sleep 2; _i=$((_i + 1)); done
+        [ -d "$_dir" ] || exit 0
+        inotifyd "$MODDIR/bin/torch_level_apply.sh" "$_dir:w" >/dev/null 2>&1 &
+        echo $! >"$MODDIR/torch-level.pid"
+    ) &
+    log_msg "torch level watcher arming"
+fi
+
 log_msg "identity=$(getprop ro.product.brand)/$(getprop ro.product.name)/$(getprop ro.product.device)/$(getprop ro.product.model)"
 log_msg "zygote_tango=$(getprop init.svc.zygote_tango) horae=$(getprop init.svc.horae) gameopt=$(getprop init.svc.gameopt_hal_service-1-0)"
 log_msg "late service end"

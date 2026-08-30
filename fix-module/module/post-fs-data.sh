@@ -420,6 +420,21 @@ patch_stock_nandswap
 # bind_vendor_config "$MODDIR/payload/permissions/apq_excluded_telephony_features.xml" \
 #     /vendor/etc/permissions/android.hardware.telephony.mbms.xml
 
+# ----------------------------------------------------------------------------
+# 手电亮度调节：这里**故意什么都不做**。
+#
+# 曾经在这里把 led:torch_0 / led:torch_3 的 brightness 重打标成
+# vendor_sysfs_graphics 并 chmod 0666，想让 SystemUI 自己写。结论是走不通：
+# 标签、DAC、sepolicy（file/dir/lnk_file 三类全放行，ksud 免重启生效）都到位
+# 之后，platform_app 的 open() 依旧稳定 EACCES，而 dmesg 里一条 avc 都不落
+# —— AOSP 对 appdomain 访问 sysfs 的这类拒绝有 dontaudit，日志上永远显得
+# "策略没问题"，很容易把人带沟里。
+#
+# 现在的实现不需要动这两个节点的任何属性：Hook 把目标电流写进 SystemUI 自己
+# 的 DE 数据目录，service.sh 挂的 inotifyd 听到后由 root 落笔。既然不需要，就
+# 不留这层多余的重打标 —— 少改一处原厂状态，少一份出问题的可能。
+# ----------------------------------------------------------------------------
+
 SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
 if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
     # Also publishes the skin-msm-therm-usr thermal zone that this board's
