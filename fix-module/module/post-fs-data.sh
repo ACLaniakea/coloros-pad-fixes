@@ -363,8 +363,7 @@ patch_stock_nandswap() {
     #    时回落到 swapsize.curr（第 142 行证明这个属性在那一刻是读得到的）。
     #    zram_increase_limit 保持 0 不动 —— 原厂对"认识的档位"就是这么设计的，
     #    disksize 正好等于用户选的容量。
-    sed -e 's|"3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0 "|"3 0 99 0 0 0 100 399 60 $zram2ufs_ratio 0 400 499 50 $zram2ufs_ratio 0 "|' \
-        -e 's%if \[\[ "$prop_nandswap_size" == "4" \]\]; then%prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize); if ! [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null; then prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize.curr); fi; if [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null \&\& [ "$prop_nandswap_size" -le 16 ] 2>/dev/null; then swap_size_mb=$((prop_nandswap_size * 1024)); elif [[ "$prop_nandswap_size" == "4" ]]; then%' \
+    sed -e 's%if \[\[ "$prop_nandswap_size" == "4" \]\]; then%prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize); if ! [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null; then prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize.curr); fi; if [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null \&\& [ "$prop_nandswap_size" -le 16 ] 2>/dev/null; then swap_size_mb=$((prop_nandswap_size * 1024)); elif [[ "$prop_nandswap_size" == "4" ]]; then%' \
         "$_src" >"$_work" 2>/dev/null
 
     # 改完必须还是合法脚本，否则 nandswap 服务整个起不来，eswap 全没。
@@ -388,8 +387,7 @@ patch_stock_nandswap() {
     #   grep -q 'prop_nandswap_size -ge 2'，而产物里实际是
     #   [ "$prop_nandswap_size" -ge 2 ] —— 中间夹着一个引号，永远匹配不上，
     #   于是又白白放弃了一次 bind。判据要从产物里原样抄，不要凭印象写。
-    if ! grep -qF '399 60 $zram2ufs_ratio 0' "$_work" || \
-       ! grep -qF 'prop_nandswap_size * 1024' "$_work"; then
+    if ! grep -qF 'prop_nandswap_size * 1024' "$_work"; then
         log_msg "ERROR: nandswap-patch 产物缺少预期改动，放弃 bind"
         rm -f "$_work"; umount "$_mnt" 2>/dev/null
         return 0
@@ -414,7 +412,7 @@ patch_stock_nandswap() {
     fi
 
     if mount --bind "$_work" "$_src" 2>/dev/null; then
-        log_msg "nandswap-patch: 已 bind 改后脚本（tmpfs 载体，avail_buffers 保持原厂档；zram2ufs 由 \$zram2ufs_ratio 下发；$_c_ok；ctx=$_ctx）"
+        log_msg "nandswap-patch: 已 bind 改后脚本（tmpfs 载体，avail_buffers 与 zram2ufs 均保持原厂值；$_c_ok；ctx=$_ctx）"
     else
         log_msg "WARN: nandswap-patch bind 失败，回落到 service.sh 的运行时写入"
         umount "$_mnt" 2>/dev/null
@@ -569,16 +567,14 @@ fi
 resetprop ro.config.per_app_memcg true
 resetprop -p persist.sys.oplus.hybridswap_app_uid_memcg true
 
-# 第三道闸：setMemcgAppScore() 里 score==0（前台豁免）那一支还额外要求
-# mFgMemcgScoreEnabled，链路是
-#   NirvanaConfigHelper.<clinit>: sys.nirvana.enable_fg_memcg_score → DEFAULT_ENABLE_FG_MEMCG_SCORE（默认 false）
-#   NirvanaManager.initCommon(): CompressAction.updateFgMemcgScoreEnable(isEnableFgMemcgScore())
-# 不开这个，框架只会写 BG 的 300、永远不会写 FG 的 0（已实测：手工把 chrome 打成
-# 999，切后台被框架改回 300，但切前台不会变成 0）。
-# 静态初始化在 system_server 首次加载该类时发生，post-fs-data 阶段设置足够早。
-# 注：/my_stock/etc/extension 里的 memoryReleasePolicyConfig 若显式给了
-# EnableFgMemcgScore，会覆盖此属性。
-resetprop sys.nirvana.enable_fg_memcg_score true
+# 这里曾经 resetprop sys.nirvana.enable_fg_memcg_score true —— 已删除。
+#
+# 它会让框架给前台组写 app_score=0（swapd 分级表的 level 0，ub_mem2zram_ratio=0，
+# 即不换出）。原厂 PKX110 上**没有这个属性**，实测原厂的 active / systemserver /
+# inactive 三个组一律 app_score=300，原厂桌面照样换出 699MB。
+#
+# 也就是说"前台豁免"是 OPlus 留了开关但原厂没开的路径，开着属于偏离原厂。
+# 用户明确要求以还原原厂机制为准，故撤销。
 
 # ============================================================================
 # 这里曾经预建 /dev/memcg/apps/{active,systemserver,launcher} 三个组 —— 已删除。

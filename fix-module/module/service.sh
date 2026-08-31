@@ -414,45 +414,20 @@ for policy in /sys/devices/system/cpu/cpufreq/policy*; do
 done
 
 # ============================================================================
-# hybridswap：把原厂自己算出来、却漏发给内核的 ub_zram2ufs_ratio 补下去。
+# 这里曾经有 tune_zram2ufs()：把 ub_zram2ufs_ratio 补成 15，让 zram 往 UFS 回写。
+# **已删除，2026-08-31。**
 #
-# 原厂 /product/bin/init.oplus.nandswap.sh 的 configure_hybridswap_parameters()
-# 会按 MemTotal 分档算出 zram2ufs_ratio（本机 7.4G 走 else 档 = 15），但这个值
-# 只被用来决定预留 dd 区的大小（dd_mb_cnt），**从未写进 swapd_memcgs_param**；
-# 第 212 行下发的是硬编码的 "3 0 99 0 0 0 100 399 60 0 0 400 499 50 0 0"，
-# 每一级的 ub_zram2ufs_ratio 都是 0。后果是 8G eswap 挂上了、hybridswap_enable
-# 三段全 enable、hybridswapd 也活着，但 ESU_C 恒为 0、reclaimin_cnt 恒为 0，
-# 一页都没往 UFS 写过，zram 里的冷数据全程占着物理内存。
+# 当时的依据是"原厂 configure_hybridswap_parameters() 按 MemTotal 算出了 15，
+# 却只拿去算 dd 预留区、从没写进 swapd_memcgs_param"，据此认为补 15 更接近原厂
+# 本意。拿到原厂 PKX110 实测之后这个推断站不住：
 #
-# 2026-08-27 实机验证（8G 机型，写入 15 后 4 分钟）：reclaimin_cnt 0→101、
-# 落盘 286MB（loop51 diskstats 587264 扇区独立佐证）、ZSU_O 4295124→3519536 KB
-# 即 zram 腾出 776MB、MemAvailable 1277788→1446704 KB。读回仅 34MB，无换入风暴，
-# dmesg 无告警。速率收敛（T+2→T+3 增量为 0），属于一次性排积压而非持续狂写，
-# 且原厂 hybridswap_quota_day=10GB/天 的闸仍在兜底。
+#   原厂 level 0/1/2 的 ub_zram2ufs_ratio 全是 0
+#   原厂 reclaimin_cnt = 0，ESU_C = 0   ← 从来没发生过一次 zram→UFS 回写
 #
-# 注意两点：
-#  1) mem2zram 那两列（本机开机后是 80/70）是 perf HAL
-#     /odm/bin/hw/vendor-oplus-hardware-performance-V1-service 在运行时从
-#     60/50 抬上去的，**必须读回原值原样写回**，不能硬编码，否则会把 HAL 的
-#     场景决策打回去。
-#  2) 这是一次性写入，不挂常驻守卫。HAL 若在之后重写整串会把 15 冲回 0；
-#     实测 4 分钟内没有发生。要确认现状用 action.sh 里那行 zram2ufs 读数。
+# 也就是说原厂就是发 0、就是不做回写，"算了却漏发"是我们把中间变量当成了本意。
+# 用户明确要求以还原原厂机制为准，故撤销。
 # ============================================================================
-tune_zram2ufs() {
-    param=/dev/memcg/memory.swapd_memcgs_param
-    [ -w "$param" ] || { log_msg "hybridswap: $param 不可写，跳过"; return 0; }
-    # 只在原厂那三级（level 0/1/2）上工作，level 3~9 原厂就是全 0 的占位。
-    m1=$(awk '/level 1 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
-    m2=$(awk '/level 2 ub_mem2zram_ratio/{print $NF}' "$param" 2>/dev/null)
-    case "$m1" in ''|*[!0-9]*) m1= ;; esac
-    case "$m2" in ''|*[!0-9]*) m2= ;; esac
-    # 读不到就用原厂脚本第 212 行的硬编码值兜底，绝不猜。
-    [ -n "$m1" ] || m1=60
-    [ -n "$m2" ] || m2=50
-    # 格式：级数, 然后每级 min_score max_score ub_mem2zram ub_zram2ufs refault
-    echo "3 0 99 0 0 0 100 399 $m1 15 0 400 499 $m2 15 0 " >"$param" 2>/dev/null
-    log_msg "hybridswap: zram2ufs 15 已下发 (保留 HAL 的 mem2zram $m1/$m2)，实际=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' "$param" 2>/dev/null)"
-}
+
 
 # ============================================================================
 # hybridswap：avail_buffers 保持原厂分档值（2026-08-30 起）
@@ -568,7 +543,7 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
     sleep 1
 
     # ------------------------------------------------------------------------
-    # 2026-08-29：这里原本无条件调 tune_zram2ufs / tune_avail_buffers 抢写。
+    # 2026-08-29：这里原本无条件调 tune_avail_buffers 抢写。
     # 现在 post-fs-data 阶段已经把 /product/bin/init.oplus.nandswap.sh 本身
     # patch 过并 bind 上去了（avail_buffers 保持原厂 2200/1800/2200/1536，且把它
     # $zram2ufs_ratio 真正下发到 swapd_memcgs_param），所以正常路径下原厂脚本
@@ -578,13 +553,11 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
     # 或 ROM 更新后特征串没匹配上被跳过了）才回落到运行时写入。
     # 一个坏掉的 patch 不该让参数悄悄退回原厂的 16G 档。
     # ------------------------------------------------------------------------
-    _z_now=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)
     _a_now=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
-    if [ "$_z_now" = 15 ] && [ "$_a_now" = 2200 ]; then
-        log_msg "hybridswap: 原厂脚本已给出正确值（zram2ufs=$_z_now avail_buffers=$_a_now），无需运行时写入"
+    if [ "$_a_now" = 2200 ]; then
+        log_msg "hybridswap: 原厂脚本已给出正确的 avail_buffers=$_a_now，无需运行时写入"
     else
-        log_msg "hybridswap: 原厂脚本给的是 zram2ufs=$_z_now avail_buffers=$_a_now，nandswap patch 未生效，回落到运行时写入"
-        tune_zram2ufs
+        log_msg "hybridswap: 原厂脚本给的是 avail_buffers=$_a_now（应为 2200），回落到运行时写入"
         tune_avail_buffers
     fi
 
@@ -612,9 +585,9 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
         _w=0
         _hit=0
         while [ "$_w" -lt 120 ]; do
-            _z=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null)
+
             _a=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
-            if [ "$_z" != 15 ] || [ "$_a" != 2200 ]; then
+            if [ "$_a" != 2200 ]; then
                 _hit=1
                 break
             fi
@@ -624,14 +597,13 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
         if [ "$_hit" = 1 ]; then
             # 让 HAL 把整串写完再补，避免和它对写。
             sleep 3
-            tune_zram2ufs
             tune_avail_buffers
             # 迁移门槛同样被推回过（upmigrate 第三位 82→95、downmigrate 70→85），
             # 顺手一起补。WALT 拒绝 down >= up，仍要三步原子写。
             sched_write '100 100 100' /proc/sys/walt/sched_upmigrate
             sched_write '50 85 70' /proc/sys/walt/sched_downmigrate
             sched_write '60 95 82' /proc/sys/walt/sched_upmigrate
-            log_msg "hybridswap: 在 +${_w}s 检出 perf HAL 覆盖，已补写一次并退出（zram2ufs=$(awk '/level 1 ub_zram2ufs_ratio/{print $NF}' /dev/memcg/memory.swapd_memcgs_param 2>/dev/null) avail=[$(tr '\n' ' ' </dev/memcg/memory.avail_buffers 2>/dev/null)] upmigrate=$(tr '\t' ' ' </proc/sys/walt/sched_upmigrate 2>/dev/null))"
+            log_msg "hybridswap: 在 +${_w}s 检出 perf HAL 覆盖，已补写一次并退出（avail=[$(tr '\n' ' ' </dev/memcg/memory.avail_buffers 2>/dev/null)] upmigrate=$(tr '\t' ' ' </proc/sys/walt/sched_upmigrate 2>/dev/null))"
         else
             log_msg "hybridswap: 120s 内未被覆盖，无需补写"
         fi
