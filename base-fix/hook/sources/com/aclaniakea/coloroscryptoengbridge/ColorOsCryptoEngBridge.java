@@ -520,8 +520,11 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                             + "\",\"ticket\":\"" + esc(ticket) + "\",\"protocolVersion\":\"" + esc(protocolVersion)
                             + "\",\"phoneCard\":\"" + esc(phoneCard) + "\",\"messageKey\":\""
                             + Base64.encodeToString(msgKey, Base64.NO_WRAP) + "\"}";
+                    String ovK = initKeyB64();
                     int kIdx = keyIndexFromProp();
-                    byte[] ct = rsaEncrypt(json.getBytes(StandardCharsets.UTF_8), EMBEDDED_PUBLIC_KEYS[kIdx]);
+                    byte[] ct = rsaEncrypt(json.getBytes(StandardCharsets.UTF_8),
+                            ovK != null ? ovK : EMBEDDED_PUBLIC_KEYS[kIdx]);
+                    if (ovK != null) XposedBridge.log(TAG + ": 2011 using override init key");
                     set("register_json", json);
                     set("last_cipher", Base64.encodeToString(ct, Base64.NO_WRAP));
                     XposedBridge.log(TAG + ": register instruction local key idx=" + kIdx + " ct len=" + ct.length);
@@ -836,8 +839,57 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
 
     /** 用当前选定公钥做 PKCS1 RSA 加密，返回原始密文字节（与真机 TA 的 field20 原始输出一致）。
      *  应用侧拿到 field20 后会自行 Base64 编码，桥接不得预编码，否则服务器收到双重编码密文解不开。 */
+    // 覆盖公钥来源（拿到 findphone-init RSA-1024 公钥后，无需改源码重编）：
+    //   优先级 1：属性 persist.findphone.initkey = 单行 base64 SPKI（去掉 PEM 头尾）
+    //   优先级 2：文件 /data/local/tmp/findphone_init_key.pem（标准 PEM）或 .der（二进制 SPKI）
+    // 命中任一即作为唯一 RSA 公钥使用，忽略内置候选与 persist.key_idx。
+    private static volatile String overrideKey = "";
+    private static volatile boolean overrideProbed;
+    private static String initKeyB64() {
+        if (overrideProbed) {
+            return overrideKey.isEmpty() ? null : overrideKey;
+        }
+        overrideProbed = true;
+        try {
+            String prop = sysprop("persist.findphone.initkey").trim();
+            if (!prop.isEmpty()) {
+                overrideKey = prop.replaceAll("\\s", "");
+                XposedBridge.log(TAG + ": init key loaded from prop, len=" + overrideKey.length());
+                return overrideKey;
+            }
+            java.io.File pem = new java.io.File("/data/local/tmp/findphone_init_key.pem");
+            if (pem.exists()) {
+                String t = new String(java.nio.file.Files.readAllBytes(pem.toPath()), StandardCharsets.UTF_8);
+                overrideKey = t.replaceAll("-----[^-]+-----", "").replaceAll("\\s", "");
+                XposedBridge.log(TAG + ": init key loaded from pem, len=" + overrideKey.length());
+                return overrideKey;
+            }
+            java.io.File der = new java.io.File("/data/local/tmp/findphone_init_key.der");
+            if (der.exists()) {
+                byte[] b = java.nio.file.Files.readAllBytes(der.toPath());
+                overrideKey = Base64.encodeToString(b, Base64.NO_WRAP);
+                XposedBridge.log(TAG + ": init key loaded from der, len=" + overrideKey.length());
+                return overrideKey;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": init key load failed " + t);
+        }
+        return null;
+    }
+
     private static byte[] rsaRaw(byte[] data) throws Exception {
         Throwable last = null;
+        String ov = initKeyB64();
+        if (ov != null) {
+            try {
+                byte[] out = rsaEncrypt(data, ov);
+                XposedBridge.log(TAG + ": rsaRaw override(init) outLen=" + out.length);
+                return out;
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": rsaRaw override key failed, falling back " + t);
+                last = t;
+            }
+        }
         int idx = keyIndexFromProp();
         try {
             byte[] out = rsaEncrypt(data, EMBEDDED_PUBLIC_KEYS[idx]);
