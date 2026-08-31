@@ -1182,6 +1182,68 @@ if [ -x "$MODDIR/bin/kgsl-state-sync.sh" ] && [ -d /sys/class/kgsl/kgsl/proc ]; 
 fi
 
 # ============================================================================
+# 关键 UI 进程不再被换出（桌面 / system_server / SurfaceFlinger）
+#
+# ---- 现象 ----
+# 动画期间逐秒采样，最忙的那一秒三个进程合计吃掉 609% 单核，而同一秒
+# 全系统 pswpin +50,229 页（约 196 MB 换入），其中桌面自己 majflt +10,243、
+# system_server +8,542。也就是说那些 CPU 不是在算动画，是在等自己的内存从
+# zram 里解压回来 —— 用户看到的"桌面 80%"大半是这个。
+#
+# ---- 根因：系统 uid 被当成后台应用换出 ----
+# 原厂建了 /dev/memcg/apps/{launcher,systemserver,active} 三个专用组，本意是
+# 把最怕换出的进程放进去单独保护，但这三个组在本机**从头到尾一个进程都没有**。
+# 真正装着它们的是普通 uid 组：
+#   桌面           /apps/uid_10091/pid_xxxx
+#   system_server  /apps/uid_1000/pid_xxxx
+#   SurfaceFlinger /apps/uid_1000/pid_xxxx
+# 而 uid_1000 的 memory.app_score 是 300 —— 与普通后台应用同档。
+#
+# ---- 为什么不能只改 app_score ----
+# 先试过按原厂分级表把 app_score 压进 level 0（0~99，ub_mem2zram_ratio=0）。
+# 结果：写下去没人改回来，但十分钟后桌面的换出量从 91MB 又涨回 154MB。
+# 原因是 app_score 只管 OPlus 自己的 swapd，**内核的 kswapd 与直接回收不看它**，
+# 它们只看 swappiness，而这里全是 100。所以 app_score 是必要不充分。
+#
+# ---- 做法 ----
+# 把这三个进程所在 memcg 的 swappiness 压成 0，app_score 一并对齐到 level 0。
+# 只需要在开机时写一次：实测子 memcg **在创建时继承父组的 swappiness**
+# （父=0 时新建子组读回 0，父=100 时读回 100），所以进程重启后落到新的
+# pid_ 子组里也照样是 0，不需要常驻守卫。
+#
+# ---- 代价（说清楚）----
+# uid_1000 底下不止 system_server 和 SF，还有一批系统 uid 进程，它们的匿名页
+# 从此不进 zram，8G 机器上大约钉住几百 MB。这是有意的取舍：这些页本来就是
+# 最不该被换出去的那部分，把它们换出去省下的内存，代价是每次动画都要换回来。
+# 后台应用仍然照常换出（它们在别的 uid 组，不受影响）。
+#
+# 撤销：删掉本段即可，重启后回到原厂的 swappiness=100。
+# ============================================================================
+protect_ui_memcg() {
+    _done=""
+    for _p in $(pidof com.android.launcher) $(pidof system_server) $(pidof surfaceflinger); do
+        [ -n "$_p" ] || continue
+        _g=$(awk -F: '/:memory:/{print $3}' "/proc/$_p/cgroup" 2>/dev/null)
+        case "$_g" in /apps/*) ;; *) continue ;; esac
+        _u=${_g#/apps/}; _u=${_u%%/*}
+        # uid 组：写一次，之后新建的 pid_ 子组自动继承
+        case " $_done " in
+            *" $_u "*) ;;
+            *)
+                echo 0 >"/dev/memcg/apps/$_u/memory.swappiness" 2>/dev/null
+                echo 0 >"/dev/memcg/apps/$_u/memory.app_score" 2>/dev/null
+                _done="$_done $_u"
+                ;;
+        esac
+        # 当前这个 pid 子组是在我们写父组之前就建好的，继承不到，得单独写
+        echo 0 >"/dev/memcg$_g/memory.swappiness" 2>/dev/null
+        echo 0 >"/dev/memcg$_g/memory.app_score" 2>/dev/null
+        log_msg "ui memcg protected: pid=$_p $_g sw=$(cat "/dev/memcg$_g/memory.swappiness" 2>/dev/null) swap=$(awk '/^swap /{print int($2/1048576)}' "/dev/memcg$_g/memory.stat" 2>/dev/null)MB"
+    done
+}
+protect_ui_memcg
+
+# ============================================================================
 # 手电亮度调节：信箱守望
 #
 # SystemUI(platform_app) 写不了 led:torch_*/brightness —— 节点 chmod 0666 +
