@@ -465,21 +465,11 @@ patch_stock_nandswap
 # ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
-# 关键 UI 进程的 memcg 保护：从这里就在后台等着写
-#
-# 完整的现象、根因与实测数据写在 service.sh 的 protect_ui_memcg() 上面。
-# 之所以还要在 post-fs-data 起一个：service.sh 要等 boot_completed，等它跑到
-# 那一段已经是开机 60~90 秒之后，而**开机头一分钟正是内存压力最大的时候**，
-# 那时候写就晚了 —— 用户报的"开机后第一次解锁卡顿"就落在这个窗口里。
-#
-# 这个脚本有界（最多约 120 秒）、写完即退出，不是常驻守卫。
+# 这里曾经拉起 bin/ui-memcg-protect.sh 去压 swappiness —— 已随 protect_ui_memcg()
+# 一起删除，原因见 service.sh 里的说明：那是加法不是还原，而真正的病根
+# （预建 memcg 目录导致 system_server EACCES）已经修掉了。
 # ----------------------------------------------------------------------------
-UI_MEMCG_GUARD="$MODDIR/bin/ui-memcg-protect.sh"
-if [ -f "$UI_MEMCG_GUARD" ]; then
-    chmod 0755 "$UI_MEMCG_GUARD" 2>/dev/null
-    "$UI_MEMCG_GUARD" "$MODDIR" &
-    log_msg "ui memcg guard armed (background, self-terminating)"
-fi
+
 
 SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
 if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
@@ -590,21 +580,34 @@ resetprop -p persist.sys.oplus.hybridswap_app_uid_memcg true
 # EnableFgMemcgScore，会覆盖此属性。
 resetprop sys.nirvana.enable_fg_memcg_score true
 
-if [ -d /dev/memcg ]; then
-    if [ ! -d /dev/memcg/apps ]; then
-        mkdir /dev/memcg/apps 2>/dev/null
-        chown system:system /dev/memcg/apps 2>/dev/null
-        chmod 0755 /dev/memcg/apps 2>/dev/null
-    fi
-    for protected_group in active systemserver launcher; do
-        protected_path="/dev/memcg/apps/$protected_group"
-        if [ ! -d "$protected_path" ]; then
-            mkdir "$protected_path" 2>/dev/null
-            chown system:system "$protected_path" 2>/dev/null
-            chmod 0700 "$protected_path" 2>/dev/null
-        fi
-    done
-fi
+# ============================================================================
+# 这里曾经预建 /dev/memcg/apps/{active,systemserver,launcher} 三个组 —— 已删除。
+#
+# ★ 那段代码正是"原厂分组从来没跑起来"的直接原因。
+#
+# 它以 root 身份 mkdir，然后只 chown 了**目录**，没管目录里的文件。cgroup 文件
+# 的属主跟着创建进程走，于是 cgroup.procs 是 root:root、0644：
+#
+#   本机（预建后）  active/cgroup.procs        root:root      ← 写不进去
+#   原厂           active/cgroup.procs        system:system
+#   本机 inactive/ 与各包名组（system_server 自己建的）  system:system  ← 正常
+#
+# system_server 跑在 system uid，往 root 拥有的 0644 文件里写自然是 EACCES。
+# logcat 里那条实锤：
+#   E MemoryOperationUtils: Failed to update pid = 24825 in group = active,
+#     msg:/dev/memcg/apps/active/cgroup.procs: open failed: EACCES
+#
+# 也就是说 OPlus 的分组机制一直在正常尝试按 sys_osense_memcg_config.xml 的规则
+# 把桌面搬进 active、把 system_server 搬进 systemserver，**每次都被我们自己预建
+# 的目录挡在门外**，只好留在根 memcg 里。
+#
+# 原厂根本不预建这三个组：需要的时候由 system_server 自己 mkdir，属主自然就对。
+# （原厂上连 launcher 这个组都不存在 —— 配置里没有 groupName="launcher" 的规则，
+# 那个组纯粹是我们凭空造的。）
+#
+# 所以正确做法是**什么都不做**。/dev/memcg/apps 由 init.rc 建好并 chown 成
+# system:system，剩下的交给框架。
+# ============================================================================
 
 wait_count=0
 while [ ! -f /my_stock/etc/extension/sys_osense_memory_config.xml ] &&

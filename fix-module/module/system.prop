@@ -52,3 +52,29 @@ sys.oplus.hmbird.manager.enable=0
 # 撤销：删掉下面一行。
 # ---------------------------------------------------------------------------
 persist.log.tag.ServiceManagerCppClient=S
+
+# ============================================================================
+# 关掉 AOSP 的 per-app memcg，把内存分组交还给原厂那套
+#
+# 与原厂 PKX110（SM8750 / ColorOS V16.1.0）逐项对比后发现的**唯一**差异项：
+#   原厂：ro.config.per_app_memcg 未设置
+#   本机：ro.config.per_app_memcg = true
+#
+# 这个开关一开，AOSP 的 ActivityManagerService 会按 uid/pid 建
+# /dev/memcg/apps/uid_<uid>/pid_<pid>，把 OPlus 自己那套分组挤掉。两边的实际
+# 形态差得很远：
+#   原厂：64 个组，按**包名**分 —— active/ inactive/ systemserver/
+#         com.tencent.mm/ com.android.chrome/ …，
+#         active 里装着桌面 + SystemUI + 相机 + 负一屏，inactive 里 68 个后台进程
+#   本机：164 个组，按 **uid** 分 —— uid_1000/ uid_10091/ …，
+#         而原厂建的 active/ launcher/ systemserver 三个组**一个进程都没有**
+#
+# 也就是说 OPlus 按应用状态在 active/inactive 之间搬进搬出的那套内存管理，在
+# 本机从来没跑起来过，退化成了 AOSP 的按 uid 分组。
+#
+# 内核这边是支持的：两台机器的 /dev/memcg 节点集合逐项比对完全一致，
+# memory.app_uid（原厂建包名组的入口）在本机也在，不是内核缺功能。
+#
+# 撤销：删掉这一行，重启即回到 AOSP 的 per-app memcg。
+# ============================================================================
+ro.config.per_app_memcg=false
