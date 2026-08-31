@@ -553,61 +553,38 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
     # 或 ROM 更新后特征串没匹配上被跳过了）才回落到运行时写入。
     # 一个坏掉的 patch 不该让参数悄悄退回原厂的 16G 档。
     # ------------------------------------------------------------------------
+    # 判据是"不低于本机档位"，不是"等于"：perf HAL 在运行时把它抬高是原厂行为，
+    # 抬高的值要放行；只有明显偏低（说明 nandswap patch 没生效、退回了别的档）
+    # 才兜底写一次。
     _a_now=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
-    if [ "$_a_now" = 2200 ]; then
-        log_msg "hybridswap: 原厂脚本已给出正确的 avail_buffers=$_a_now，无需运行时写入"
-    else
-        log_msg "hybridswap: 原厂脚本给的是 avail_buffers=$_a_now（应为 2200），回落到运行时写入"
-        tune_avail_buffers
-    fi
-
-    # ------------------------------------------------------------------------
-    # 唯一保留的运行时写入：perf HAL 的场景推送兜底。
-    #
-    # 为什么这一路没法像 nandswap 那样改配置源头：
-    # /odm/bin/hw/vendor-oplus-hardware-performance-V1-service（220608 字节）
-    # 里 strings 只搜得到 "memory.avail_buffers" 和 "memory.swapd_memcgs_param"
-    # 两个**节点名**，一个 .xml/.conf/.json 路径都没有；全盘 grep
-    # /odm/etc /vendor/etc /product/etc /my_product/etc /system/etc 也找不到任何
-    # 含 zram2ufs / avail_buffers / swapd_memcgs / mem2zram 的配置文件；
-    # 运行时看它的 fd 也只有 trace_marker。结论：这些值硬编码在 native 代码里，
-    # 没有可 patch 的配置。改不了源头，就只能在它写完之后补一次。
-    #
-    # 它的行为：开机 +55~80 秒之间**整串重写** swapd_memcgs_param，把
-    # level1 ub_mem2zram_ratio 从 60 抬到 80、同时把 zram2ufs 两列抹成 0，
-    # avail_buffers 推成 2300/2000/2300。同一批值在 +189s 手写下去连盯 90 秒
-    # 零变化，证明覆盖是**开机阶段一次性**的，不需要常驻看守。
-    #
-    # 这不是守护进程：最多写一次、最长 120 秒、写完或超时都 break 退出。
-    # 判据用"我们期望的 15 还在不在"，比猜 HAL 什么时候动手可靠。
-    # ------------------------------------------------------------------------
-    (
-        _w=0
-        _hit=0
-        while [ "$_w" -lt 120 ]; do
-
-            _a=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
-            if [ "$_a" != 2200 ]; then
-                _hit=1
-                break
+    case "$_a_now" in
+        ''|*[!0-9]*) log_msg "hybridswap: avail_buffers 读不出来（[$_a_now]），不动它" ;;
+        *)
+            if [ "$_a_now" -ge 2200 ]; then
+                log_msg "hybridswap: avail_buffers=$_a_now 不低于本机档位，放行"
+            else
+                log_msg "hybridswap: avail_buffers=$_a_now 低于本机档位 2200，兜底写一次"
+                tune_avail_buffers
             fi
-            sleep 2
-            _w=$((_w + 2))
-        done
-        if [ "$_hit" = 1 ]; then
-            # 让 HAL 把整串写完再补，避免和它对写。
-            sleep 3
-            tune_avail_buffers
-            # 迁移门槛同样被推回过（upmigrate 第三位 82→95、downmigrate 70→85），
-            # 顺手一起补。WALT 拒绝 down >= up，仍要三步原子写。
-            sched_write '100 100 100' /proc/sys/walt/sched_upmigrate
-            sched_write '50 85 70' /proc/sys/walt/sched_downmigrate
-            sched_write '60 95 82' /proc/sys/walt/sched_upmigrate
-            log_msg "hybridswap: 在 +${_w}s 检出 perf HAL 覆盖，已补写一次并退出（avail=[$(tr '\n' ' ' </dev/memcg/memory.avail_buffers 2>/dev/null)] upmigrate=$(tr '\t' ' ' </proc/sys/walt/sched_upmigrate 2>/dev/null))"
-        else
-            log_msg "hybridswap: 120s 内未被覆盖，无需补写"
-        fi
-    ) &
+            ;;
+    esac
+
+    # ------------------------------------------------------------------------
+    # 这里曾经有一段后台任务：等 perf HAL 在开机 +55~80 秒把 avail_buffers 推成
+    # 2300/2000/2300 之后，再按脚本分档写回 2200/1800/2200。**已删除，2026-08-31。**
+    #
+    # 拿原厂 PKX110 对照才看清这是偏离：原厂 12G 机型的脚本分档同样是
+    # 2200/1800/2200，而实机跑的是 **2500/2200/2500** —— 也是 perf HAL 在运行时
+    # 抬上去的，**原厂让它抬**。我们却把 HAL 的运行时决策按回静态值。
+    #
+    # 而且方向还不利：这等于把内存缓冲垫调低。之前实测过缓冲垫直接影响解锁卡顿
+    # （2200/1800 相比 1500/1200，解锁瞬间的 pgsteal_direct 降 93%），HAL 抬到
+    # 2300/2000 只会更好。
+    #
+    # 所以这一处撤销同时满足"更像原厂"和"数据上更优"，没有取舍。
+    # 上面那段核对逻辑也一并放宽：只在值明显不对（说明 nandswap patch 没生效、
+    # 退回了别的档）时才兜底写一次，HAL 抬高的值一律放行。
+    # ------------------------------------------------------------------------
 else
     log_msg "hybridswap: 节点不存在，跳过 zram2ufs 调整"
 fi
