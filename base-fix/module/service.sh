@@ -255,3 +255,22 @@ if [ -n "$latest_verbose" ] && grep -q "AmbientColorSensorBridge: installed" "$l
 else
     log_msg "ambient light bridge not loaded this boot; dex precompiled, next full reboot will load it"
 fi
+
+check_speaker_calibration() {
+    # 智能功放（aw882xx ×4）的 Re 校准值存在 persist 分区，是逐台实测数据。
+    # 移植后曾观察到该文件为 40 字节全空格（f0 正常、唯独缺 Re），此时功放缺少
+    # 振幅保护的阻抗基准，大音量下容易破音。这里只做检测与提示：Re 不能跨机复制，
+    # 必须在本机用 bin/aw_cali_run.sh 重新校准（需要有音频正在播放）。
+    _f=/mnt/vendor/persist/factory/audio/aw_cali.bin
+    # 注意：toybox 的 grep 会把这个文件判成二进制而拒绝匹配，必须用 tr 取数字。
+    _v=$(tr -dc '0-9' < "$_f" 2>/dev/null)
+    if [ ! -f "$_f" ]; then
+        log_msg "speaker calibration: aw_cali.bin missing"
+    elif [ -n "$_v" ]; then
+        log_msg "speaker calibration present: $(tr -s ' ' ' ' < "$_f")"
+    else
+        log_msg "WARN speaker calibration blank; run bin/aw_cali_run.sh while audio is playing"
+    fi
+}
+
+check_speaker_calibration

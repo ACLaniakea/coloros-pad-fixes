@@ -761,29 +761,19 @@ log_msg "display color bridge: vivid=256(native) soft=0(standard)"
 # The port advertises AudioX while its effect table provides Dolby.
 resetprop ro.oplus.audio.effect.type dolby
 
-# Dolby DAP is a global session-0 effect on the deep-buffer output.  PiliPlus
-# explicitly requests AUDIO_OUTPUT_FLAG_FAST, which leaves its PCM stream on
-# the primary output and bypasses DAP even though the UI and DAX parameter
-# writes succeed.  Use OPlus' own fast-audio-effects policy (value 2 means
-# force deep buffer) so the app's real playback stream shares the DAP chain.
-DOLBY_ROUTE_TARGET=/system_ext/etc/Multimedia_Daemon_List.xml
-DOLBY_ROUTE_RUNTIME="$MODDIR/runtime/Multimedia_Daemon_List.xml"
-if grep -q '<name>com.example.piliplus</name>' "$DOLBY_ROUTE_TARGET" 2>/dev/null; then
-    log_msg "Dolby route: PiliPlus already uses OEM policy"
-elif grep -q '</fast-audio-effects>' "$DOLBY_ROUTE_TARGET" 2>/dev/null; then
-    mkdir -p "${DOLBY_ROUTE_RUNTIME%/*}"
-    sed '/<\/fast-audio-effects>/i\
-        <name>com.example.piliplus</name>\
-        <attribute>2</attribute>
-' "$DOLBY_ROUTE_TARGET" >"$DOLBY_ROUTE_RUNTIME"
-    chown 0:0 "$DOLBY_ROUTE_RUNTIME"
-    chmod 0644 "$DOLBY_ROUTE_RUNTIME"
-    chcon u:object_r:system_file:s0 "$DOLBY_ROUTE_RUNTIME" 2>/dev/null
-    mount --bind "$DOLBY_ROUTE_RUNTIME" "$DOLBY_ROUTE_TARGET" 2>/dev/null && \
-        log_msg "Dolby route: PiliPlus forced through OEM deep-buffer DAP chain"
-else
-    log_msg "ERROR: Dolby route policy target missing or incompatible"
-fi
+# 已移除（2026-08-31）：PiliPlus 强制 deep-buffer 的 Dolby 路由例外。
+#
+# 曾经的做法：把 <name>com.example.piliplus</name><attribute>2</attribute>
+# 插进 /system_ext/etc/Multimedia_Daemon_List.xml 的 <fast-audio-effects> 段，
+# 再 bind-mount 覆盖原文件，逼该 App 的音轨走 deep-buffer 以共享 DAP 效果链。
+#
+# 移除理由：原厂这套路由策略本身是完整且在运行的 —— <donot-force-deepbuffer>
+# 是黑名单（默认全部强制 deep buffer，例外只有 CTS 与 TTS 四项），解析器
+# libmmlistparser.so 与守护进程 com.oplus.persist.multimedia 均正常工作，
+# DAP 也确实挂在 deep-buffer 输出的 session 0 上且处于 Enabled 状态。
+# 单独给某个 App 开例外属于偏离原厂逻辑，按"还原原厂机制"的方针撤销。
+#
+# uninstall.sh 中对该文件的 umount 保留，用于清理旧版本遗留的 bind 挂载。
 
 resetprop -p persist.sys.horae.enable 1
 

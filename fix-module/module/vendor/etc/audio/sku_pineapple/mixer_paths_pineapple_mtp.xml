@@ -330,8 +330,6 @@
     </path>
 
     <path name="speaker">
-        <ctl name="aw_dev_0_volume" value="10" />
-        <ctl name="aw_dev_1_volume" value="10" />
     </path>
 
     <path name="speaker-prot">
