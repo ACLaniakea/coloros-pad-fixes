@@ -1219,6 +1219,24 @@ fi
 #
 # 撤销：删掉本段即可，重启后回到原厂的 swappiness=100。
 # ============================================================================
+# ============================================================================
+# AON 的 QNN 配置：挂载完成之后再校验
+#
+# 这段原本在 post-fs-data，但那时 KernelSU 还没挂模块文件，判断必然失败，
+# 于是每次开机都打一条假的 "ERROR: ... missing"。挪到这里才是真校验。
+# ============================================================================
+verify_aon_qnn_config() {
+    _dir=/odm/etc/camera
+    _a="$_dir/aiboost_qnn_htp2.7.2_828413902960689361.bin"
+    _b="$_dir/aiboost_qnn_htp2.7.2_16382673562495086299.bin"
+    if [ -r "$_a" ] && [ -r "$_b" ]; then
+        log_msg "AON QNN ODM configuration present ($(ls -Z "$_a" 2>/dev/null | awk '{print $1}'))"
+    else
+        log_msg "ERROR: AON QNN ODM configuration missing at $_dir —— 覆盖没挂上，注视感知会退化"
+    fi
+}
+verify_aon_qnn_config
+
 protect_ui_memcg() {
     _done=""
     for _p in $(pidof com.android.launcher) $(pidof system_server) $(pidof surfaceflinger); do

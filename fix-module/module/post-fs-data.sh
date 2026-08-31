@@ -464,6 +464,23 @@ patch_stock_nandswap
 # 不留这层多余的重打标 —— 少改一处原厂状态，少一份出问题的可能。
 # ----------------------------------------------------------------------------
 
+# ----------------------------------------------------------------------------
+# 关键 UI 进程的 memcg 保护：从这里就在后台等着写
+#
+# 完整的现象、根因与实测数据写在 service.sh 的 protect_ui_memcg() 上面。
+# 之所以还要在 post-fs-data 起一个：service.sh 要等 boot_completed，等它跑到
+# 那一段已经是开机 60~90 秒之后，而**开机头一分钟正是内存压力最大的时候**，
+# 那时候写就晚了 —— 用户报的"开机后第一次解锁卡顿"就落在这个窗口里。
+#
+# 这个脚本有界（最多约 120 秒）、写完即退出，不是常驻守卫。
+# ----------------------------------------------------------------------------
+UI_MEMCG_GUARD="$MODDIR/bin/ui-memcg-protect.sh"
+if [ -f "$UI_MEMCG_GUARD" ]; then
+    chmod 0755 "$UI_MEMCG_GUARD" 2>/dev/null
+    "$UI_MEMCG_GUARD" "$MODDIR" &
+    log_msg "ui memcg guard armed (background, self-terminating)"
+fi
+
 SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
 if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
     # Also publishes the skin-msm-therm-usr thermal zone that this board's
@@ -831,21 +848,21 @@ else
     log_msg "ERROR: AON native runtime payload or target missing"
 fi
 
-# Retain the two versioned QNN configuration records shipped beside the
-# original AON stack. The port lacks /odm/etc/camera entirely; KernelSU's
-# module overlay exposes this payload at that same read-only ODM path. No
-# model, inference, or attention result is supplied by this module.
-AON_QNN_CONFIG=/odm/etc/camera
-QNN_GRAPH_CONFIG="$AON_QNN_CONFIG/aiboost_qnn_htp2.7.2_828413902960689361.bin"
-QNN_CAPABILITY_CONFIG="$AON_QNN_CONFIG/aiboost_qnn_htp2.7.2_16382673562495086299.bin"
-if [ -r "$QNN_GRAPH_CONFIG" ] && [ -r "$QNN_CAPABILITY_CONFIG" ]; then
-    chmod 0644 "$QNN_GRAPH_CONFIG" "$QNN_CAPABILITY_CONFIG" 2>/dev/null
-    chcon u:object_r:vendor_app_file:s0 "$QNN_GRAPH_CONFIG" 2>/dev/null
-    chcon u:object_r:vendor_configs_file:s0 "$QNN_CAPABILITY_CONFIG" 2>/dev/null
-    log_msg "AON original QNN ODM configuration available"
-else
-    log_msg "ERROR: AON original QNN ODM configuration missing"
-fi
+# AON 的两份 QNN 配置由模块以 /odm/etc/camera 覆盖提供（移植包整个缺这个目录）。
+#
+# ★ 这里**故意不再检查 /odm/etc/camera 是否存在**。
+#   KernelSU（和 Magisk 一样）是先跑模块的 post-fs-data.sh、之后才挂模块文件，
+#   所以在这个阶段 /odm/etc/camera 必然还不存在 —— 老代码在这里判断可读性，
+#   于是每次开机都稳定打出一条 "ERROR: AON original QNN ODM configuration
+#   missing"，而实际上文件挂载后一直是好的。那条 ERROR 是假警报，白白误导排查。
+#   真正的校验挪到 service.sh（那时挂载已经完成）。
+#
+# ★ 也不再对这两个文件 chcon。
+#   老代码想把它们改成 vendor_app_file / vendor_configs_file（对齐原厂 ODM 的
+#   标签），但那次 chcon 打在还不存在的路径上，从来没生效过。实测挂载后的标签
+#   是 system_file，AON 进程正常运行、dmesg 里 0 条相关 avc —— 也就是说
+#   system_file 本来就够用。既然如此就别去动它：改标签有让 app 域读不到的风险，
+#   换来的只是"看起来更像原厂"。
 
 LIBDL_TARGET=/apex/com.android.runtime/lib/bionic/libdl.so
 LIBDL_PATCH="$MODDIR/payload/libdl32.tango-cfi.so"
