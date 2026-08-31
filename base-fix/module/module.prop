@@ -1,6 +1,6 @@
 id=coloros_port_base_fix
 name=联想平板 Pro GT - ColorOS 基础修复
 author=ACLaniakea
-version=3.0.0
-versionCode=300000
+version=3.0.1
+versionCode=300100
 description=补移植 ROM 缺的用户态资源：AON 注视感知运行时、音效与环境光配置、设备标识。需配合 BaseFix-Hook.apk（LSPosed 模块）一起用。

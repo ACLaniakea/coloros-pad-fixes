@@ -4,7 +4,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-3.0.0-orange)
+![Version](https://img.shields.io/badge/version-3.0.1-orange)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
 
 移植包刷上去能开机，但不少东西是瘸的：温控曲线用错了传感器、内存扩展档位对不上、一加那套内核调度栈加载不起来、手写笔和 AON 注视感知没人接。这个项目就是把这些一条条接回去。
@@ -13,7 +13,7 @@
 
 好用的话，[请我喝杯咖啡](#十一请我喝杯咖啡) ☕
 
-> ### ⚠️ 3.0.0 不能单独安装
+> ### ⚠️ 3.0.x 不能单独安装
 >
 > **必须先刷 `boot` 和 `vendor_boot` 两个分区，再装模块。** 这两个 img 要成对刷，
 > 缺一不可。跳过这一步直接装模块，轻则功能不生效，重则 **kernel panic 开不了机**，
@@ -115,15 +115,15 @@ adb shell uname -r     # 应带 -ACLaniakea 后缀
 命令行等价写法：
 
 ```bash
-adb shell su -c 'ksud module install /sdcard/FixModule-v3.0.0.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v3.0.1.zip'
 ```
 
 ### 3.3 装 LSPosed 模块
 
 ```bash
-adb install -r BaseFix-Hook-v3.0.0.apk
-adb install -r PenBridge-Hook-v3.0.0.apk   # 用笔才装
-adb install -r PenHidCtl-v3.0.0.apk        # 用笔才装
+adb install -r BaseFix-Hook-v3.0.1.apk
+adb install -r PenBridge-Hook-v3.0.1.apk   # 用笔才装
+adb install -r PenHidCtl-v3.0.1.apk        # 用笔才装
 ```
 
 然后在 LSPosed 里**启用模块并勾选作用域**——勾错等于没装。`FixModule` 会用 `INSERT OR IGNORE` 把必需作用域补进 LSPosed 白名单，不会删掉你自己加的。
