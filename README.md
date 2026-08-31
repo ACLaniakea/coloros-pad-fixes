@@ -4,7 +4,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-3.0.1-orange)
+![Version](https://img.shields.io/badge/version-3.0.2-orange)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
 
 移植包刷上去能开机，但不少东西是瘸的：温控曲线用错了传感器、内存扩展档位对不上、一加那套内核调度栈加载不起来、手写笔和 AON 注视感知没人接。这个项目就是把这些一条条接回去。
@@ -115,15 +115,15 @@ adb shell uname -r     # 应带 -ACLaniakea 后缀
 命令行等价写法：
 
 ```bash
-adb shell su -c 'ksud module install /sdcard/FixModule-v3.0.1.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v3.0.2.zip'
 ```
 
 ### 3.3 装 LSPosed 模块
 
 ```bash
-adb install -r BaseFix-Hook-v3.0.1.apk
-adb install -r PenBridge-Hook-v3.0.1.apk   # 用笔才装
-adb install -r PenHidCtl-v3.0.1.apk        # 用笔才装
+adb install -r BaseFix-Hook-v3.0.2.apk
+adb install -r PenBridge-Hook-v3.0.2.apk   # 用笔才装
+adb install -r PenHidCtl-v3.0.2.apk        # 用笔才装
 ```
 
 然后在 LSPosed 里**启用模块并勾选作用域**——勾错等于没装。`FixModule` 会用 `INSERT OR IGNORE` 把必需作用域补进 LSPosed 白名单，不会删掉你自己加的。
@@ -238,12 +238,52 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 ├── kernel-compat/       自建内核、ABI 门禁、模块移植、救援手册
 ├── port-tuning/         早期调优模块，已归档不要装
 ├── experimental/        试验性内容
-└── tools/build_all.sh   一键全量构建
+├── docs/                专题排查记录
+└── tools/
+    ├── build_all.sh     一键全量构建
+    └── aw_cali.py       电脑端扬声器校准执行器（Win/Linux/macOS）
 ```
 
 ---
 
-## 八、文档
+## 八、扬声器校准工具
+
+移植后 `/mnt/vendor/persist/factory/audio/aw_cali.bin` 可能是空的：f0 正常，唯独
+缺 Re（四颗 AWINIC aw882xx 的直流阻抗实测值）。缺了 Re，智能功放的振幅保护没有
+基准，大音量下容易破音。模块开机会检查这个文件，为空时在模块日志里告警。
+
+**Re 是逐台实测数据，不能从别人机器上复制**，必须在本机跑一次校准。
+
+在设备上跑：
+
+```
+su -c /data/adb/modules/coloros_port_fix/bin/aw_cali_run.sh
+```
+
+或者在电脑上跑（Windows / Linux / macOS 通用，只要 Python 3 和 adb）：
+
+```
+python tools/aw_cali.py            # 自动挑唯一在线设备，推送并执行
+python tools/aw_cali.py --check    # 只看当前校准值，不动数据
+python tools/aw_cali.py -s <序列号> --adb <adb 路径>
+```
+
+脚本会自己生成一段低幅方波、拉起播放器把扬声器通路顶起来（数字静音和音量 0
+都不行，HAL 会把功放置于关闭态导致校准失败）、跑完恢复原音量并清理临时文件。
+**期间会有轻微声音，请在安静环境下进行，不要遮挡扬声器。** 跑完重启一次让
+音频 HAL 重新读取。
+
+正常结果是四个互相接近的数值，且落在脚本打印的合法区间内，例如：
+
+```
+[aw_cali] 校准前： （空，未校准）
+[aw_cali] 通路已激活：spkr R0 = 6574
+[aw_cali] 校准后： 6575 6542 6562 6494
+```
+
+---
+
+## 九、文档
 
 | 文档 | 内容 |
 |---|---|
@@ -251,12 +291,14 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 | [kernel-compat/刷机事故与救援手册.md](kernel-compat/刷机事故与救援手册.md) | 两次真实救援全过程，含 9008 EDL 单分区恢复 |
 | [kernel-compat/一加模块移植进度.md](kernel-compat/一加模块移植进度.md) | 一加 BSP 模块的移植与 hyperSched 空壳做法 |
 | [kernel-compat/自建内核ABI门禁结果.md](kernel-compat/自建内核ABI门禁结果.md) | 自建 GKI 与 vendor 模块的 ABI 校验 |
+| [docs/扬声器破音排查.md](docs/扬声器破音排查.md) | 破音的两处成因、与原厂包的逐项比对、以及被推翻的 timed render 一说 |
+| [docs/桌面旋转位移动画消失.md](docs/桌面旋转位移动画消失.md) | 悬浮窗导致桌面旋转动画降级，属系统固有行为 |
 | [内核兼容性与后续移植说明.md](内核兼容性与后续移植说明.md) | 内核层边界与后续路线 |
 | [主线Linux内核与ArchLinux启动可行性说明.md](主线Linux内核与ArchLinux启动可行性说明.md) | 想跑主线内核或 Arch 的先读这个 |
 
 ---
 
-## 九、已知问题
+## 十、已知问题
 
 修完之后仍然存在、且已经查过的几件事：
 
@@ -285,7 +327,11 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 
 ### 查找设备：能找别人，注册不了自己
 
-注册用的公钥在 **TEE** 里，读不出来，也就没法发出本机的注册指令。
+注册要用服务器当前的 RSA-1024 公钥去加密本机的注册指令，而这把公钥只存在于
+正版设备 **TEE**（cryptoeng TA 的 RPMB）里，读不出来。已经确认它不在 TA 二进制、
+不在 tz / oplus_sec 镜像、不在查找 App（9.6.14 版只内置一把 RSA-1024，正是我们
+早就试过的那把）、也不在服务器下发的配置里。服务器对不认识的密文一律回 8000。
+
 所以本设备无法注册到「查找设备」，但**查看其他设备是正常的**。
 
 ### 小布语音唤醒：已放弃
@@ -306,12 +352,12 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 > 模式，而它是后台绑定服务，会周期性开关前置摄像头。功能是正常的，代价是一部分
 > CPU——这是权衡不是故障，想省这部分可以在系统设置里关掉注视感知。
 
-## 十、致谢
+## 十一、致谢
 
 - 酷安 **@徘徊于斗牛间**、**@长卿i** —— 测试支持
 - 特别致谢 酷安 **@Tsukiko _Hakura** —— API 支持
 
-## 十一、请我喝杯咖啡
+## 十二、请我喝杯咖啡
 
 这个项目是业余时间一条条啃出来的：每个修复背后基本都有几轮实机抓数据、证伪、
 推翻重来。它不收费，以后也不会收费。
@@ -324,13 +370,13 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 微信扫码即可。也欢迎用别的方式支持：提 issue 反馈问题、帮忙测试新版本、
 或者把这个项目介绍给同样在折腾 TB710FU 的人 —— 这些一样有用。
 
-## 十二、免责
+## 十三、免责
 
 仅供个人学习与设备移植研究。不含设备序列号、签名私钥或刷机包；已编译的 APK/ZIP 都是构建产物，源码和构建脚本都在仓库里。
 
 **刷机前请备份，本人不对设备数据丢失、黑砖以及第三次世界大战爆发负责。**
 
-## 十三、协议
+## 十四、协议
 
 主体采用 **[GPL-3.0](LICENSE)**。
 

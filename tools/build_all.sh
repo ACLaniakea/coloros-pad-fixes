@@ -35,11 +35,11 @@ echo "== 3/8 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py
 
 echo "== 4/8 refresh PenHidCtl inside pen-bridge module =="
-cp releases/PenHidCtl-v3.0.1.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
+cp releases/PenHidCtl-v3.0.2.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
 echo "== 5/8 root module zips =="
 python3 fix-module/tools/build_fix.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v3.0.1.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v3.0.2.zip
 
 echo "== 6/8 OPlus BSP kernel modules =="
 python3 oplus-bsp-module/tools/build_oplus_bsp.py

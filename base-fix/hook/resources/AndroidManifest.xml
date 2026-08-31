@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="300100"
-    android:versionName="3.0.1"
+    android:versionCode="300200"
+    android:versionName="3.0.2"
     android:compileSdkVersion="36"
     android:compileSdkVersionCodename="16"
     package="com.aclaniakea.colorosostatsguard"
