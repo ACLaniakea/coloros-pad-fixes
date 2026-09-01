@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/readme-hero.png" alt="ColorOS Pad Fixes — 联想小新 Pad Pro GT · SM8650Q" width="100%">
+</p>
+
 # ColorOS Pad Port Fixes
 
 联想小新 Pad Pro GT（**TB710FU** / SM8650Q / pineapple）跑 ColorOS 16 移植包（OPD2513）的一套适配修复。
