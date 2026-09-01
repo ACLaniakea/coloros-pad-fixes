@@ -13,6 +13,7 @@ public final class XposedHelpers {
             String className, ClassLoader classLoader,
             Object... parameterTypesAndCallback) { return null; }
     public static Object getObjectField(Object object, String fieldName) { return null; }
+    public static void setObjectField(Object object, String fieldName, Object value) {}
     public static Object getStaticObjectField(Class<?> clazz, String fieldName) { return null; }
     public static void setStaticObjectField(Class<?> clazz, String fieldName, Object value) {}
     public static Class<?> findClass(String className, ClassLoader classLoader) { return null; }

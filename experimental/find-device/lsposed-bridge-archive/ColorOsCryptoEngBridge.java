@@ -1,7 +1,9 @@
 package com.aclaniakea.coloroscryptoengbridge;
 
 import android.content.ContentResolver;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -86,7 +88,18 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
 
     private static volatile Map<String, String> store;
     private static volatile boolean storeDirty;
+    private static volatile ClassLoader appClassLoader;
     private static final String DEFAULT_RSA_VERSION = "0"; // 服务器密钥表只有版本 0（真机实测），固定为 0
+    // 查找设备注册公钥（服务器 RSA-1024，version 0）。这把就是正版设备 cryptoeng TA
+    // RPMB 里预置的 "FindPhone initialization public key"，从 ColorOS-CryptoengHAL
+    // 软实现二进制（Cryptoeng.zip）中内嵌的 SPKI DER 提取（162B，模数 1024 bit，e=65537）。
+    // 之前内置的候选表里没有它，服务器对错误密文一律回 8000，注册因此一直失败。
+    private static final String FIND_PHONE_INIT_PUBLIC_KEY =
+            "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2rR5Lb45wLLu+NXJyQSr1ueiQmf1qIebBtHBdfz5K/WDCM5s9JDvYLyKDyDrc6IxkrhdttbAzMg8cOqbPdIxUq8AfXLIRfLWIMCPkiQAXMdAxAJqoXqZIhgAbRbHS0Bzc/heX89r98+Qe7hIuFmEl8rpg1IlkKfS85ELUO3UMgQIDAQAB";
+    // 移植机没有由 TA 预置的 RPMB identity。该值已经在早期版本作为 field=4
+    // 回传，先持久化它，避免每次启动出现不同的“本机”。
+    private static final String DEFAULT_DEVICE_ID =
+            "0db683cee188696671337eff1d4ee7922fa28b26923455503758dafe3ca19c58";
 
     private static volatile Object aidlService;
     private static volatile Method aidlInvoke;
@@ -96,6 +109,7 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         if (!DeviceGate.isSupported() || !FIND_PHONE.equals(p.packageName)) {
             return;
         }
+        appClassLoader = p.classLoader;
         try {
             Class<?> sm = Class.forName("android.os.ServiceManager");
             IBinder real = (IBinder) sm.getMethod("getService", String.class).invoke(null, AIDL_SERVICE);
@@ -103,10 +117,14 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": service probe failed " + t);
         }
-        // 移植机开机时查找开关未开启，原厂 AndroidBootCompleteDispatcher 不会建立
-        // 位置定时上报任务。这里在 FindDaemonService 启动后按原厂 AutoReportLocationHelper
-        // 补上：立即上报一次 + 10 分钟 AlarmManager 循环上报。
-        installFindDaemonReportHook(p.classLoader);
+        installClientIdHook(p.classLoader);
+        installReceiverStateHook();
+        installFindSwitchStateHook(p.classLoader);
+        // PD 抓包钩子疑似干扰 initiateOpen 请求，临时禁用排除影响
+        // installPassthroughHooks(p.classLoader);
+        installAppLogMirror(p.classLoader);
+        // installRetrofitLogHook(p.classLoader);
+        // installNewCallLogHook(p.classLoader);
         XC_MethodHook queryHook = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
@@ -157,8 +175,231 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + ": installed hooks=" + ok);
     }
 
-    /** 查找守护服务启动后按原厂逻辑补建位置上报（立即 + 10 分钟定时循环）。 */
-    private static void installFindDaemonReportHook(final ClassLoader cl) {
+    /**
+     * 开启查找前的网络请求不直接读取 RpmbData，而是先走 ClientIdUtils。
+     * 移植机原厂 ClientIdUtils 可能在 RPMB 初始化完成前缓存空值，随后永远以
+     * “invalid parameter: device id”退出。让它与模拟 RPMB 共用同一持久化 ID。
+     */
+    private static void installClientIdHook(final ClassLoader cl) {
+        try {
+            XposedHelpers.findAndHookMethod("com.oplus.common.utils.c", cl, "a", Context.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            String deviceId = get("device_id");
+                            if (!deviceId.isEmpty()) {
+                                try {
+                                    XposedHelpers.setStaticObjectField(
+                                            XposedHelpers.findClass("com.oplus.common.utils.c", cl),
+                                            "f11319a", deviceId);
+                                } catch (Throwable ignored) { }
+                                param.setResult(deviceId);
+                            }
+                        }
+                    });
+            XposedHelpers.findAndHookMethod("com.oplus.common.utils.c", cl, "c", Context.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            String imei = get("imei");
+                            if (!imei.isEmpty()) {
+                                try {
+                                    XposedHelpers.setStaticObjectField(
+                                            XposedHelpers.findClass("com.oplus.common.utils.c", cl),
+                                            "f11320b", imei);
+                                } catch (Throwable ignored) { }
+                                param.setResult(imei);
+                            }
+                        }
+                    });
+            XposedBridge.log(TAG + ": ClientIdUtils device-id/imei bridges installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": ClientIdUtils hook skipped " + t);
+        }
+    }
+
+    /**
+     * 注册完成后，移植系统的错误本地状态会令 Find My Phone 再次禁用两个原厂
+     * BroadcastReceiver，进而丢失开机、网络变化和远程指令触发。仅在 RPMB
+     * 已确认注册且账号仍存在时阻止该错误禁用；用户关闭功能后的业务逻辑仍会
+     * 以开关/RPMB 状态拒绝所有查找动作。
+     */
+    private static void installReceiverStateHook() {
+        try {
+            Class<?> pm = Class.forName("android.app.ApplicationPackageManager");
+            XposedHelpers.findAndHookMethod(pm, "setComponentEnabledSetting", ComponentName.class,
+                    int.class, int.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!"1".equals(get("registration_complete"))
+                                    || get("account_name").isEmpty()) return;
+                            ComponentName component = (ComponentName) param.args[0];
+                            int state = (Integer) param.args[1];
+                            String cls = component == null ? "" : component.getClassName();
+                            if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                                    && ("com.oplus.findmyphone.receiver.OpenStateReceiver".equals(cls)
+                                    || "com.oplus.find.receiver.FindConditionReceiver".equals(cls))) {
+                                param.args[1] = PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
+                                XposedBridge.log(TAG + ": kept registered receiver enabled " + cls);
+                            }
+                        }
+                    });
+            XposedBridge.log(TAG + ": registered receiver state guard installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": receiver state guard skipped " + t);
+        }
+    }
+
+    /**
+     * 已注册设备的 RPMB 账号名是脱敏形式；移植机账户 SDK 会将其误判成未格式化，
+     * 进而把服务端已开启的状态在 UI 中覆盖为关闭。注册账号存在时以 RPMB
+     * 注册状态为准，使页面、Secure 设置和服务端状态一致。
+     */
+    private static void installFindSwitchStateHook(final ClassLoader cl) {
+        try {
+            XposedHelpers.findAndHookMethod("d7.b", cl, "d", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    String account = get("account_name");
+                    if (account.isEmpty() || "0".equals(account)) return;
+                    try {
+                        Class<?> stateClass = XposedHelpers.findClass("s6.b", cl);
+                        // R8 会混淆 enum 静态字段，但不会改变 Enum.name()；不能以
+                        // 反射字段名 "ON" 取值。
+                        Object on = Enum.valueOf((Class) stateClass, "ON");
+                        Object result = XposedHelpers.callStaticMethod(
+                                XposedHelpers.findClass("u2.a", cl), "b", on);
+                        param.setResult(result);
+                        XposedBridge.log(TAG + ": reconciled Find switch state=ON from RPMB registration");
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": Find switch state bridge failed " + t);
+                    }
+                }
+            });
+            // d7.b.c() 会优先返回旧缓存而不再调用 d()；注册完成后必须同样
+            // 校准该读取点，否则设备详情仍会把已开启状态画成关闭。
+            XposedHelpers.findAndHookMethod("d7.b", cl, "c", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    reconcileFindSwitchOn(cl, param);
+                }
+            });
+            XposedBridge.log(TAG + ": Find switch state bridge installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": Find switch state bridge skipped " + t);
+        }
+    }
+
+    private static void reconcileFindSwitchOn(ClassLoader cl, XC_MethodHook.MethodHookParam param) {
+        String account = get("account_name");
+        if (account.isEmpty() || "0".equals(account)) return;
+        try {
+            Class<?> stateClass = XposedHelpers.findClass("s6.b", cl);
+            // R8 会混淆 enum 静态字段，但不会改变 Enum.name()；不能以
+            // 反射字段名 "ON" 取值。
+            Object on = Enum.valueOf((Class) stateClass, "ON");
+            Object result = XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("u2.a", cl), "b", on);
+            param.setResult(result);
+            XposedBridge.log(TAG + ": reconciled Find switch state=ON from RPMB registration");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": Find switch state bridge failed " + t);
+        }
+    }
+
+    /**
+     * 把 app 内部日志（e8/e 的 a/c/e/i 四档）镜像到 Xposed 日志，用于跟踪
+     * FindOpenRepository / FindSwitchCalibrateManager / SwitchRetryCalibrate 等流程，
+     * 因为 dog3 日志是加密的读不了。
+     */
+    private static void installAppLogMirror(final ClassLoader cl) {
+        try {
+            Class<?> logger = XposedHelpers.findClass("e8.e", cl);
+            XC_MethodHook mirror = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        String tag = String.valueOf(param.args[0]);
+                        String msg = param.args.length > 1 ? String.valueOf(param.args[1]) : "";
+                        if (tag.contains("FindOpen") || tag.contains("Switch") || tag.contains("Rpmb")
+                                || tag.contains("FindNet") || tag.contains("Calibrate")
+                                || tag.contains("Retry") || tag.contains("Instruct")
+                                || tag.contains("Location") || tag.contains("Daemon")
+                                || tag.contains("FindSwitch") || tag.contains("AutoReport")) {
+                            XposedBridge.log(TAG + "[applog-" + param.method.getName() + "] " + tag + ": " + msg);
+                        }
+                    } catch (Throwable ignored) { }
+                }
+            };
+            XposedHelpers.findAndHookMethod(logger, "e", String.class, String.class, mirror);
+            XposedHelpers.findAndHookMethod(logger, "a", String.class, String.class, mirror);
+            XposedHelpers.findAndHookMethod(logger, "c", String.class, String.class, mirror);
+            XposedHelpers.findAndHookMethod(logger, "i", String.class, String.class, mirror);
+            XposedBridge.log(TAG + ": app log mirror installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": app log mirror skipped " + t);
+        }
+    }
+
+    /**
+     * 只读记录 FindNetReqMgr.RetrofitCall 的请求（pp.b.request().toString() 含完整
+     * 头），不动 body，避免破坏请求。用于排查 completeOpen 卡住时到底发了什么。
+     */
+    private static void installRetrofitLogHook(final ClassLoader cl) {
+        try {
+            Class<?> callCls = Class.forName("pp.b", false, cl);
+            XposedHelpers.findAndHookMethod("k8.b", cl, "c", Context.class, callCls, String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                Object call = param.args[1];
+                                if (call == null) return;
+                                Object req = XposedHelpers.callMethod(call, "request");
+                                String desc = String.valueOf(req);
+                                if (desc.contains("puppet") || desc.contains("initiateOpen") || desc.contains("completeOpen")) {
+                                    String hdrs = String.valueOf(XposedHelpers.callMethod(req, "headers"));
+                                    XposedBridge.log(TAG + "[retrofit] " + desc + " headers=" + hdrs);
+                                }
+                            } catch (Throwable ignored) { }
+                        }
+                    });
+            XposedBridge.log(TAG + ": retrofit request log installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": retrofit request log skipped " + t);
+        }
+    }
+
+    /**
+     * 在 OkHttpClient.newCall(Request) 处只读记录 URL+headers——这是所有请求必经的
+     * 入口，且在拦截器之前，读 Request 不会破坏请求体。
+     */
+    private static void installNewCallLogHook(final ClassLoader cl) {
+        try {
+            XposedHelpers.findAndHookMethod("okhttp3.OkHttpClient", cl, "newCall",
+                    Class.forName("okhttp3.Request", false, cl), new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                Object req = param.args[0];
+                                String url = String.valueOf(XposedHelpers.callMethod(req, "url"));
+                                if (url.contains("puppet") || url.contains("initiateOpen") || url.contains("completeOpen")) {
+                                    String hdrs = String.valueOf(XposedHelpers.callMethod(req, "headers"));
+                                    String method = String.valueOf(XposedHelpers.callMethod(req, "method"));
+                                    XposedBridge.log(TAG + "[newcall] " + method + " " + url + " headers=" + hdrs);
+                                }
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + "[newcall] log failed " + t);
+                            }
+                        }
+                    });
+            XposedBridge.log(TAG + ": newCall request log installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": newCall request log skipped " + t);
+        }
+    }
+
+    /** 查找守护服务启动后按原厂逻辑补建位置上报（立即 + 10 分钟定时循环）。 */    private static void installFindDaemonReportHook(final ClassLoader cl) {
         try {
             XposedHelpers.findAndHookMethod("com.oplus.find.service.FindDaemonService", cl, "onCreate",
                     new XC_MethodHook() {
@@ -251,8 +492,19 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                                 + " headers=" + XposedHelpers.callMethod(headers, "toString"));
                         Object body = XposedHelpers.callMethod(r, "body");
                         if (body != null) {
-                            XposedBridge.log(TAG + "PD: HTTP body contentLength="
-                                    + XposedHelpers.callMethod(body, "contentLength"));
+                            // 读取请求体内容（retrofit 的 JSON body 可重复读）
+                            try {
+                                Class<?> bufCls = Class.forName("okio.Buffer", false, r.getClass().getClassLoader());
+                                Object buf = bufCls.getDeclaredConstructor().newInstance();
+                                XposedHelpers.callMethod(body, "writeTo", buf);
+                                String b = (String) XposedHelpers.callMethod(buf, "readUtf8");
+                                if (b != null && !b.isEmpty()) {
+                                    XposedBridge.log(TAG + "PD: HTTP reqBody="
+                                            + b.substring(0, Math.min(b.length(), 2000)));
+                                }
+                            } catch (Throwable t2) {
+                                XposedBridge.log(TAG + "PD: reqBody read failed " + t2);
+                            }
                         }
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + "PD: HTTP req log failed " + t);
@@ -268,12 +520,16 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                         }
                         XposedBridge.log(TAG + "PD: HTTP << code=" + XposedHelpers.callMethod(resp, "code")
                                 + " headers=" + XposedHelpers.callMethod(XposedHelpers.callMethod(resp, "headers"), "toString"));
+                        // 注意：这里绝不能用 peekBody()——它会消耗响应体，破坏上层
+                        // gzip 解压/JSON 解析（initiateOpen 响应因此卡死过）。
                         try {
-                            Object peek = XposedHelpers.callMethod(resp, "peekBody", 1_000_000L);
-                            String b = (String) XposedHelpers.callMethod(peek, "string");
-                            XposedBridge.log(TAG + "PD: HTTP body=" + (b == null ? "null" : b.substring(0, Math.min(b.length(), 1200))));
+                            Object body = XposedHelpers.callMethod(resp, "body");
+                            if (body != null) {
+                                XposedBridge.log(TAG + "PD: HTTP resp contentLength="
+                                        + XposedHelpers.callMethod(body, "contentLength"));
+                            }
                         } catch (Throwable t2) {
-                            XposedBridge.log(TAG + "PD: HTTP body read failed " + t2);
+                            XposedBridge.log(TAG + "PD: HTTP resp body len failed " + t2);
                         }
                     } catch (Throwable t) {
                         XposedBridge.log(TAG + "PD: HTTP resp log failed " + t);
@@ -304,6 +560,7 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
     private static synchronized Map<String, String> store() {
         if (store == null) {
             store = new LinkedHashMap<>();
+            boolean initChanged = false;
             try {
                 Context ctx = (Context) Class.forName("android.app.ActivityThread")
                         .getMethod("currentApplication").invoke(null);
@@ -320,31 +577,94 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                     XposedBridge.log(TAG + ": store loaded entries=" + store.size() + " rsa_version=" + store.get("rsa_version"));
                 } else {
                     store.put("rsa_version", DEFAULT_RSA_VERSION);
-                    storeDirty = true;
+                    initChanged = true;
                     XposedBridge.log(TAG + ": store initialized defaults rsa_version=" + DEFAULT_RSA_VERSION);
+                }
+                ensureIdentityLocked();
+                // 旧实现会在 2002“请求注册”时预写 account_name；这不是注册成功，
+                // 却会令页面永久处在“本地已开、服务端未入设备列表”的中间态。
+                // 只迁移本模块模拟 RPMB 中尚未获得 2003 成功确认的旧记录。
+                if (!"1".equals(store.get("registration_complete"))
+                        && !"1".equals(store.get("registration_cleanup_v2"))) {
+                    store.remove("account_name");
+                    store.remove("ssoid");
+                    store.remove("message_key");
+                    store.put("registration_cleanup_v2", "1");
+                    initChanged = true;
+                    XposedBridge.log(TAG + ": cleared incomplete legacy registration state");
                 }
             } catch (Throwable t) {
                 XposedBridge.log(TAG + ": store load failed " + t);
             }
-        }
-        if (storeDirty) {
-            storeDirty = false;
-            try {
-                Context ctx = (Context) Class.forName("android.app.ActivityThread")
-                        .getMethod("currentApplication").invoke(null);
-                File f = new File(ctx.getFilesDir(), "rpmb_emulator_store.txt");
-                StringBuilder sb = new StringBuilder();
-                for (Map.Entry<String, String> e : store.entrySet()) {
-                    sb.append(e.getKey()).append('=').append(e.getValue()).append('\n');
-                }
-                FileOutputStream fos = new FileOutputStream(f);
-                fos.write(sb.toString().getBytes(StandardCharsets.UTF_8));
-                fos.close();
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + ": store save failed " + t);
+            // 初始化若写入了默认值则落盘一次；之后只由 set() 显式写。
+            // 注意：绝不能在 get()/store() 读路径上做文件 I/O——app 的 RPMB
+            // 查询（含 hasMovedDataToRpmb 的 synchronized 临界区）全部经过这里，
+            // 读路径写文件会把 app 查询线程拖进不可预测的卡顿（step2 卡死根因）。
+            if (initChanged) {
+                writeStoreFile();
             }
         }
         return store;
+    }
+
+    /**
+     * 真机的 deviceId/uniqueId 由 cryptoeng TA 的 RPMB 区提供。移植机没有该 TA，
+     * 不能让 2010 带着空字段请求服务器；这里一次性生成并写入应用私有存储。
+     * deviceId 保持与旧版已上报值一致，uniqueId 从设备公开只读属性稳定派生，
+     * 不伪造其他设备的标识。
+     */
+    private static void ensureIdentityLocked() {
+        if (store == null) return;
+        boolean changed = false;
+        if (empty(store.get("device_id"))) {
+            store.put("device_id", DEFAULT_DEVICE_ID);
+            changed = true;
+        }
+        if (empty(store.get("unique_id"))) {
+            String material = store.get("device_id") + "|" + sysprop("ro.serialno") + "|"
+                    + sysprop("ro.boot.serialno") + "|" + sysprop("ro.product.vendor.device") + "|"
+                    + android.os.Build.FINGERPRINT;
+            store.put("unique_id", decimalId(material, 41));
+            changed = true;
+        }
+        if (empty(store.get("imei"))) {
+            // 2010 的 RSA-1024 单块报文只剩 56B 身份空间；原厂 legacy 格式
+            // 正好是 15 位 IMEI + 41 位 uniqueId。
+            store.put("imei", decimalId(store.get("device_id") + "|imei", 15));
+            changed = true;
+        }
+        if (empty(store.get("lock_dead_state"))) {
+            store.put("lock_dead_state", "1");
+            changed = true;
+        }
+        if (changed) {
+            storeDirty = true;
+            XposedBridge.log(TAG + ": provisioned stable RPMB identity deviceIdLen="
+                    + store.get("device_id").length() + " uniqueIdLen="
+                    + store.get("unique_id").length());
+        }
+    }
+
+    private static boolean empty(String value) {
+        return value == null || value.isEmpty();
+    }
+
+    /** 十进制形式与原厂 legacy uniqueId 的长度一致，且在同一设备上稳定。 */
+    private static String decimalId(String material, int length) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(material.getBytes(StandardCharsets.UTF_8));
+            String digits = new java.math.BigInteger(1, bytes).toString(10);
+            StringBuilder out = new StringBuilder(length);
+            while (out.length() + digits.length() < length) out.append('0');
+            out.append(digits);
+            return out.substring(0, length);
+        } catch (Throwable t) {
+            // 仅在极端 provider 异常时使用原厂 legacy 默认值，绝不返回空字符串。
+            StringBuilder zeros = new StringBuilder(length);
+            while (zeros.length() < length) zeros.append('0');
+            return zeros.toString();
+        }
     }
 
     private static String get(String k) {
@@ -354,7 +674,28 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
 
     private static void set(String k, String v) {
         store().put(k, v == null ? "" : v);
-        storeDirty = true;
+        writeStoreFile();
+    }
+
+    /** 只在显式写路径落盘；读路径（get/store）绝不做文件 I/O。 */
+    private static synchronized void writeStoreFile() {
+        if (store == null) {
+            return;
+        }
+        try {
+            Context ctx = (Context) Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null);
+            File f = new File(ctx.getFilesDir(), "rpmb_emulator_store.txt");
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, String> e : store.entrySet()) {
+                sb.append(e.getKey()).append('=').append(e.getValue()).append('\n');
+            }
+            FileOutputStream fos = new FileOutputStream(f);
+            fos.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+            fos.close();
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": store save failed " + t);
+        }
     }
 
     // ============================ protocol ============================
@@ -468,6 +809,20 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         return bos.toByteArray();
     }
 
+    /** 2010 固定使用 RSA-1024 PKCS#1 v1.5 单块，禁止通用分块逻辑掩盖超长报文。 */
+    private static byte[] rsaEncryptSingle(byte[] data, String pubKeyB64) throws Exception {
+        KeyFactory kf = KeyFactory.getInstance("RSA");
+        java.security.PublicKey pub = kf.generatePublic(
+                new X509EncodedKeySpec(Base64.decode(pubKeyB64, Base64.DEFAULT)));
+        int keyBytes = (((java.security.interfaces.RSAPublicKey) pub).getModulus().bitLength() + 7) / 8;
+        if (data.length > keyBytes - 11) {
+            throw new IllegalArgumentException("RSA single-block plaintext too long: " + data.length);
+        }
+        Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, pub);
+        return cipher.doFinal(data);
+    }
+
     private static byte[] aesDecrypt(byte[] ciphertext, byte[] key) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
         cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"));
@@ -513,13 +868,16 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                     String ticket = paramStr(cmd, 15);
                     String protocolVersion = paramStr(cmd, 1);
                     String phoneCard = paramStr(cmd, 13);
-                    byte[] msgKey = randomBytes(16);
-                    set("message_key", Base64.encodeToString(msgKey, Base64.NO_WRAP));
+                    // 原厂协议把 16B 随机数编码为 24 字符 Base64，并直接以该 ASCII
+                    // 串作为 AES-192 密钥。不能 hex 化：服务端会在 openFindStep1
+                    // 校验阶段拒绝该请求。
+                    String messageKey = Base64.encodeToString(randomBytes(16), Base64.NO_WRAP);
+                    set("message_key", messageKey);
                     String json = "{\"accountName\":\"" + esc(accountName) + "\",\"deviceId\":\"" + esc(deviceId)
                             + "\",\"token\":\"" + esc(token) + "\",\"mobileName\":\"" + esc(mobileName)
                             + "\",\"ticket\":\"" + esc(ticket) + "\",\"protocolVersion\":\"" + esc(protocolVersion)
                             + "\",\"phoneCard\":\"" + esc(phoneCard) + "\",\"messageKey\":\""
-                            + Base64.encodeToString(msgKey, Base64.NO_WRAP) + "\"}";
+                            + messageKey + "\"}";
                     String ovK = initKeyB64();
                     int kIdx = keyIndexFromProp();
                     byte[] ct = rsaEncrypt(json.getBytes(StandardCharsets.UTF_8),
@@ -555,16 +913,20 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                     set("tmp_aes", Base64.encodeToString(tmpAes, Base64.NO_WRAP));
                     // TA 2010 handler 结构：{"imei":...,"tmpAes":...,"uniqueId":...}，RSA-1024
                     int keyIdx = keyIndexFromProp(); // persist.key_idx 选择候选，便于逐个测试
+                    // 2010 是 RSA-1024 单块：15 位 legacy IMEI + 41 位 uniqueId
+                    // 恰好填满 117B 上限。field=4 的 64 位 deviceId 供业务请求使用，
+                    // 不能直接塞入这里，否则会被错误拆成两个 RSA 块。
                     String imei = get("imei");
-                    if (imei.isEmpty()) {
-                        imei = "";
-                    }
+                    String uniqueId = get("unique_id");
                     String payload = "{\"imei\":\"" + imei + "\",\"tmpAes\":\""
                             + Base64.encodeToString(tmpAes, Base64.NO_WRAP) + "\",\"uniqueId\":\""
-                            + get("unique_id") + "\"}";
-                    byte[] ct = rsaRaw(payload.getBytes(StandardCharsets.UTF_8));
+                            + uniqueId + "\"}";
+                    byte[] plain = payload.getBytes(StandardCharsets.UTF_8);
+                    byte[] ct = rsaRawSingle(plain);
                     set("last_tmp_aes_payload", payload);
-                    XposedBridge.log(TAG + ": 2010 using key idx=" + keyIndexFromProp() + " tmpAesPayload=" + payload + " cipherLen=" + ct.length);
+                    XposedBridge.log(TAG + ": 2010 using key idx=" + keyIdx + " imeiLen="
+                            + imei.length() + " uniqueIdLen=" + uniqueId.length()
+                            + " plainLen=" + plain.length + " cipherLen=" + ct.length);
                     return response(method, param(20, ct));
                 }
                 case 2011: { // UPDATE_PUBLIC_KEY：解密服务器配置，提取新公钥并存储
@@ -578,8 +940,18 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                         return response(method, param(27, "200".getBytes(StandardCharsets.UTF_8)),
                                 param(21, decrypted.getBytes(StandardCharsets.UTF_8)));
                     }
-                    return response(method, param(27, "200".getBytes(StandardCharsets.UTF_8)),
-                            param(21, ct.getBytes(StandardCharsets.UTF_8)));
+                    // 服务端密钥协商失败时使用应用自身携带的原厂默认配置，避免配置
+                    // 更新失败反过来阻断“开启查找”。密文仍不冒充明文，日志保留失败。
+                    try {
+                        String local = "{\"code\":\"200\",\"codeMsg\":\"Ok\",\"data\":"
+                                + configJson(appClassLoader) + "}";
+                        XposedBridge.log(TAG + ": UPDATE_PUBLIC_KEY using bundled default config");
+                        return response(method, param(27, "200".getBytes(StandardCharsets.UTF_8)),
+                                param(21, local.getBytes(StandardCharsets.UTF_8)));
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": bundled config fallback failed " + t);
+                        return response(method, param(27, "500".getBytes(StandardCharsets.UTF_8)));
+                    }
                 }
                 case 2012: { // ENCODE_BY_AES
                     String text = paramStr(cmd, 8) + paramStr(cmd, 21);
@@ -589,8 +961,19 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                 }
                 case 2013: { // MOVE_DATA_TO_RPMB
                     for (int[] p : params) {
-                        set("param_" + p[0], strOf(java.util.Arrays.copyOfRange(cmd, p[1], p[1] + p[2])));
+                        String value = strOf(java.util.Arrays.copyOfRange(cmd, p[1], p[1] + p[2]));
+                        switch (p[0]) {
+                            case 4: set("device_id", value); break;
+                            case 5: set("ssoid", value); break;
+                            case 6: set("unique_id", value); break;
+                            case 11: set("account_name", value); break;
+                            case 16: set("message_key", value); break;
+                            case 26: set("lock_dead_state", String.valueOf(intAt(cmd, p[1]))); break;
+                            case 29: set("rsa_version", value); break;
+                            default: set("param_" + p[0], value); break;
+                        }
                     }
+                    XposedBridge.log(TAG + ": MOVE_DATA_TO_RPMB persisted fields=" + params.size());
                     return response(method, param(27, "200".getBytes(StandardCharsets.UTF_8)));
                 }
                 case 2014: { // GET_RPMB_VALUE
@@ -734,6 +1117,18 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
             k = Base64.encodeToString(randomBytes(16), Base64.NO_WRAP);
             set("message_key", k);
         }
+        // Find My Phone 使用 Base64 文本的 ASCII 字节（24B/AES-192），而非其
+        // Base64 解码后的 16B。保留旧 hex 值的读取兼容性，避免旧 RPMB 数据失效。
+        if (k.length() == 24 && k.endsWith("==")) {
+            return k.getBytes(StandardCharsets.UTF_8);
+        }
+        if (k.matches("(?i)[0-9a-f]{32}")) {
+            byte[] out = new byte[16];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = (byte) Integer.parseInt(k.substring(i * 2, i * 2 + 2), 16);
+            }
+            return out;
+        }
         return Base64.decode(k, Base64.DEFAULT);
     }
 
@@ -741,46 +1136,145 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         String ct = paramStr(cmd, 20);
         boolean useTmpAes = "1".equals(paramStr(cmd, 31));
         XposedBridge.log(TAG + ": decrypt method=" + method + " useTmpAes=" + useTmpAes + " cipher len=" + ct.length());
-        try {
-            byte[] key;
-            if (useTmpAes) {
-                String tmp = get("tmp_aes");
-                key = tmp.isEmpty() ? currentAesKey() : Base64.decode(tmp, Base64.DEFAULT);
+        List<byte[]> keys = new ArrayList<>();
+        if (useTmpAes) {
+            String tmp = get("tmp_aes");
+            if (!tmp.isEmpty()) {
+                // 服务器按 messageKey 同样的惯例，把 tmpAes 的 Base64 文本 ASCII
+                // 字节当 AES-192 密钥；同时保留解码后 16B（AES-128）的兼容路径。
+                keys.add(tmp.getBytes(StandardCharsets.UTF_8));
+                keys.add(Base64.decode(tmp, Base64.DEFAULT));
             } else {
-                key = currentAesKey();
+                keys.add(currentAesKey());
             }
-            byte[] plain = aesDecrypt(Base64.decode(ct, Base64.DEFAULT), key);
-            String text = strOf(plain);
-            XposedBridge.log(TAG + ": decrypt result=" + text);
-            set("decrypted_" + method, text);
-            return response(method, param(27, "200".getBytes(StandardCharsets.UTF_8)));
+        } else {
+            keys.add(currentAesKey());
+        }
+        for (byte[] key : keys) {
+            try {
+                byte[] raw = Base64.decode(ct, Base64.DEFAULT);
+                String text = decryptAesText(raw, key);
+                if (text == null) {
+                    continue;
+                }
+                XposedBridge.log(TAG + ": decrypt result=" + text);
+                set("decrypted_" + method, text);
+                String resultCode = "200";
+                try {
+                    org.json.JSONObject root = new org.json.JSONObject(text);
+                    resultCode = root.optString("code", root.optString("resultCode", "200"));
+                    if (method == 2003 && "200".equals(resultCode)) {
+                        storeRegistrationData(root);
+                    }
+                } catch (Throwable ignored) {
+                    if (text.matches("\\d{3,}")) resultCode = text;
+                }
+                return response(method, param(27, resultCode.getBytes(StandardCharsets.UTF_8)));
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": decrypt key candidate failed " + t);
+            }
+        }
+        return response(method, param(27, "500".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String decryptAesText(byte[] raw, byte[] key) {
+        List<byte[]> candidates = new ArrayList<>();
+        try { candidates.add(aesDecrypt(raw, key)); } catch (Throwable ignored) { }
+        try {
+            Cipher cbc = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cbc.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"),
+                    new javax.crypto.spec.IvParameterSpec(new byte[16]));
+            candidates.add(cbc.doFinal(raw));
+        } catch (Throwable ignored) { }
+        if (raw.length > 16 && (raw.length - 16) % 16 == 0) {
+            try {
+                Cipher cbc = Cipher.getInstance("AES/CBC/PKCS5Padding");
+                cbc.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"),
+                        new javax.crypto.spec.IvParameterSpec(java.util.Arrays.copyOfRange(raw, 0, 16)));
+                candidates.add(cbc.doFinal(raw, 16, raw.length - 16));
+            } catch (Throwable ignored) { }
+        }
+        for (byte[] candidate : candidates) {
+            String text = new String(candidate, StandardCharsets.UTF_8).trim();
+            if ((text.startsWith("{") && text.endsWith("}")) || text.matches("\\d{3,}")) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    /** 保存注册成功回包中 TA 原本会写入 RPMB 的关键字段。 */
+    private static void storeRegistrationData(org.json.JSONObject root) {
+        try {
+            org.json.JSONObject data = root.optJSONObject("data");
+            if (data == null) data = root;
+            putJsonValue(data, "accountName", "account_name");
+            putJsonValue(data, "ssoid", "ssoid");
+            putJsonValue(data, "uniqueId", "unique_id");
+            putJsonValue(data, "deviceId", "device_id");
+            putJsonValue(data, "aesKey", "message_key");
+            putJsonValue(data, "messageKey", "message_key");
+            set("lock_dead_state", String.valueOf(data.optInt("lockdeadState", 1)));
+            set("registration_complete", "1");
+            XposedBridge.log(TAG + ": registration data persisted");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": decrypt failed " + t);
-            return response(method, param(27, "200".getBytes(StandardCharsets.UTF_8)));
+            XposedBridge.log(TAG + ": registration data persist failed " + t);
         }
     }
 
-    /** 尝试用 2010 生成的临时 AES 解密服务器配置（ECB，然后 CBC 零 IV）。 */
+    private static void putJsonValue(org.json.JSONObject data, String jsonKey, String storeKey) {
+        String value = data.optString(jsonKey, "");
+        if (!value.isEmpty()) set(storeKey, value);
+    }
+
+    /**
+     * 用 2010 生成的临时 AES 解密服务器配置。不同 ColorOS 分支曾使用 ECB、
+     * CBC 零 IV 和「IV 前置」CBC；三者都只接受 JSON，避免把偶发错误填充当作配置。
+     * 实测 2003 回包用 messageKey 的 Base64 文本 ASCII 字节（24B/AES-192）解密成功，
+     * 说明服务器把密钥文本本身当 AES 密钥；tmpAes 同样按文本优先，解码后的 16B
+     * （AES-128）作为兼容回退，两种都试。
+     */
     private static String decryptConfig(String b64) {
         String keyB64 = get("tmp_aes");
         if (keyB64.isEmpty()) {
             XposedBridge.log(TAG + ": decryptConfig no tmp_aes stored");
             return null;
         }
-        byte[] key = Base64.decode(keyB64, Base64.DEFAULT);
         try {
             byte[] raw = Base64.decode(b64, Base64.DEFAULT);
-            try {
-                return new String(aesDecrypt(raw, key), StandardCharsets.UTF_8);
-            } catch (Throwable t) {
-                Cipher cbc = Cipher.getInstance("AES/CBC/PKCS5Padding");
-                cbc.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new javax.crypto.spec.IvParameterSpec(new byte[16]));
-                return new String(cbc.doFinal(raw), StandardCharsets.UTF_8);
+            List<byte[]> keys = new ArrayList<>();
+            keys.add(keyB64.getBytes(StandardCharsets.UTF_8));
+            keys.add(Base64.decode(keyB64, Base64.DEFAULT));
+            for (byte[] key : keys) {
+                List<byte[]> candidates = new ArrayList<>();
+                try { candidates.add(aesDecrypt(raw, key)); } catch (Throwable ignored) { }
+                try {
+                    Cipher cbc = Cipher.getInstance("AES/CBC/PKCS5Padding");
+                    cbc.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"),
+                            new javax.crypto.spec.IvParameterSpec(new byte[16]));
+                    candidates.add(cbc.doFinal(raw));
+                } catch (Throwable ignored) { }
+                if (raw.length > 16 && (raw.length - 16) % 16 == 0) {
+                    try {
+                        Cipher cbc = Cipher.getInstance("AES/CBC/PKCS5Padding");
+                        cbc.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"),
+                                new javax.crypto.spec.IvParameterSpec(java.util.Arrays.copyOfRange(raw, 0, 16)));
+                        candidates.add(cbc.doFinal(raw, 16, raw.length - 16));
+                    } catch (Throwable ignored) { }
+                }
+                for (byte[] candidate : candidates) {
+                    String text = new String(candidate, StandardCharsets.UTF_8).trim();
+                    if (text.startsWith("{") && text.endsWith("}")) {
+                        XposedBridge.log(TAG + ": decryptConfig success plainLen=" + text.length());
+                        return text;
+                    }
+                }
             }
+            XposedBridge.log(TAG + ": decryptConfig no valid JSON rawLen=" + raw.length);
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": decryptConfig failed " + t);
-            return null;
         }
+        return null;
     }
 
     /** 从服务器配置 JSON 里提取 publicKey/modulus/version 并存储为当前公钥。 */
@@ -874,7 +1368,12 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": init key load failed " + t);
         }
-        return null;
+        // 未检测到外部覆盖时，用内嵌的 findphone init 公钥作为默认注册公钥。
+        // 这样拿到密钥后无需再手动 push 到 /data/local/tmp，模块开箱即用；
+        // 上面的 prop/文件覆盖仍优先，便于继续测试其它候选密钥。
+        overrideKey = FIND_PHONE_INIT_PUBLIC_KEY;
+        XposedBridge.log(TAG + ": using embedded findphone init public key len=" + overrideKey.length());
+        return overrideKey;
     }
 
     private static byte[] rsaRaw(byte[] data) throws Exception {
@@ -912,6 +1411,20 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
             }
         }
         throw new RuntimeException("all embedded RSA keys failed", last);
+    }
+
+    /** 2010 专用：覆盖公钥一旦存在就视为唯一来源，并保证只产生一个 RSA 块。 */
+    private static byte[] rsaRawSingle(byte[] data) throws Exception {
+        String override = initKeyB64();
+        if (override != null) {
+            byte[] out = rsaEncryptSingle(data, override);
+            XposedBridge.log(TAG + ": rsaRawSingle override(init) outLen=" + out.length);
+            return out;
+        }
+        int idx = keyIndexFromProp();
+        byte[] out = rsaEncryptSingle(data, EMBEDDED_PUBLIC_KEYS[idx]);
+        XposedBridge.log(TAG + ": rsaRawSingle key idx=" + idx + " outLen=" + out.length);
+        return out;
     }
 
     private static String nz(String v, String fallback) {

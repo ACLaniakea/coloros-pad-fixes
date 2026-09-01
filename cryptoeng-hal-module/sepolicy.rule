@@ -1,0 +1,15 @@
+# init -> hal_cryptoeng_oplus 域转换（bind-mount 自非 nosuid 挂载）
+allow init hal_cryptoeng_oplus:process2 nosuid_transition;
+allow init hal_cryptoeng_oplus:process transition;
+allow init hal_cryptoeng_oplus_exec:file { execute read open map getattr entrypoint };
+# 代理在同一 HAL 域启动 backing 子进程；子进程不发生第二次域转换。
+allow hal_cryptoeng_oplus hal_cryptoeng_oplus_exec:file { execute execute_no_trans read open map getattr };
+# hal 域运行时权限：属性读取（serial/IMEI）、persist 目录、cryptoeng 数据目录
+allow hal_cryptoeng_oplus radio_prop:file read;
+allow hal_cryptoeng_oplus vendor_radio_prop:file read;
+allow hal_cryptoeng_oplus vendor_prop:file read;
+allow hal_cryptoeng_oplus property_type:file read;
+allow hal_cryptoeng_oplus vendor_persist_data_file:dir { read getattr open search };
+allow hal_cryptoeng_oplus vendor_persist_data_file:file { read write open getattr create unlink rename setattr append };
+allow hal_cryptoeng_oplus cryptoeng_data_file:dir { read write getattr open search create add_name remove_name };
+allow hal_cryptoeng_oplus cryptoeng_data_file:file { read write open getattr create unlink rename setattr append };

@@ -4,7 +4,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-3.0.2-orange)
+![Version](https://img.shields.io/badge/version-3.1.0-orange)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
 
 移植包刷上去能开机，但不少东西是瘸的：温控曲线用错了传感器、内存扩展档位对不上、一加那套内核调度栈加载不起来、手写笔和 AON 注视感知没人接。这个项目就是把这些一条条接回去。
@@ -37,6 +37,7 @@
 | `OplusBSP-Modules.zip` | 30 个一加 BSP 内核模块：调度增强、压缩内存、后台冻结 | 依赖上面两个 img |
 | `PenBridge-Module.zip` + `PenBridge-Hook.apk` + `PenHidCtl.apk` | 手写笔桥接三件套 | 用笔才装 |
 | `SM8650Q-Scene-Scheduler.zip` | 给 Scene 提供四档调度配置 | 用 Scene 才装 |
+| `CryptoengHAL-Module.zip` | **CryptoEng 分流代理**。查找设备注册/定位 + 一加互传联系人模式（10003 HKDF、10009 证书验证） | 需要查找设备才装 |
 
 ---
 
@@ -111,19 +112,20 @@ adb shell uname -r     # 应带 -ACLaniakea 后缀
 2. `OplusBSP-Modules.zip` ← 刷了内核才装
 3. `PenBridge-Module.zip` ← 用笔才装
 4. `SM8650Q-Scene-Scheduler.zip` ← 用 Scene 才装
+5. `CryptoengHAL-Module.zip` ← 需要查找设备/一加互传联系人才装
 
 命令行等价写法：
 
 ```bash
-adb shell su -c 'ksud module install /sdcard/FixModule-v3.0.2.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v3.1.0.zip'
 ```
 
 ### 3.3 装 LSPosed 模块
 
 ```bash
-adb install -r BaseFix-Hook-v3.0.2.apk
-adb install -r PenBridge-Hook-v3.0.2.apk   # 用笔才装
-adb install -r PenHidCtl-v3.0.2.apk        # 用笔才装
+adb install -r BaseFix-Hook-v3.1.0.apk
+adb install -r PenBridge-Hook-v3.1.0.apk   # 用笔才装
+adb install -r PenHidCtl-v3.1.0.apk        # 用笔才装
 ```
 
 然后在 LSPosed 里**启用模块并勾选作用域**——勾错等于没装。`FixModule` 会用 `INSERT OR IGNORE` 把必需作用域补进 LSPosed 白名单，不会删掉你自己加的。
@@ -134,9 +136,9 @@ adb install -r PenHidCtl-v3.0.2.apk        # 用笔才装
 android                          com.oplus.battery
 com.android.settings             com.oplus.gesture
 com.coloros.phonemanager         com.aiunit.aon
-com.coloros.ocrscanner           com.coloros.findmyphone
+com.coloros.ocrscanner           com.android.systemui
 com.heytap.speechassist          com.oplus.ovoicemanager.wakeup
-com.inkdye.lenovopentocoloros
+com.inkdye.lenovopentocoloros    com.heytap.accessory
 ```
 
 **联想手写笔桥接**（`com.aclaniakea.lenovopenbridge`）：
@@ -215,6 +217,7 @@ python3 base-fix/hook/tools/build_integrated_hook.py     # BaseFix Hook APK
 python3 fix-module/tools/build_fix.py                    # 主修复模块
 python3 oplus-bsp-module/tools/build_oplus_bsp.py        # 一加 BSP ko 打包
 python3 scheduler-module/tools/build_scheduler.py        # Scene 调度
+python3 tools/build_cryptoeng.py                          # CryptoEng 分流代理模块
 python3 pen-bridge/hook/tools/build_hook_source.py       # 手写笔 Hook（从 Java 源码编）
 python3 pen-bridge/penhidctl/tools/build_penhid.py       # PenHidCtl
 python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
@@ -235,6 +238,8 @@ python3 pen-bridge/module/tools/build_root.py pen-bridge/module <输出zip>
 ├── oplus-bsp-module/    30 个一加 BSP ko + 依赖序加载器
 ├── pen-bridge/          手写笔：Root 模块 / Hook / PenHidCtl
 ├── scheduler-module/    Scene 四档调度桥接
+├── cryptoeng-hal-rust/ CryptoEng 分流代理 Rust 源码
+├── cryptoeng-hal-module/ 代理 Root 模块（cryptoeng_hal_fix）
 ├── kernel-compat/       自建内核、ABI 门禁、模块移植、救援手册
 ├── port-tuning/         早期调优模块，已归档不要装
 ├── experimental/        试验性内容
@@ -293,6 +298,9 @@ python tools/aw_cali.py -s <序列号> --adb <adb 路径>
 | [kernel-compat/自建内核ABI门禁结果.md](kernel-compat/自建内核ABI门禁结果.md) | 自建 GKI 与 vendor 模块的 ABI 校验 |
 | [docs/扬声器破音排查.md](docs/扬声器破音排查.md) | 破音的两处成因、与原厂包的逐项比对、以及被推翻的 timed render 一说 |
 | [docs/桌面旋转位移动画消失.md](docs/桌面旋转位移动画消失.md) | 悬浮窗导致桌面旋转动画降级，属系统固有行为 |
+| [docs/CryptoEng-10003分流代理说明.md](docs/CryptoEng-10003分流代理说明.md) | 查找设备 10003 HKDF 与 10009 证书验证的代理实现 |
+| [docs/CryptoengHAL软件实现分析.md](docs/CryptoengHAL软件实现分析.md) | 社区软实现 HAL 的协议与实现分析 |
+| [docs/查找设备-init公钥接入.md](docs/查找设备-init公钥接入.md) | init 公钥提取与接入步骤 |
 | [内核兼容性与后续移植说明.md](内核兼容性与后续移植说明.md) | 内核层边界与后续路线 |
 | [主线Linux内核与ArchLinux启动可行性说明.md](主线Linux内核与ArchLinux启动可行性说明.md) | 想跑主线内核或 Arch 的先读这个 |
 
@@ -313,26 +321,31 @@ python tools/aw_cali.py -s <序列号> --adb <adb 路径>
 12,494/s），再往下不是调旋钮能解决的。试过把内存扩展降到 4 GB 让系统多杀后台，结果更糟：
 交换空间卡在临界，分配全堵在同步回收上。
 
-### 手电亮度只有 42–78 这一段
+### 手电筒分级亮度（3.1.0 起按驱动电流 0–100 全范围分档）
 
-四档亮度能用了（42/54/66/78），但跨度比硬件能力窄。原因是点灯只能由相机 HAL 做，
-而 camx 点灯时一定先把电流写成它自己的 `torchCurrent=57`，我们只能在这之后覆盖。
-最低档若取到硬件能做到的 13，每次开灯就会先亮 57 再掉下去，低档位下是明显的爆闪。
-42 是"四档分得开"和"开灯不闪"之间量出来的折中，细节见 `修复汇总.md`。
+四档折中（42/54/66/78）改为按驱动电流 0–100 全范围分档：LSPosed 钩子把目标电流
+写进信箱文件，模块开机常驻的 inotifyd 监听后以 root 直接写 `led:torch_0` /
+`led:torch_3` 两盏灯的 brightness。SystemUI 自己写 sysfs 会被 SELinux 拒绝
+（EACCES 且 dontaudit），所以走"钩子 + 信箱 + inotifyd"这条路，低档位不再有爆闪。
 
 ### 开机后第一次解锁卡顿
 
 **原因未明。** 只在每次开机后的第一次解锁出现，之后不复现。查过内存回收、
 调度基线、模块开机写入时序，都没能对上，暂时没有结论。
 
-### 查找设备：能找别人，注册不了自己
+### 查找设备：注册与定位已通（3.1.0 分流代理）
 
-注册要用服务器当前的 RSA-1024 公钥去加密本机的注册指令，而这把公钥只存在于
-正版设备 **TEE**（cryptoeng TA 的 RPMB）里，读不出来。已经确认它不在 TA 二进制、
-不在 tz / oplus_sec 镜像、不在查找 App（9.6.14 版只内置一把 RSA-1024，正是我们
-早就试过的那把）、也不在服务器下发的配置里。服务器对不认识的密文一律回 8000。
+注册、定位、登出等命令走 `CryptoengHAL-Module` 的本地代理：cryptoeng 服务
+`default` 由 ce_proxy_certpin 承接，查找设备 2001–2022 按字节转发给 `backing`
+（软件 HAL 改服务名），10003 HKDF（PkiHkdf，IKM 用设备 cryptoeng.key）与 10009
+证书验证（OPlus Service CA E1 链）在代理侧本地处理。另一台设备已能搜到本机，
+联系人模式也已验证通过。
 
-所以本设备无法注册到「查找设备」，但**查看其他设备是正常的**。
+### 前摄指示灯（3.1.0 合并进主修复模块）
+
+前摄使用时亮 RGB 白灯（守护进程轮询 dumpsys media.camera 检测 camera 1 打开
+状态，root 直接写 RGB LED，事件驱动版因 Android 16 限制弃用），随 `FixModule`
+开机自启，不再单独安装。
 
 ### 小布语音唤醒：已放弃
 

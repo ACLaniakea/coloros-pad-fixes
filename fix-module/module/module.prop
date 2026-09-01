@@ -1,6 +1,6 @@
 id=coloros_port_fix
 name=联想平板 Pro GT - ColorOS 修复模块
 author=ACLaniakea
-version=3.0.2
-versionCode=300200
+version=3.1.0
+versionCode=301000
 description=修好移植包里瘸掉的底层部分：温控曲线、内存与交换分层、调度基线、显存回收、音频与传感器链路。做法是开机早期 bind 覆盖 vendor 配置文件，再按本机的六核拓扑与 8G 内存重写 sysfs / memcg 上的运行时参数。

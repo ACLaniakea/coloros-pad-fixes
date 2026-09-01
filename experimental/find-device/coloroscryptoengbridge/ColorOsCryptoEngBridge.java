@@ -652,6 +652,19 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
         return b;
     }
 
+    // 与 TA 的 crypto_eng_aes_string_key_generate 一致：n 个随机字节各映射到 base62
+    // 字符集，得到一个 n 字符的字符串；服务器/TA 直接把这 n 个 ASCII 字节当 AES 密钥。
+    private static final String AES_CHARSET =
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    private static String aesStringKey(int n) {
+        byte[] r = randomBytes(n);
+        StringBuilder sb = new StringBuilder(n);
+        for (int i = 0; i < n; i++) {
+            sb.append(AES_CHARSET.charAt((r[i] & 0xff) % AES_CHARSET.length()));
+        }
+        return sb.toString();
+    }
+
     // ============================ emulation ============================
 
     private static byte[] emulate(byte[] cmd) {
@@ -679,13 +692,13 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                     String ticket = paramStr(cmd, 15);
                     String protocolVersion = paramStr(cmd, 1);
                     String phoneCard = paramStr(cmd, 13);
-                    byte[] msgKey = randomBytes(16);
-                    set("message_key", Base64.encodeToString(msgKey, Base64.NO_WRAP));
+                    String msgKeyStr = aesStringKey(16);
+                    set("message_key", msgKeyStr);
                     String json = "{\"accountName\":\"" + esc(accountName) + "\",\"deviceId\":\"" + esc(deviceId)
                             + "\",\"token\":\"" + esc(token) + "\",\"mobileName\":\"" + esc(mobileName)
                             + "\",\"ticket\":\"" + esc(ticket) + "\",\"protocolVersion\":\"" + esc(protocolVersion)
                             + "\",\"phoneCard\":\"" + esc(phoneCard) + "\",\"messageKey\":\""
-                            + Base64.encodeToString(msgKey, Base64.NO_WRAP) + "\"}";
+                            + msgKeyStr + "\"}";
                     int kIdx = keyIndexFromProp();
                     byte[] ct = rsaEncrypt(json.getBytes(StandardCharsets.UTF_8), EMBEDDED_PUBLIC_KEYS[kIdx]);
                     set("register_json", json);
@@ -714,8 +727,8 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                     return response(method, param(27, "200".getBytes(StandardCharsets.UTF_8)));
                 }
                 case 2010: { // GET_ENCRYPT_TMP_AES_FOR_UPDATE_PUBLIC_KEY
-                    byte[] tmpAes = randomBytes(16);
-                    set("tmp_aes", Base64.encodeToString(tmpAes, Base64.NO_WRAP));
+                    String tmpAesStr = aesStringKey(16);
+                    set("tmp_aes", tmpAesStr);
                     // TA 2010 handler 结构：{"imei":...,"tmpAes":...,"uniqueId":...}，RSA-1024
                     int keyIdx = keyIndexFromProp(); // persist.key_idx 选择候选，便于逐个测试
                     String imei = get("imei");
@@ -723,7 +736,7 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
                         imei = "";
                     }
                     String payload = "{\"imei\":\"" + imei + "\",\"tmpAes\":\""
-                            + Base64.encodeToString(tmpAes, Base64.NO_WRAP) + "\",\"uniqueId\":\""
+                            + tmpAesStr + "\",\"uniqueId\":\""
                             + get("unique_id") + "\"}";
                     byte[] ct = rsaRaw(payload.getBytes(StandardCharsets.UTF_8));
                     set("last_tmp_aes_payload", payload);
@@ -894,10 +907,10 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
     private static byte[] currentAesKey() {
         String k = get("message_key");
         if (k.isEmpty()) {
-            k = Base64.encodeToString(randomBytes(16), Base64.NO_WRAP);
+            k = aesStringKey(16);
             set("message_key", k);
         }
-        return Base64.decode(k, Base64.DEFAULT);
+        return k.getBytes(StandardCharsets.UTF_8);
     }
 
     private static byte[] decryptResponse(int method, byte[] cmd) {
@@ -908,7 +921,7 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
             byte[] key;
             if (useTmpAes) {
                 String tmp = get("tmp_aes");
-                key = tmp.isEmpty() ? currentAesKey() : Base64.decode(tmp, Base64.DEFAULT);
+                key = tmp.isEmpty() ? currentAesKey() : tmp.getBytes(StandardCharsets.UTF_8);
             } else {
                 key = currentAesKey();
             }
@@ -930,7 +943,7 @@ public final class ColorOsCryptoEngBridge implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": decryptConfig no tmp_aes stored");
             return null;
         }
-        byte[] key = Base64.decode(keyB64, Base64.DEFAULT);
+        byte[] key = keyB64.getBytes(StandardCharsets.UTF_8); // 16 字符串即 16 字节 AES key
         try {
             byte[] raw = Base64.decode(b64, Base64.DEFAULT);
             try {

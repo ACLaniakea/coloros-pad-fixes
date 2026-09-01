@@ -1270,3 +1270,8 @@ check_speaker_calibration() {
 }
 
 check_speaker_calibration
+
+# ===== frontled: 前摄指示灯守护（base-fix 前摄灯修复，2026-09-01 合并） =====
+if [ -f "$MODDIR/bin/front-led-daemon.sh" ]; then
+    "$MODDIR/bin/front-led-daemon.sh" "$MODDIR" &
+fi
