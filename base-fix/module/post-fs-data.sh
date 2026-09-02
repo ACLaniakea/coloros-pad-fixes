@@ -90,13 +90,16 @@ if [ -d "$AON_LIB_TARGET" ] && [ -f "$AON_LIB_PAYLOAD/libaiboost_jni.so" ] && [ 
     # or attention event is synthesized.
     AON_RUNTIME_STAGING=/data/local/tmp/coloros-aon-runtime-v2459
     AON_EXPECTED_JNI=80aedb964ca38112a003a8f77b72bca0bbf37ac221017e678e031f09cde428fc
+    AON_EXPECTED_QNN_DELEGATE=beff843843f97c486f94fca19ed2ddb64543538db10dcefd62f418600434c3dd
     # Do not let the persistent staging directory retain the rejected alias
     # chain from older recovery builds. That chain loaded libaibstx.so from
     # init_qnn_delegate() and caused the AON null-PC crash seen in tombstone.
     rm -f "$AON_RUNTIME_STAGING/libaibstx.so" \
         "$AON_RUNTIME_STAGING/libaiboost_jni.so.pre-alias" 2>/dev/null
     staged_jni=$(sha256sum "$AON_RUNTIME_STAGING/libaiboost_jni.so" 2>/dev/null | awk '{print $1}')
+    staged_delegate=$(sha256sum "$AON_RUNTIME_STAGING/libaiboost_qnn_external_delegate.so" 2>/dev/null | awk '{print $1}')
     if [ "$staged_jni" != "$AON_EXPECTED_JNI" ] ||
+       [ "$staged_delegate" != "$AON_EXPECTED_QNN_DELEGATE" ] ||
        [ ! -r "$AON_RUNTIME_STAGING/libaiboost.so" ] ||
        [ ! -r "$AON_RUNTIME_STAGING/libaiboost_qnn_external_delegate.so" ] ||
        [ ! -r "$AON_RUNTIME_STAGING/libQnnHtpV75Stub.so" ] ||

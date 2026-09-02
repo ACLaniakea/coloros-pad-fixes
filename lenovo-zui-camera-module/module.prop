@@ -1,6 +1,6 @@
 id=lenovo_zui_camera
-name=Lenovo ZUI Camera (TB710FU Stock)
-version=18.0.1.251216192500
-versionCode=180019999
+name=联想平板 Pro GT - ZUI 原厂相机
+version=3.2.0
+versionCode=302000
 author=ACLaniakea
-description=Stock Lenovo ZUI Camera, Camera Assistant and QR scanner for TB710FU. Systemless priv-app installation; does not replace camera HAL.
+description=TB710FU 原厂 ZUI 相机、相机助手与扫码组件的系统应用部署包；不替换相机 HAL。

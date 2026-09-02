@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "source" / "sources"
 COMPILE_STUBS = ROOT / "source" / "stubs"
+XPOSED_STUB_PATCHES = ROOT.parents[1] / "base-fix" / "hook" / "stub-patches"
 RES = ROOT / "source" / "resources" / "res"
 MANIFEST = ROOT / "source" / "resources" / "AndroidManifest.xml"
 XPOSED_INIT = ROOT / "source" / "resources" / "assets" / "xposed_init"
@@ -31,6 +32,8 @@ PEN_SO = ROOT / "source" / "resources" / "lib" / "arm64-v8a" / "libpeninput.so"
 
 SDK = Path(os.environ.get("ANDROID_SDK", "/tmp/android-sdk"))
 BT = SDK / "build-tools" / "android-15"
+if not BT.is_dir():
+    BT = SDK / "build-tools" / "android-14"
 AAPT2 = BT / "aapt2"
 D8 = BT / "d8"
 R8_JAR = Path(os.environ.get("ACL_R8_JAR", "/run/media/ACLaniakea/IXUNICS/pad/tools/dex/r8.jar"))
@@ -53,7 +56,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "PenBridge-Hook-v3.1.0.apk"
+OUT_APK = OUT_DIR / "PenBridge-Hook-v3.2.0.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -85,11 +88,19 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "301000", "--version-name", "3.1.0"])
+             "--version-code", "302000", "--version-name", "3.2.0"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
+        (tmp / "stub-classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
+        # The historical pen build used a minimal Xposed API jar that lacks
+        # MethodHookParam.method/getResult and XposedBridge.hookMethod.  These
+        # declarations are compile-only and are filtered from classes.dex;
+        # LSPosed remains the sole runtime implementation.
+        run(["javac", "--release", "17", "-classpath", STUBS,
+             "-d", tmp / "stub-classes"] +
+            [str(p) for p in sorted(XPOSED_STUB_PATCHES.rglob("*.java"))])
         run(["javac", "--release", "17",
-             "-classpath", f"{ANDROID_JAR}:{STUBS}:{tmp / 'gen'}",
+             "-classpath", f"{ANDROID_JAR}:{tmp / 'stub-classes'}:{STUBS}:{tmp / 'gen'}",
              "-d", tmp / "classes"] +
             [str(p) for p in sorted(SOURCES.rglob("*.java"))] +
             [str(p) for p in sorted(COMPILE_STUBS.rglob("*.java"))])

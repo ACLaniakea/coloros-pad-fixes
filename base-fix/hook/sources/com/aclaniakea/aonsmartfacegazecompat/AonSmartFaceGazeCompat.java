@@ -56,9 +56,8 @@ public final class AonSmartFaceGazeCompat implements IXposedHookLoadPackage {
             return;
         }
         if ("android".equals(lpp.packageName) && "android".equals(lpp.processName)) {
-            // Keep the framework's stock 0x60007 Binder operations.  The AON
-            // APK already contains the real SmartFaceGaze engine branches;
-            // only its product-gated profile/capability entry is absent.
+            // Keep the framework's original 0x60007 SmartDim lifecycle.  The
+            // native AON side below supplies only its missing profile entry.
             installSmartDimScheduler(lpp.classLoader);
             return;
         }

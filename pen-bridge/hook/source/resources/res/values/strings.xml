@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">联想手写笔桥接</string>
+    <string name="app_name">联想平板 Pro GT - 手写笔桥接</string>
     <string name="module_description">手写笔的框架层部分：笔身状态与按键、便签工具、书写震动。做法是挂住 SystemUI 与便签里判断笔状态的那几处，把桥接服务上报的状态接进去。</string>
 </resources>

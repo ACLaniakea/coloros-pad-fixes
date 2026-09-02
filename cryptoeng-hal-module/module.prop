@@ -1,6 +1,6 @@
 id=cryptoeng_hal_fix
-name=ColorOS CryptoEng 分流代理
+name=联想平板 Pro GT - CryptoEng 兼容
 author=ACLaniakea
-version=3.1.0
-versionCode=301000
+version=3.2.0
+versionCode=302000
 description=保留软件 HAL 修复查找设备；补齐一加互传联系人（10003 HKDF + 10009 证书验证）。

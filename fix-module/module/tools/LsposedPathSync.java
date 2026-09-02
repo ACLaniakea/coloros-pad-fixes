@@ -16,6 +16,7 @@ import java.util.zip.ZipFile;
 public final class LsposedPathSync {
     private static final String BASE_MODULE = "com.aclaniakea.colorosostatsguard";
     private static final String PEN_MODULE = "com.aclaniakea.lenovopenbridge";
+    private static final String ZUI_CAMERA_MODULE = "com.aclaniakea.zuicameracompat";
     // LSPosed stores the Android framework scope as "system", which is what
     // the packaged scope.list already calls "android"; that one name is
     // translated below. Everything else is read straight out of the APK's
@@ -44,7 +45,8 @@ public final class LsposedPathSync {
         if (!database.startsWith("/data/adb/lspd/") || !apk.startsWith("/data/adb/modules/")) {
             throw new IllegalArgumentException("refusing unexpected path");
         }
-        if (!BASE_MODULE.equals(module) && !PEN_MODULE.equals(module)) {
+        if (!BASE_MODULE.equals(module) && !PEN_MODULE.equals(module)
+                && !ZUI_CAMERA_MODULE.equals(module)) {
             throw new IllegalArgumentException("refusing unexpected module");
         }
 
@@ -75,7 +77,7 @@ public final class LsposedPathSync {
             if (args.length >= 4) {
                 scopes = new String[args.length - 3];
                 System.arraycopy(args, 3, scopes, 0, scopes.length);
-            } else if (BASE_MODULE.equals(module)) {
+            } else if (BASE_MODULE.equals(module) || ZUI_CAMERA_MODULE.equals(module)) {
                 scopes = packagedScopes(apk);
             } else {
                 // Existing user-selected Pen scopes are preserved. The Pen

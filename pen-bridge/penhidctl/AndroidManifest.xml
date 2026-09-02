@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="301000"
-    android:versionName="3.1.0"
+    android:versionCode="302000"
+    android:versionName="3.2.0"
     package="com.aclaniakea.penhidctl">
     <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
-    <application android:theme="@style/AppTheme" android:label="PenHidCtl" android:allowBackup="false">
+    <application android:theme="@style/AppTheme" android:label="联想平板 Pro GT - 手写笔系统服务" android:allowBackup="false">
         <service android:name=".PenHidService" android:exported="true" android:stopWithTask="true" android:foregroundServiceType="shortService" />
     </application>
 </manifest>

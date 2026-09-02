@@ -122,10 +122,10 @@ def main() -> None:
         run(["javac", "--release", "17", "-classpath", str(STUBS),
              "-d", tmp / "stub-classes"] +
             [str(p) for p in sorted(STUB_PATCHES.rglob("*.java"))])
+        source_files = [str(p) for p in sorted(SOURCES.rglob("*.java"))]
         run(["javac", "--release", "17",
              "-classpath", f"{ANDROID_JAR}:{tmp / 'stub-classes'}:{STUBS}:{tmp / 'gen'}",
-             "-d", tmp / "classes"] +
-            [str(p) for p in sorted(SOURCES.rglob("*.java"))])
+             "-d", tmp / "classes"] + source_files)
         # 3. dex
         d8_cmd = ([D8] if not R8_JAR.is_file()
                   else ["java", "-cp", R8_JAR, "com.android.tools.r8.D8"])

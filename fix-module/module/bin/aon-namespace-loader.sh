@@ -7,6 +7,8 @@ MODDIR="$1"
 AON_PACKAGE=com.aiunit.aon
 AON_PAYLOAD=/data/local/tmp/coloros-aon-runtime-v2459
 AON_TARGET=/my_product/app/AONService/lib/arm64
+AON_DSP_SKEL_TARGET=/vendor/lib/rfsa/adsp/libQnnHtpV75Skel.so
+AON_DSP_SKEL_SOURCE=$AON_PAYLOAD/cdsp/unsigned/libQnnHtpV75Skel.so
 # libaiboost_jni is a recovered Lenovo binary.  It uses an absolute
 # dlopen("/odm/lib64/libaiboost.so") instead of the app library namespace.
 # KernelSU gives apps a private mount namespace, so the module's global ODM
@@ -55,7 +57,8 @@ attach_runtime() {
         stopped_pid="$aon_pid"
         if [ -e "/proc/$aon_pid/ns/mnt" ] &&
            nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_ODM_TARGET" 2>/dev/null &&
-           nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_TARGET" 2>/dev/null; then
+           nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_TARGET" 2>/dev/null &&
+           nsenter -t "$aon_pid" -m -- mount --bind "$AON_DSP_SKEL_SOURCE" "$AON_DSP_SKEL_TARGET" 2>/dev/null; then
             # KernelSU has already mounted several children of AON_TARGET as
             # individual files.  A parent directory bind does not replace
             # those surviving child mounts, so overlay every runtime file once
@@ -72,11 +75,13 @@ attach_runtime() {
             done
             actual_jni=$(nsenter -t "$aon_pid" -m -- sha256sum "$AON_TARGET/libaiboost_jni.so" 2>/dev/null | awk '{print $1}')
             actual_aiboost=$(nsenter -t "$aon_pid" -m -- sha256sum "$AON_ODM_TARGET/libaiboost.so" 2>/dev/null | awk '{print $1}')
+            actual_skel=$(nsenter -t "$aon_pid" -m -- sha256sum "$AON_DSP_SKEL_TARGET" 2>/dev/null | awk '{print $1}')
             expected_aiboost=$(sha256sum "$AON_PAYLOAD/libaiboost.so" 2>/dev/null | awk '{print $1}')
-            if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ] && [ "$actual_aiboost" = "$expected_aiboost" ]; then
-                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost"
+            expected_skel=$(sha256sum "$AON_DSP_SKEL_SOURCE" 2>/dev/null | awk '{print $1}')
+            if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ] && [ "$actual_aiboost" = "$expected_aiboost" ] && [ "$actual_skel" = "$expected_skel" ]; then
+                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost skel=$actual_skel"
             else
-                log_msg "ERROR: AON namespace runtime mismatch pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost"
+                log_msg "ERROR: AON namespace runtime mismatch pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost skel=$actual_skel"
             fi
         else
             log_msg "ERROR: AON namespace runtime attach failed pid=$aon_pid"

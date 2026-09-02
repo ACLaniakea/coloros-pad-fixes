@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- LSPosed's recommended scope: this hook must never load elsewhere. -->
+    <array name="xposed_scope">
+        <item>com.zui.camera</item>
+    </array>
+</resources>

@@ -8,7 +8,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)
 ![Android](https://img.shields.io/badge/Android-16%20(ColorOS%2016)-green)
-![Version](https://img.shields.io/badge/version-3.1.0-orange)
+![Version](https://img.shields.io/badge/version-3.2.0-orange)
 ![License](https://img.shields.io/badge/license-GPLv3-blue)
 
 移植包刷上去能开机，但不少东西是瘸的：温控曲线用错了传感器、内存扩展档位对不上、一加那套内核调度栈加载不起来、手写笔和 AON 注视感知没人接。这个项目就是把这些一条条接回去。
@@ -42,6 +42,7 @@
 | `PenBridge-Module.zip` + `PenBridge-Hook.apk` + `PenHidCtl.apk` | 手写笔桥接三件套 | 用笔才装 |
 | `SM8650Q-Scene-Scheduler.zip` | 给 Scene 提供四档调度配置 | 用 Scene 才装 |
 | `CryptoengHAL-Module.zip` | **CryptoEng 分流代理**。查找设备注册/定位 + 一加互传联系人模式（10003 HKDF、10009 证书验证） | 需要查找设备才装 |
+| `LenovoPadProGT-ZUI-Camera-Port.zip` + `ZUI-Camera-Compat.apk` | TB710FU 原厂 ZUI 相机移植与仅相机进程生效的兼容层 | 用 ZUI 相机才装 |
 
 ---
 
@@ -112,24 +113,26 @@ adb shell uname -r     # 应带 -ACLaniakea 后缀
 
 在 KernelSU 里依次刷入，**全部装完再重启**：
 
-1. `FixModule.zip` ← 必装
-2. `OplusBSP-Modules.zip` ← 刷了内核才装
-3. `PenBridge-Module.zip` ← 用笔才装
-4. `SM8650Q-Scene-Scheduler.zip` ← 用 Scene 才装
-5. `CryptoengHAL-Module.zip` ← 需要查找设备/一加互传联系人才装
+1. `FixModule-v3.2.0.zip` ← 必装
+2. `OplusBSP-Modules-v3.2.0.zip` ← 刷了内核才装
+3. `PenBridge-Module-v3.2.0.zip` ← 用笔才装
+4. `SM8650Q-Scene-Scheduler-v3.2.0.zip` ← 用 Scene 才装
+5. `CryptoengHAL-Module-v3.2.0.zip` ← 需要查找设备/一加互传联系人才装
+6. `LenovoPadProGT-ZUI-Camera-Port-v3.2.0.zip` ← 用 ZUI 相机才装
 
 命令行等价写法：
 
 ```bash
-adb shell su -c 'ksud module install /sdcard/FixModule-v3.1.0.zip'
+adb shell su -c 'ksud module install /sdcard/FixModule-v3.2.0.zip'
 ```
 
 ### 3.3 装 LSPosed 模块
 
 ```bash
-adb install -r BaseFix-Hook-v3.1.0.apk
-adb install -r PenBridge-Hook-v3.1.0.apk   # 用笔才装
-adb install -r PenHidCtl-v3.1.0.apk        # 用笔才装
+adb install -r BaseFix-Hook-v3.2.0.apk
+adb install -r PenBridge-Hook-v3.2.0.apk   # 用笔才装
+adb install -r PenHidCtl-v3.2.0.apk        # 用笔才装
+adb install -r ZUI-Camera-Compat-v3.2.0.apk # 用 ZUI 相机才装
 ```
 
 然后在 LSPosed 里**启用模块并勾选作用域**——勾错等于没装。`FixModule` 会用 `INSERT OR IGNORE` 把必需作用域补进 LSPosed 白名单，不会删掉你自己加的。

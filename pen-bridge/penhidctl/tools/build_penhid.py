@@ -18,6 +18,8 @@ MANIFEST = ROOT / "AndroidManifest.xml"
 
 SDK = Path(os.environ.get("ANDROID_SDK", "/tmp/android-sdk"))
 BT = SDK / "build-tools" / "android-15"
+if not BT.is_dir():
+    BT = SDK / "build-tools" / "android-14"
 AAPT2 = BT / "aapt2"
 D8 = BT / "d8"
 R8_JAR = Path(os.environ.get("ACL_R8_JAR", "/run/media/ACLaniakea/IXUNICS/pad/tools/dex/r8.jar"))
@@ -37,7 +39,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "PenHidCtl-v3.1.0.apk"
+OUT_APK = OUT_DIR / "PenHidCtl-v3.2.0.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -67,7 +69,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "301000", "--version-name", "3.1.0"])
+             "--version-code", "302000", "--version-name", "3.2.0"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
         run(["javac", "--release", "17",

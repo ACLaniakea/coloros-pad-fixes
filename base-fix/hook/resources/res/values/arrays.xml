@@ -11,5 +11,7 @@
         <item>com.oplus.ovoicemanager.wakeup</item>
         <item>com.oplus.battery</item>
         <item>com.oplus.gesture</item>
+        <item>com.android.systemui</item>
+        <item>com.heytap.accessory</item>
     </array>
 </resources>

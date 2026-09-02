@@ -1,0 +1,6 @@
+id=zui_native_identity_experimental
+name=ZUI Camera native Lenovo identity (experimental)
+version=0.1.0
+versionCode=1
+author=ACLaniakea
+description=Per-process COW system-property compatibility for com.zui.camera only

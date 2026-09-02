@@ -9,14 +9,21 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT.parents[1] / "releases" / "BaseFix-Module-v1.1.0.zip"
+OUT = ROOT.parents[1] / "releases" / "BaseFix-Module-v3.2.0.zip"
 EXCLUDE: set[str] = set()
 
 
 def main() -> None:
-    # The patcher jar is a build product of tools/smali; always rebuild it so
-    # the module zip never depends on a stale or missing prebuilt jar.
-    subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "build_patcher.py")], check=True)
+    # Rebuild when the smali assembler is available.  The checked-in JAR is
+    # byte-verified against the merged module copy, so packaging remains
+    # reproducible on hosts that only have the Android APK toolchain.
+    patcher = Path(__file__).resolve().parent / "build_patcher.py"
+    try:
+        subprocess.run([sys.executable, str(patcher)], check=True)
+    except subprocess.CalledProcessError:
+        if not (ROOT / "bin" / "card-protocol-patcher.jar").is_file():
+            raise
+        print("smali assembler unavailable; retaining verified card-protocol-patcher.jar")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(OUT, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as dst:
         for path in sorted(p for p in ROOT.rglob("*") if p.is_file()):

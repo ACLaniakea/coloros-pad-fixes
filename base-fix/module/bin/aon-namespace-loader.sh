@@ -7,6 +7,8 @@ MODDIR="$1"
 AON_PACKAGE=com.aiunit.aon
 AON_PAYLOAD=/data/local/tmp/coloros-aon-runtime-v2459
 AON_TARGET=/my_product/app/AONService/lib/arm64
+AON_DSP_SKEL_TARGET=/vendor/lib/rfsa/adsp/libQnnHtpV75Skel.so
+AON_DSP_SKEL_SOURCE=$AON_PAYLOAD/cdsp/unsigned/libQnnHtpV75Skel.so
 EXPECTED_JNI=80aedb964ca38112a003a8f77b72bca0bbf37ac221017e678e031f09cde428fc
 
 last_pid=
@@ -51,7 +53,8 @@ while true; do
     if kill -STOP "$aon_pid" 2>/dev/null; then
         stopped_pid="$aon_pid"
         if [ -e "/proc/$aon_pid/ns/mnt" ] &&
-           nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_TARGET" 2>/dev/null; then
+           nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_TARGET" 2>/dev/null &&
+           nsenter -t "$aon_pid" -m -- mount --bind "$AON_DSP_SKEL_SOURCE" "$AON_DSP_SKEL_TARGET" 2>/dev/null; then
             # KernelSU has already mounted several children of AON_TARGET as
             # individual files.  A parent directory bind does not replace
             # those surviving child mounts, so overlay every runtime file once
@@ -67,10 +70,12 @@ while true; do
                 fi
             done
             actual_jni=$(nsenter -t "$aon_pid" -m -- sha256sum "$AON_TARGET/libaiboost_jni.so" 2>/dev/null | awk '{print $1}')
-            if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ]; then
-                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni"
+            actual_skel=$(nsenter -t "$aon_pid" -m -- sha256sum "$AON_DSP_SKEL_TARGET" 2>/dev/null | awk '{print $1}')
+            expected_skel=$(sha256sum "$AON_DSP_SKEL_SOURCE" 2>/dev/null | awk '{print $1}')
+            if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ] && [ "$actual_skel" = "$expected_skel" ]; then
+                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni skel=$actual_skel"
             else
-                log_msg "ERROR: AON namespace JNI mismatch pid=$aon_pid actual=$actual_jni"
+                log_msg "ERROR: AON namespace runtime mismatch pid=$aon_pid jni=$actual_jni skel=$actual_skel"
             fi
         else
             log_msg "ERROR: AON namespace runtime attach failed pid=$aon_pid"

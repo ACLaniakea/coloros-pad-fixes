@@ -34,6 +34,18 @@ InferenceAiboost nativeModelCreate fail
 
 此时相机帧可以到达 AON，但模型不会创建，所有结果都会是“未注视”。
 
+这次还确认了一个会让问题在每次重启后表现不同的第二层原因：KernelSU
+会为 AON 建立私有 mount namespace。即使根命名空间中的 RFSA skeleton
+已经被替换，AON 进程仍可能看见 Lenovo 的 2.21 文件。因此 namespace
+loader 必须在每个新 AON PID 恢复运行前，把同一份已校验的 2.34 skeleton
+bind 到该 PID 私有视图中的 `/vendor/lib/rfsa/adsp/libQnnHtpV75Skel.so`。
+只挂载应用库目录或只改全局 `/vendor` 都不充分。
+
+同时，恢复的 delegate 原本把 `ADSP_LIBRARY_PATH` 写成以分隔符开头的路径
+串，首项为空。TB710FU 上这会让 QNN 在创建 HTP session 前失败。模块使用
+SHA-256 限定的一字节修正移除空首项，保留原有的绝对路径及搜索顺序；不改
+模型、结果回调或 CPU/DSP 选择。
+
 ### 4. Lenovo CamX 的 YUV 平面布局不同
 
 前摄输出为 `YUV_420_888`，Y 平面连续，但 U/V 平面是 `rowStride=320`、`pixelStride=2` 的交错布局。移植 AON 直接按连续 planar YUV 读取，导致模型虽能运行，输入却失真。
@@ -66,6 +78,11 @@ InferenceAiboost nativeModelCreate fail
 
 这是 systemless bind mount，不写 vendor 分区；卸载脚本会解除该挂载。若目标机的原始 SHA 不同，脚本拒绝覆盖并保留 vendor 原文件，避免把未知机型误接到错误 DSP ABI。
 
+`aon-namespace-loader.sh` 还会对每个新 AON 进程执行同一 skeleton 的私有
+namespace bind，并同时校验 JNI、ODM AIBoost 与 skeleton 的 SHA。运行时日志
+只有在三项一致时才记录 `AON namespace runtime attached`；因此重启、AON
+进程被系统回收后再次启动，都走相同的确定性部署路径。
+
 ### Hook 与原厂生命周期
 
 - `AonSmartFaceGazeCompat` 只补齐移植 AON 缺失的 `0x60007` profile/capability 表项，框架的 SmartDim 状态机与 Binder 操作不改写。
@@ -75,7 +92,7 @@ InferenceAiboost nativeModelCreate fail
 
 ## 实机验证证据
 
-最终实机日志包含：
+重启后实机日志包含：
 
 ```text
 QNN_DELEGATE API VERSION:0.24.0
@@ -88,10 +105,10 @@ AIBoost_Destroy out, session = ..., status = 0
 
 并验证：
 
-1. 在 15 秒屏幕超时下，AON 检测成功后 `mWakefulness=Awake`。
-2. 连续两次创建、推理、销毁均成功，AON 进程保持存活。
-3. 相机启动前后 Provider PID 未变化，未再次出现 provider 重启循环。
-4. 最终把用户设置的熄屏时长恢复为 60 秒。
+1. 在 15 秒屏幕超时下，连续 SmartDim 周期均产生 `AttentionDetector: onSuccess: 1`，且 `mWakefulness=Awake`。
+2. 连续创建、推理、销毁均成功，`AIBoost_Destroy` 返回 `status = 0`。
+3. 完整重启后，新 AON PID 的私有 RFSA skeleton SHA 仍为 2.34 修复版本，QNN 可再次创建 session。
+4. 相机启动前后 Provider PID 未变化，未再次出现 provider 重启循环。
 
 ## 维护与回退
 

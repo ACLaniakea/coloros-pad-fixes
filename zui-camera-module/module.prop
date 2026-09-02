@@ -1,0 +1,6 @@
+id=lenovo_zui_camera_coloros
+name=联想平板 Pro GT - ZUI 相机移植
+version=3.2.0
+versionCode=302000
+author=ACLaniakea
+description=将 TB710FU 原厂 ZUI 相机作为系统基底部署，含 LCAF 参数、仅限相机进程的 Lenovo 原生身份层与 ColorOS 相册入口；Hybrid Mount 下保留同签名更新包，确保应用私有命名空间可读取 APK。

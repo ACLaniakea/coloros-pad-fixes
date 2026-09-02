@@ -45,3 +45,28 @@ fix-module/module/payload/osense/.retired-handed-back-to-stock/
 oplus-bsp-module/ko/
 /cryptoeng-hal-module*.zip
 /base-fix/module-*.zip
+
+# 独立 ZUI 相机交付物与原厂二进制：源码、构建脚本和配置保留，APK/ZIP/so 只作为 Release 附件。
+zui-camera-compat-hook/releases/
+zui-camera-module/releases/
+zui-camera-module/out/
+zui-camera-module/hook/*.apk
+zui-camera-module/zygisk/*.so
+experimental/lenovo-zui-camera-port/zui-native-identity/out/
+
+# 本机逆向、SDK、日志与抓帧；不属于可复现源码。
+androguard.db
+workspace/min-sdk/
+workspace/build-tmp/
+workspace/camera-provider/
+workspace/camera-provider-patch/
+workspace/camera-provider-wrapper/
+workspace/camera-sigpipe/
+workspace/framework-inspect/
+workspace/modules_config.db
+workspace/aon-*.png
+workspace/aon-*.yuv
+workspace/aon-service.apk
+workspace/aon-service.dex
+workspace/aperture-final.png
+fix-module/module/hook/BaseFix-Hook.apk

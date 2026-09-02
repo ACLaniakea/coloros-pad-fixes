@@ -1,6 +1,10 @@
 package com.aclaniakea.zuicameracompat;
 
+import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -18,6 +22,29 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
  */
 public final class ZuiCameraCompatBridge implements IXposedHookLoadPackage {
     private static final String TAG = "ZuiCameraCompat";
+
+    /**
+     * The native identity layer is intentionally process-local: global
+     * getprop must remain the port's real OnePlus identity.  This query runs
+     * after Zygisk specialization, so it observes the same COW property page
+     * that Morpho's __system_property_* calls will use.
+     */
+    private static boolean hasNativeLenovoIdentity() {
+        try {
+            Class<?> properties = Class.forName("android.os.SystemProperties");
+            String manufacturer = (String) XposedHelpers.callStaticMethod(
+                    properties, "get", "ro.product.manufacturer");
+            String model = (String) XposedHelpers.callStaticMethod(
+                    properties, "get", "ro.product.model");
+            boolean active = "Lenovo".equals(manufacturer) && "TB132".equals(model);
+            XposedBridge.log(TAG + ": native identity active=" + active
+                    + " manufacturer=" + manufacturer + " model=" + model);
+            return active;
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": native identity check failed: " + t);
+            return false;
+        }
+    }
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -135,10 +162,50 @@ public final class ZuiCameraCompatBridge implements IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(autoFraming, "init", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    XposedBridge.log(TAG + ": skipping MorphoAutoFramingJNI.init args=" + param.args.length);
-                    param.setResult(0);
+                    // Keep the old containment only when the independent COW
+                    // identity module did not initialize.  Returning success
+                    // here without native init produces the observed portrait
+                    // black preview, so a verified Lenovo identity must use
+                    // the original Morpho initializer and its DSP path.
+                    if (!hasNativeLenovoIdentity()) {
+                        XposedBridge.log(TAG + ": blocking AutoFraming init; native identity unavailable args="
+                                + param.args.length);
+                        param.setResult(0);
+                    } else {
+                        XposedBridge.log(TAG + ": allowing stock AutoFraming init args="
+                                + param.args.length);
+                    }
                 }
             });
+            // The stock tablet camera falls back to Google Photos whenever
+            // com.zui.gallery is absent.  On this ColorOS port that package
+            // exists but the cross-app launch is intercepted, so redirect the
+            // exact fallback method to the installed ColorOS Gallery instead
+            // of faking a Lenovo Gallery package or changing global defaults.
+            XposedHelpers.findAndHookMethod("com.zui.camera.CameraActivity", lpparam.classLoader,
+                    "launchGooglePhoto", new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            Activity activity = (Activity) param.thisObject;
+                            Uri latestUri = null;
+                            try {
+                                Object value = XposedHelpers.getObjectField(activity, "mLatestUri");
+                                if (value instanceof Uri) latestUri = (Uri) value;
+                            } catch (Throwable ignored) {
+                                // A missing thumbnail should still open the gallery home.
+                            }
+                            Intent gallery = new Intent(Intent.ACTION_VIEW)
+                                    .setComponent(new ComponentName("com.coloros.gallery3d",
+                                            "com.oppo.gallery3d.app.ViewGallery"))
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            if (latestUri != null) {
+                                gallery.setDataAndType(latestUri, "image/*");
+                            }
+                            activity.startActivity(gallery);
+                            XposedBridge.log(TAG + ": redirected thumbnail to ColorOS Gallery uri=" + latestUri);
+                            param.setResult(null);
+                        }
+                    });
             // 兜底：即使配置解析失败，getSupportedModes() 也不要返回 null（TB710FU 原厂 modes）。
             XposedHelpers.findAndHookMethod(appFeatures, "getSupportedModes",
                     new XC_MethodHook() {
