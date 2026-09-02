@@ -5,7 +5,9 @@ com.aclaniakea.colorosocrcamerabridge.OcrScannerCameraBridge
 com.aclaniakea.coloroscellularuiguard.CellularIdentityUiGuard
 com.aclaniakea.lenovopenbridgeguard.LenovoPenBridgeGuard
 com.aclaniakea.colorosgpustatsbridge.RealtimeGpuBridge
+com.aclaniakea.aoncameraopbridge.AonCameraOpBridge
 com.aclaniakea.aonframebridge.AonYuvLayoutBridge
+com.aclaniakea.aonsmartfacegazecompat.AonSmartFaceGazeCompat
 com.aclaniakea.lenovocolormodebridge.LenovoColorModeBridge
 com.aclaniakea.colorosvoicewakeupbridge.ColorOSVoiceWakeupBridge
 com.aclaniakea.soundtriggerguard.SoundTriggerTrackerGuard
@@ -13,6 +15,5 @@ com.aclaniakea.batteryhealthbridge.BatteryHealthBridge
 com.aclaniakea.orealityguard.OrealityDisableBridge
 com.aclaniakea.hmbirdguard.HmbirdCompatGuard
 com.aclaniakea.dolbybridge.SoundEffectsMenuFix
-com.aclaniakea.aoncameraopbridge.AonCameraOpBridge
 com.aclaniakea.osharecontactcompat.OShareContactCryptoCompat
 com.aclaniakea.flashlightlevelbridge.FlashlightLevelBridge

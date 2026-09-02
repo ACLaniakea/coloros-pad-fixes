@@ -7,6 +7,12 @@ MODDIR="$1"
 AON_PACKAGE=com.aiunit.aon
 AON_PAYLOAD=/data/local/tmp/coloros-aon-runtime-v2459
 AON_TARGET=/my_product/app/AONService/lib/arm64
+# libaiboost_jni is a recovered Lenovo binary.  It uses an absolute
+# dlopen("/odm/lib64/libaiboost.so") instead of the app library namespace.
+# KernelSU gives apps a private mount namespace, so the module's global ODM
+# overlay is not visible there.  Mount the self-contained runtime directory
+# only in the AON process before it can call nativeCreate.
+AON_ODM_TARGET=/odm/lib64
 EXPECTED_JNI=80aedb964ca38112a003a8f77b72bca0bbf37ac221017e678e031f09cde428fc
 
 stopped_pid=
@@ -48,6 +54,7 @@ attach_runtime() {
     if kill -STOP "$aon_pid" 2>/dev/null; then
         stopped_pid="$aon_pid"
         if [ -e "/proc/$aon_pid/ns/mnt" ] &&
+           nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_ODM_TARGET" 2>/dev/null &&
            nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_TARGET" 2>/dev/null; then
             # KernelSU has already mounted several children of AON_TARGET as
             # individual files.  A parent directory bind does not replace
@@ -64,10 +71,12 @@ attach_runtime() {
                 fi
             done
             actual_jni=$(nsenter -t "$aon_pid" -m -- sha256sum "$AON_TARGET/libaiboost_jni.so" 2>/dev/null | awk '{print $1}')
-            if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ]; then
-                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni"
+            actual_aiboost=$(nsenter -t "$aon_pid" -m -- sha256sum "$AON_ODM_TARGET/libaiboost.so" 2>/dev/null | awk '{print $1}')
+            expected_aiboost=$(sha256sum "$AON_PAYLOAD/libaiboost.so" 2>/dev/null | awk '{print $1}')
+            if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ] && [ "$actual_aiboost" = "$expected_aiboost" ]; then
+                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost"
             else
-                log_msg "ERROR: AON namespace JNI mismatch pid=$aon_pid actual=$actual_jni"
+                log_msg "ERROR: AON namespace runtime mismatch pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost"
             fi
         else
             log_msg "ERROR: AON namespace runtime attach failed pid=$aon_pid"

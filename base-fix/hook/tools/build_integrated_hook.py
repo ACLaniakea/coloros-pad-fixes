@@ -27,7 +27,16 @@ XPOSED_INIT = ROOT / "resources" / "assets" / "xposed_init"
 SCOPE_LIST = ROOT / "resources" / "META-INF" / "xposed" / "scope.list"
 
 SDK = Path(os.environ.get("ANDROID_SDK", "/tmp/android-sdk"))
-BT = SDK / "build-tools" / "android-15"
+_bt_root = SDK / "build-tools"
+# Older local SDK snapshots used an android-15 directory while Google's
+# standalone build-tools archives use android-14.  Prefer the historic path
+# for reproducibility, then select the newest installed directory.
+BT = _bt_root / "android-15"
+if not BT.is_dir() and _bt_root.is_dir():
+    _bt_candidates = sorted((p for p in _bt_root.iterdir() if p.is_dir()),
+                            key=lambda p: p.name)
+    if _bt_candidates:
+        BT = _bt_candidates[-1]
 AAPT2 = BT / "aapt2"
 D8 = BT / "d8"
 R8_JAR = Path(os.environ.get("ACL_R8_JAR", "/run/media/ACLaniakea/IXUNICS/pad/tools/dex/r8.jar"))
@@ -145,6 +154,9 @@ def main() -> None:
             if scope_list.startswith(b"\xef\xbb\xbf"):
                 raise ValueError("scope.list must be UTF-8 without BOM")
             dst.writestr("META-INF/xposed/scope.list", scope_list,
+                         compress_type=zipfile.ZIP_DEFLATED)
+            # LSPosed 的推荐作用域读取 assets/scope.list（模块详情里一键勾选）
+            dst.writestr("assets/scope.list", scope_list,
                          compress_type=zipfile.ZIP_DEFLATED)
         # 5. align + sign
         aligned = tmp / "aligned.apk"

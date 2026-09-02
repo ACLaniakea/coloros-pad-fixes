@@ -57,6 +57,12 @@ allow nandswap unlabeled dir getattr;
 # ---------------------------------------------------------------------------
 allow init nandswap process2 nosuid_transition;
 
+# The camera provider executable is bind-mounted from the module's /data
+# payload.  Preserve init's normal transition into hal_camera_default even
+# though /data is mounted nosuid; all permissions of the target domain remain
+# unchanged.
+allow init hal_camera_default process2 nosuid_transition;
+
 # ---------------------------------------------------------------------------
 # 放行 oplus binder UX 通路（2026-08-29 v2.10.0）
 #

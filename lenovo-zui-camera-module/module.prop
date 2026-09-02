@@ -1,0 +1,6 @@
+id=lenovo_zui_camera
+name=Lenovo ZUI Camera (TB710FU Stock)
+version=18.0.1.251216192500
+versionCode=180019999
+author=ACLaniakea
+description=Stock Lenovo ZUI Camera, Camera Assistant and QR scanner for TB710FU. Systemless priv-app installation; does not replace camera HAL.

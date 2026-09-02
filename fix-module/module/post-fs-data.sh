@@ -12,8 +12,7 @@ MODDIR=${0%/*}
 #   3) Tango 32 位 zygote 兼容：停止与 32 位 libdl 不兼容的 tango 进程，
 #      并 bind 翻译过的 32 位 libdl；
 #   4) AON 原生运行时：把保留的 AIBoost/QNN(HTP) 运行时 bind 进 AON 应用
-#      的链接器命名空间，并启动命名空间加载器，恢复真实 NPU 推理生命周期；
-#   5) AON 原始 QNN ODM 配置：补齐移植 ROM 缺失的 /odm/etc/camera 配置；
+#      的链接器命名空间；相机仲裁在 framework 原厂 SmartFaceGaze 边界完成；
 #   6) 环境光能力：恢复 oplus.product.display_features.xml，使环境光
 #      自适应（色温）功能生效；
 #   7) 144Hz 刷新率策略：提供更高版本 TB710FU 策略，覆盖云端 60/90/120；
@@ -792,13 +791,38 @@ stop zygote_tango
 # namespace, so the same files are attached again after its PID appears.
 AON_LIB_TARGET=/my_product/app/AONService/lib/arm64
 AON_LIB_PAYLOAD="$MODDIR/payload/aon-libs"
-if [ -d "$AON_LIB_TARGET" ] && [ -f "$AON_LIB_PAYLOAD/libaiboost_jni.so" ] && [ -f "$AON_LIB_PAYLOAD/libaiboost.so" ] && [ -f "$AON_LIB_PAYLOAD/libQnnHtpV75Stub.so" ] && [ -f "$AON_LIB_PAYLOAD/cdsp/unsigned/libQnnHtpV75Skel.so" ]; then
+if [ -d "$AON_LIB_TARGET" ] && [ -f "$AON_LIB_PAYLOAD/libaiboost_jni.so" ] && \
+   [ -f "$AON_LIB_PAYLOAD/libaiboost.so" ] && \
+   [ -f "$AON_LIB_PAYLOAD/libQnnHtpV75Stub.so" ] && \
+   [ -f "$AON_LIB_PAYLOAD/cdsp/unsigned/libQnnHtpV75Skel.so" ]; then
     chown -R 0:0 "$AON_LIB_PAYLOAD"
     find "$AON_LIB_PAYLOAD" -type d -exec chmod 0755 {} \;
     find "$AON_LIB_PAYLOAD" -type f -name '*.so' -exec chmod 0644 {} \;
     chcon -R u:object_r:system_file:s0 "$AON_LIB_PAYLOAD" 2>/dev/null
     mount --bind "$AON_LIB_PAYLOAD" "$AON_LIB_TARGET" &&
         log_msg "AON native runtime mounted in app linker namespace"
+
+    # The port's Lenovo vendor image supplies a QNN 2.21 V75 DSP skeleton,
+    # while the retained ColorOS AON runtime is QNN 2.34.  User-space library
+    # overlays alone cannot change the remote DSP loader: it resolves this
+    # RFSA endpoint from the root mount namespace.  Bind only the matching
+    # 2.34 unsigned V75 skeleton, and only over the exact stock Lenovo file.
+    # This keeps inference on the real Hexagon DSP; it is neither CPU fallback
+    # nor a replacement of the vendor partition.
+    AON_DSP_SKEL_TARGET=/vendor/lib/rfsa/adsp/libQnnHtpV75Skel.so
+    AON_DSP_SKEL_SOURCE="$AON_LIB_PAYLOAD/cdsp/unsigned/libQnnHtpV75Skel.so"
+    AON_DSP_SKEL_STOCK_SHA=2215f369e1b640cddfadf9fa3970f52f6f245b6dc0f676bab428b8627a5ea9ea
+    AON_DSP_SKEL_SOURCE_SHA=c43a2dcd4be3982b9baee6b34ba26ca02b12179dc331e129cafd817ce36188ea
+    aon_dsp_skel_target_sha=$(sha256sum "$AON_DSP_SKEL_TARGET" 2>/dev/null | awk '{print $1}')
+    aon_dsp_skel_source_sha=$(sha256sum "$AON_DSP_SKEL_SOURCE" 2>/dev/null | awk '{print $1}')
+    if [ "$aon_dsp_skel_source_sha" = "$AON_DSP_SKEL_SOURCE_SHA" ] &&
+       { [ "$aon_dsp_skel_target_sha" = "$AON_DSP_SKEL_STOCK_SHA" ] ||
+         [ "$aon_dsp_skel_target_sha" = "$AON_DSP_SKEL_SOURCE_SHA" ]; }; then
+        mount --bind "$AON_DSP_SKEL_SOURCE" "$AON_DSP_SKEL_TARGET" &&
+            log_msg "AON QNN 2.34 V75 DSP skeleton mounted"
+    else
+        log_msg "ERROR: AON DSP skeleton checksum mismatch; retaining stock vendor skeleton"
+    fi
 
     # AON is launched in an isolated mount namespace by the port.  Stage the
     # verified runtime in a namespace-neutral location, then stop each newly
@@ -1064,5 +1088,98 @@ for _logtag in \
     resetprop "log.tag.$_logtag" WARN 2>/dev/null
 done
 log_msg "debug/verbose log suppression applied ($(getprop 'log.tag.ActivityTaskManager'))"
+
+# Lenovo's GC13A2 sensor driver and its IS algorithm emit several ERROR-level
+# diagnostics for every completed frame even when capture is healthy.  The
+# messages are not actionable at runtime and the resulting logd pressure was
+# measurable as preview-frame jank. Keep the rest of CamX visible for fault
+# diagnosis; silence only these two per-frame tags.
+for _camera_sensor_logtag in GC13A2 IS_ALGO; do
+    resetprop "log.tag.$_camera_sensor_logtag" S 2>/dev/null
+done
+log_msg "camera per-frame sensor log suppression applied"
+
+# ============================================================================
+# Lenovo CamX camera-provider SIGPIPE compatibility
+#
+# This exact stock provider exits on signal 13 when the transplanted ColorOS
+# camera stack closes a pipe during client handoff.  The patched constructor
+# changes only the process SIGPIPE disposition to SIG_IGN, then tail-calls the
+# original constructor.  Keep this executable in the original init service,
+# linker namespace and hal_camera_default domain; no wrapper is involved.
+# ============================================================================
+CAMERA_PROVIDER_TARGET=/vendor/bin/hw/vendor.qti.camera.provider-service_64
+CAMERA_PROVIDER_PATCH="$MODDIR/payload/camera/vendor.qti.camera.provider-service_64"
+CAMERA_PROVIDER_STOCK_SHA=751fa24b9d44a790a2594828c5aaa2a9e98f1a2a7734cf7cd103023893031f6a
+CAMERA_PROVIDER_PATCH_SHA=87d9e0fc591dc23f6d50d132963480bc79f3c50af4741f3d3e33be64d7ecc9c0
+if [ -f "$CAMERA_PROVIDER_TARGET" ] && [ -f "$CAMERA_PROVIDER_PATCH" ]; then
+    _camera_provider_target_sha=$(sha256sum "$CAMERA_PROVIDER_TARGET" 2>/dev/null | awk '{print $1}')
+    _camera_provider_patch_sha=$(sha256sum "$CAMERA_PROVIDER_PATCH" 2>/dev/null | awk '{print $1}')
+    if [ "$_camera_provider_patch_sha" = "$CAMERA_PROVIDER_PATCH_SHA" ] && \
+       { [ "$_camera_provider_target_sha" = "$CAMERA_PROVIDER_STOCK_SHA" ] || \
+         [ "$_camera_provider_target_sha" = "$CAMERA_PROVIDER_PATCH_SHA" ]; }; then
+        chown 0:2000 "$CAMERA_PROVIDER_PATCH"
+        chmod 0755 "$CAMERA_PROVIDER_PATCH"
+        chcon u:object_r:hal_camera_default_exec:s0 "$CAMERA_PROVIDER_PATCH" 2>/dev/null
+        if mount --bind "$CAMERA_PROVIDER_PATCH" "$CAMERA_PROVIDER_TARGET" 2>/dev/null && \
+           [ "$(sha256sum "$CAMERA_PROVIDER_TARGET" 2>/dev/null | awk '{print $1}')" = "$CAMERA_PROVIDER_PATCH_SHA" ]; then
+            log_msg "camera provider SIGPIPE guard mounted"
+        else
+            umount "$CAMERA_PROVIDER_TARGET" 2>/dev/null
+            log_msg "ERROR: camera provider SIGPIPE guard mount rolled back"
+        fi
+    else
+        log_msg "WARN: camera provider guard skipped (unknown provider SHA $_camera_provider_target_sha)"
+    fi
+else
+    log_msg "WARN: camera provider guard target or payload missing"
+fi
+
+# ============================================================================
+# ColorOS cameraserver 动态深度标签 -22 修复（根治 camx provider 崩循环）
+#
+# 现象：ColorOS libcameraservice.so 的 DeviceInfo3::addDynamicDepthTags 在给
+# 设备附加动态深度（dynamic depth）标签时，因 camx 特性表宣称支持动态深度但
+# 实际返回的深度时长集合与格式时长集合数量不一致（"Unexpected number of
+# available depth min/stall durations!"），内部返回 -22(EINVAL)。cameraserver
+# 把该设备初始化当作失败，释放 provider 连接 -> 原厂 camx.provider-impl.so
+# binderDied 收到死亡通知后 abort() -> provider 崩溃循环（相机偶发 0 设备、
+# AON 受影响）。
+#
+# 修法（框架层）：把 addDynamicDepthTags
+# 的返回点 patch 成恒返回 0（mov w0, w19 -> mov w0, wzr），计数不匹配时不再
+# 返回 -22，只是不附加这些深度标签（与"无动态深度尺寸"路径行为一致）。已用
+# llvm-objdump 复核：唯一出口 0x2392ec 从 mov w0, w19 改为 mov w0, wzr。
+#
+# 部署：KernelSU 的 system/ 覆盖不覆盖 /system/lib64（且模块文件 context 是
+# system_file，cameraserver 读不了 system_lib_file 语义），故按已验证模式
+# post-fs-data 阶段 chcon + bind。
+# ============================================================================
+CAMERASERVICE_TARGET=/system/lib64/libcameraservice.so
+CAMERASERVICE_PATCH="$MODDIR/payload/lib64/libcameraservice.so"
+CAMERASERVICE_STOCK_SHA=288881f6ba46e5559b603894301acffb1939e0b84b7035a35702329c9e2d5833
+CAMERASERVICE_PATCH_SHA=5481486a553f412f68c619bcc0b4498377a900de26a9c37e4499a1d2e1c3ef27
+if [ -f "$CAMERASERVICE_TARGET" ] && [ -f "$CAMERASERVICE_PATCH" ]; then
+    _camera_service_target_sha=$(sha256sum "$CAMERASERVICE_TARGET" 2>/dev/null | awk '{print $1}')
+    _camera_service_patch_sha=$(sha256sum "$CAMERASERVICE_PATCH" 2>/dev/null | awk '{print $1}')
+    if [ "$_camera_service_patch_sha" = "$CAMERASERVICE_PATCH_SHA" ] && \
+       { [ "$_camera_service_target_sha" = "$CAMERASERVICE_STOCK_SHA" ] || \
+         [ "$_camera_service_target_sha" = "$CAMERASERVICE_PATCH_SHA" ]; }; then
+        chown 0:0 "$CAMERASERVICE_PATCH"
+        chmod 0644 "$CAMERASERVICE_PATCH"
+        chcon u:object_r:system_lib_file:s0 "$CAMERASERVICE_PATCH" 2>/dev/null
+        if mount --bind "$CAMERASERVICE_PATCH" "$CAMERASERVICE_TARGET" 2>/dev/null && \
+           [ "$(sha256sum "$CAMERASERVICE_TARGET" 2>/dev/null | awk '{print $1}')" = "$CAMERASERVICE_PATCH_SHA" ]; then
+            log_msg "camera dynamic-depth compatibility patch mounted"
+        else
+            umount "$CAMERASERVICE_TARGET" 2>/dev/null
+            log_msg "ERROR: camera dynamic-depth compatibility mount rolled back"
+        fi
+    else
+        log_msg "WARN: camera dynamic-depth patch skipped (unknown libcameraservice SHA $_camera_service_target_sha)"
+    fi
+else
+    log_msg "WARN: camera dynamic-depth patch target or payload missing"
+fi
 
 log_msg "post-fs-data end"

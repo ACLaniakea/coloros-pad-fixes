@@ -1,0 +1,39 @@
+{
+  "devices": [
+    {
+      "device": "lgsi",
+      "cameras": [
+        {
+          "camId": "1",
+          "hdrCheckIso": "2000",
+          "ISOSet": [
+            {
+              "ISO": "800",
+              "property": {
+                "hdrConval": "0.31"
+              }
+            },
+            {
+              "ISO": "1000",
+              "property": {
+                "hdrConval": "1.1"
+              }
+            },
+            {
+              "ISO": "1800",
+              "property": {
+                "hdrConval": "1.2"
+              }
+            },
+            {
+              "ISO": "10000",
+              "property": {
+                "hdrConval": "1.3"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

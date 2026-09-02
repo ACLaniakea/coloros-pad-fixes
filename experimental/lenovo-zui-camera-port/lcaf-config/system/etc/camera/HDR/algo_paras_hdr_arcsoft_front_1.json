@@ -1,0 +1,79 @@
+{
+  "devices": [
+    {
+      "device": "lgsi",
+      "cameras": [
+        {
+          "camId": "1",
+          "ISOSet": [
+            {
+              "ISO": "200",
+              "property": {
+                "ev+": "0",
+                "ev-": "-4",
+                "face_ev+": "0",
+                "face_ev-": "-4",
+                "saturation": "0",
+                "contrast": "30",
+                "brightness": "-10",
+                "toneLength": "25"
+              }
+            },
+            {
+              "ISO": "800",
+              "property": {
+                "ev+": "0",
+                "ev-": "-4",
+                "face_ev+": "0",
+                "face_ev-": "-4",
+                "saturation": "0",
+                "contrast": "30",
+                "brightness": "-10",
+                "toneLength": "25"
+              }
+            },
+            {
+              "ISO": "1600",
+              "property": {
+                "ev+": "0",
+                "ev-": "-4",
+                "face_ev+": "0",
+                "face_ev-": "-4",
+                "saturation": "0",
+                "contrast": "30",
+                "brightness": "-10",
+                "toneLength": "25"
+              }
+            },
+            {
+              "ISO": "3200",
+              "property": {
+                "ev+": "0",
+                "ev-": "-4",
+                "face_ev+": "0",
+                "face_ev-": "-4",
+                "saturation": "0",
+                "contrast": "30",
+                "brightness": "-10",
+                "toneLength": "25"
+              }
+            },
+            {
+              "ISO": "10000",
+              "property": {
+                "ev+": "0",
+                "ev-": "-4",
+                "face_ev+": "0",
+                "face_ev-": "-4",
+                "saturation": "0",
+                "contrast": "30",
+                "brightness": "-10",
+                "toneLength": "25"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

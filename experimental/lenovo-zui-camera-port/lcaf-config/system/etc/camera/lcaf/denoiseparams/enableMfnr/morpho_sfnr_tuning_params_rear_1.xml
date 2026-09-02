@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Morpho Image Refiner Parameters Configuration -->
+<!-- Copyright(c) 2021 Morpho China,Inc.  -->
+
+
+<image_refiner>
+	<version   type="string" length="1">v1.0.0_SFNR_cam_20230509</version>
+	<camera_id type="int"    length="1">0</camera_id>
+	
+    <params>
+	    <iso value="150">
+			<y_nr_level       			type="float"  rang="[0.0,100.0]"  default="1.0"   length="1">0</y_nr_level>
+			<c_nr_level       			type="float"  rang="[0.0,10.0]"   default="1.0"   length="1">0</c_nr_level>
+			<c_nr_times       			type="int"    rang="[1,6]"        default="1.0"   length="1">1</c_nr_times>			    
+            <block_cnr           		type="int"     rang="[0,-]"       default="0"     length="1">0</block_cnr> 
+            <block_cnr_weights   		type="double"  rang="[0.0,-]"     default="1.0 1.0 1.0"   length="3">1.0 2.5 2.5</block_cnr_weights>		
+            <lce       		  			type="double" rang="[0.0,1024]"   default="0"     length="1">50</lce>
+			<low_freq_lce               type="double" rang="[0.0,2048]"   default="800"   length="1">500</low_freq_lce>
+			<high_freq_lce              type="double" rang="[0.0,100]"    default="10"    length="1">10</high_freq_lce>
+		    <contrast         			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</contrast>	
+            <lb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</lb_contrast>
+			<hb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</hb_contrast>
+
+			<low_freq_nr_level_1   		type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_1>
+			<low_freq_nr_level_0        type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_0> 
+			<low_freq_nr_sigma          type="int"     rang="[0.0,40.0]"  default="0"     length="1">0</low_freq_nr_sigma> 
+            <do_unsharp       			type="int"    rang="[0, 4095]"    default="200"   length="1">50</do_unsharp>
+			<unsharp_sigma_width    	type="double" rang="[0.0,10.0]"   default="1.2"   length="1">1.2</unsharp_sigma_width>
+			<unsharp_sigma_narrow   	type="double" rang="[0.0,10.0]"   default="0.4"   length="1">0.4</unsharp_sigma_narrow>
+		</iso>	
+
+		<iso value="299">
+			<y_nr_level       			type="float"  rang="[0.0,100.0]"  default="1.0"   length="1">0</y_nr_level>
+			<c_nr_level       			type="float"  rang="[0.0,10.0]"   default="1.0"   length="1">0</c_nr_level>
+			<c_nr_times       			type="int"    rang="[1,6]"        default="1.0"   length="1">1</c_nr_times>			    
+            <block_cnr           		type="int"     rang="[0,-]"       default="0"     length="1">0</block_cnr> 
+            <block_cnr_weights   		type="double"  rang="[0.0,-]"     default="1.0 1.0 1.0"   length="3">1.0 2.5 2.5</block_cnr_weights>		
+            <lce       		  			type="double" rang="[0.0,1024]"   default="0"     length="1">100</lce>
+			<low_freq_lce               type="double" rang="[0.0,2048]"   default="800"   length="1">500</low_freq_lce>
+			<high_freq_lce              type="double" rang="[0.0,100]"    default="10"    length="1">10</high_freq_lce>
+		    <contrast         			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</contrast>	
+            <lb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</lb_contrast>
+			<hb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</hb_contrast>
+
+			<low_freq_nr_level_1   		type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_1>
+			<low_freq_nr_level_0        type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_0> 
+			<low_freq_nr_sigma          type="int"     rang="[0.0,40.0]"  default="0"     length="1">0</low_freq_nr_sigma> 
+            <do_unsharp       			type="int"    rang="[0, 4095]"    default="200"   length="1">100</do_unsharp>
+			<unsharp_sigma_width    	type="double" rang="[0.0,10.0]"   default="1.2"   length="1">1.2</unsharp_sigma_width>
+			<unsharp_sigma_narrow   	type="double" rang="[0.0,10.0]"   default="0.4"   length="1">0.4</unsharp_sigma_narrow>		
+		</iso>
+
+		<iso value="1099">
+			<y_nr_level       			type="float"  rang="[0.0,100.0]"  default="1.0"   length="1">0</y_nr_level>
+			<c_nr_level       			type="float"  rang="[0.0,10.0]"   default="1.0"   length="1">0</c_nr_level>
+			<c_nr_times       			type="int"    rang="[1,6]"        default="1.0"   length="1">1</c_nr_times>			    
+            <block_cnr           		type="int"     rang="[0,-]"       default="0"     length="1">0</block_cnr> 
+            <block_cnr_weights   		type="double"  rang="[0.0,-]"     default="1.0 1.0 1.0"   length="3">1.0 2.5 2.5</block_cnr_weights>		
+            <lce       		  			type="double" rang="[0.0,1024]"   default="0"     length="1">150</lce>
+			<low_freq_lce               type="double" rang="[0.0,2048]"   default="800"   length="1">500</low_freq_lce>
+			<high_freq_lce              type="double" rang="[0.0,100]"    default="10"    length="1">10</high_freq_lce>
+		    <contrast         			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</contrast>	
+            <lb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</lb_contrast>
+			<hb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.003</hb_contrast>
+
+			<low_freq_nr_level_1   		type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_1>
+			<low_freq_nr_level_0        type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_0> 
+			<low_freq_nr_sigma          type="int"     rang="[0.0,40.0]"  default="0"     length="1">0</low_freq_nr_sigma> 
+            <do_unsharp       			type="int"    rang="[0, 4095]"    default="200"   length="1">50</do_unsharp>
+			<unsharp_sigma_width    	type="double" rang="[0.0,10.0]"   default="1.2"   length="1">1.2</unsharp_sigma_width>
+			<unsharp_sigma_narrow   	type="double" rang="[0.0,10.0]"   default="0.4"   length="1">0.4</unsharp_sigma_narrow>		
+		</iso>	
+			
+		<iso value="99999">
+			<y_nr_level       			type="float"  rang="[0.0,100.0]"  default="1.0"   length="1">0</y_nr_level>
+			<c_nr_level       			type="float"  rang="[0.0,10.0]"   default="1.0"   length="1">2</c_nr_level>
+			<c_nr_times       			type="int"    rang="[1,6]"        default="1.0"   length="1">2</c_nr_times>			    
+            <block_cnr           		type="int"     rang="[0,-]"       default="0"     length="1">0</block_cnr> 
+            <block_cnr_weights   		type="double"  rang="[0.0,-]"     default="1.0 1.0 1.0"   length="3">1.0 2.0 3.0</block_cnr_weights>		
+            <lce       		  			type="double" rang="[0.0,1024]"   default="0"     length="1">0</lce>
+			<low_freq_lce               type="double" rang="[0.0,2048]"   default="800"   length="1">800</low_freq_lce>
+			<high_freq_lce              type="double" rang="[0.0,100]"    default="10"    length="1">10</high_freq_lce>
+		    <contrast         			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.0</contrast>	
+            <lb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.0</lb_contrast>
+			<hb_contrast      			type="int"    rang="[0, 1.0]"     default="0"     length="1">0.0</hb_contrast>
+
+			<low_freq_nr_level_1   		type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_1>
+			<low_freq_nr_level_0        type="double"  rang="[0.0,50.0]"  default="0"     length="1">0</low_freq_nr_level_0> 
+			<low_freq_nr_sigma          type="int"     rang="[0.0,40.0]"  default="0"     length="1">0</low_freq_nr_sigma> 
+            <do_unsharp       			type="int"    rang="[0, 4095]"    default="200"   length="1">20</do_unsharp>
+			<unsharp_sigma_width    	type="double" rang="[0.0,10.0]"   default="1.2"   length="1">1.2</unsharp_sigma_width>
+			<unsharp_sigma_narrow   	type="double" rang="[0.0,10.0]"   default="0.4"   length="1">0.4</unsharp_sigma_narrow>
+		</iso>			
+    </params>
+</image_refiner>

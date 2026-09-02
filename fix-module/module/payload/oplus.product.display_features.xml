@@ -10,6 +10,13 @@
     <oplus-feature name="oplus.software.display.intelligent_color_temperature_support" />
     <!-- Restored for the port: environment CCT drives the True Tone 2.0 curve. -->
     <oplus-feature name="oplus.software.display.intelligent_color_temperature_2.0_support" />
+    <!--
+         Smart AON is gated by this product capability before
+         OplusAONSmartDim registers the stock SmartFaceGaze lifecycle.  The
+         port uses its validated Camera2 fallback when the Lenovo CamX HAL has
+         no Oplus AON sensor; the session itself remains stock framework/AON.
+    -->
+    <oplus-feature name="oplus.software.aon_luminance_control" />
     <oplus-feature name="oplus.software.display.colormode_support"/>
     <oplus-feature name="oplus.software.display.rgb_ball_support" />
     <oplus-feature name="oplus.software.display.colorful_mode_support" />

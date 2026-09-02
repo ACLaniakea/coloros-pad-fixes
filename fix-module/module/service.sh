@@ -33,6 +33,14 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# A previous diagnostic force-stop left the product AON package in Android's
+# persisted stopped state.  Do not launch it here: merely make the stock
+# SmartFaceGaze/Attention bind path eligible again when the user enables AON.
+if pm path com.aiunit.aon >/dev/null 2>&1; then
+    cmd package unstop --user 0 com.aiunit.aon >/dev/null 2>&1
+    log_msg "AON package unstopped for stock lifecycle binding"
+fi
+
 # Reassert once after Android property services are available.
 #
 # ★ 这一条**不是**内核缺口清理的对象，是永久保留项。HMBIRD 是一加基于
@@ -1273,5 +1281,7 @@ check_speaker_calibration
 
 # ===== frontled: 前摄指示灯守护（base-fix 前摄灯修复，2026-09-01 合并） =====
 if [ -f "$MODDIR/bin/front-led-daemon.sh" ]; then
-    "$MODDIR/bin/front-led-daemon.sh" "$MODDIR" &
+    # KernelSU reaps ordinary background children when service.sh exits.
+    # A separate session keeps the event-driven front-camera LED watcher alive.
+    setsid /system/bin/sh "$MODDIR/bin/front-led-daemon.sh" "$MODDIR" >/dev/null 2>&1 &
 fi

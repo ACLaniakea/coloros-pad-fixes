@@ -1,123 +1,298 @@
 package com.aclaniakea.aoncameraopbridge;
 
+import android.os.Handler;
+import android.os.Looper;
+
 import com.aclaniakea.devicegate.DeviceGate;
+
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
+
 import java.lang.reflect.Method;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 让 AON(注视感知) 的摄像头 appop 判定通过，止住它每 2 秒开关一次前置摄像头的空转。
+ * Arbitrates the port's real AON session with ordinary Camera2 clients.
  *
- * ---- 现象 ----
- * com.aiunit.aon 每 2~3 秒一轮 CONNECT/DISCONNECT device 1，日志里成对出现：
- *   AttributionAndPermissionUtils: Permission soft denied for client attribution
- *     [uid 10237, pid ..., packageName "com.aiunit.aon"]
- *   AppOps: Operation not started: uid=10237 pkg=com.aiunit.aon(null) op=CAMERA
- * 实测 com.aiunit.aon + camera provider HAL + cameraserver 合计稳定 31~41% 一个核。
+ * Lenovo's CamX stack does not implement the Oplus-specific closeAON device
+ * path, but the framework still has the stock AON lifecycle:
+ * OplusAONSmartDim -> SmartFaceGaze -> AONService.  The previous workaround
+ * disabled that lifecycle and denied CAMERA AppOps to AON permanently.  That
+ * made normal camera stable at the cost of removing AON entirely.
  *
- * ---- 根因 ----
- * AON 的 CAMERA appop **uid 模式**是 foreground，而 AONService 是被
- * com.heytap.accessory 绑起来的后台服务，进程状态够不到 FOREGROUND_SERVICE，
- * 于是 startOp 被拒 → 打开的会话立刻拆掉 → 隔两秒再来一轮。
- * 移植包里 /my_product/etc/permissions/oplus_aon_grant_permissions_list.xml
- * 只 default-grant 了运行时权限，没有把 appop 抬成 allow；
- * vendor 侧倒是有 ro.camera.privileged.3rdpartyApp=com.aiunit.aon;，
- * 但那条只管相机服务的特权判定，管不到 framework 的 AppOps。
- *
- * ---- 为什么不用 cmd appops ----
- * 实测 `cmd appops set` 的三种写法（包名 / --uid / --user 0 --uid）读回来都还是
- * foreground，ColorOS 侧会把 uid 模式按住，改不动也不持久。
- *
- * ---- 本 hook 的做法 ----
- * 只在 system_server 里，只对 **AON 这一个 uid** 的 **OP_CAMERA(26)**，
- * 把 `checkOperation` 的返回值改成 MODE_ALLOWED(0)。
- *
- * ★ 只挂返回类型确实是 int 的重载。第一版按方法名把 noteOperation/startOperation
- * 也挂上了，而 startOperation 在本版框架里返回的是对象，被 setResult(Integer) 之后
- * system_server 当场崩、整机卡死。教训见 memory: hook-return-type-first。
- * 其它 uid、其它 op 一律不碰——这不是放开后台相机，是把这一个原厂就该有的
- * 白名单补回去。
- *
- * 撤销：卸载/停用本 Hook 即可，没有落盘副作用。
+ * This bridge stays at the framework ownership boundary instead.  A normal
+ * camera CAMERA AppOp stops an existing SmartFaceGaze session on its original
+ * worker before the client reaches CameraService.  While a normal camera is
+ * open, new SmartFaceGaze starts are deferred.  Once every normal camera is
+ * closed, the stock SmartDim state machine is allowed to resume only when its
+ * user setting and awake state still permit it.  No AON result, frame, or
+ * camera status is fabricated and no process is force-stopped.
  */
 public final class AonCameraOpBridge implements IXposedHookLoadPackage {
-
+    private static final String TAG = "AonCameraArbitration";
     private static final String AON_PACKAGE = "com.aiunit.aon";
-    /** AppOpsManager.OP_CAMERA。framework 里是 @hide 常量，这里按值写死并在运行时校验。 */
+    private static final String SMART_DIM = "com.android.server.power.OplusAONSmartDim";
     private static final int OP_CAMERA = 26;
-    private static final int MODE_ALLOWED = 0;
+    private static final int CAMERA_STATE_OPEN = 0;
+    private static final int CAMERA_STATE_CLOSED = 3;
+    private static final long RESUME_DELAY_MS = 750L;
 
-    private static final AtomicBoolean HOOKED = new AtomicBoolean(false);
-    private static final AtomicInteger AON_UID = new AtomicInteger(-1);
-    private static final AtomicInteger GRANTS = new AtomicInteger(0);
+    private static final AtomicBoolean SMART_DIM_HOOKED = new AtomicBoolean(false);
+    private static final AtomicBoolean CAMERA_HOOKED = new AtomicBoolean(false);
+    private static final AtomicBoolean APPOPS_HOOKED = new AtomicBoolean(false);
+    private static final AtomicReference<Object> SMART_DIM_INSTANCE = new AtomicReference<>();
+    private static final AtomicBoolean PAUSED_FOR_CAMERA = new AtomicBoolean(false);
+    private static final ConcurrentHashMap<String, Boolean> NON_AON_CAMERAS =
+            new ConcurrentHashMap<>();
 
-    @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
-        if (!DeviceGate.isSupported()) return;
-        if (!"android".equals(p.packageName) || !"android".equals(p.processName)) return;
-        hookAppOps(p.classLoader);
+    @Override
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpp) {
+        if (!DeviceGate.isSupported() || !"android".equals(lpp.packageName)
+                || !"android".equals(lpp.processName)) {
+            return;
+        }
+        hookSmartDim(lpp.classLoader);
+        hookCameraActivity(lpp.classLoader);
+        hookCameraStartOperations(lpp.classLoader);
     }
 
-    private static void hookAppOps(ClassLoader loader) {
-        if (!HOOKED.compareAndSet(false, true)) return;
+    private static void hookSmartDim(ClassLoader loader) {
+        if (!SMART_DIM_HOOKED.compareAndSet(false, true)) return;
         try {
-            Class<?> svc = XposedHelpers.findClass("com.android.server.appop.AppOpsService", loader);
-            XC_MethodHook allow = new XC_MethodHook() {
-                @Override protected void afterHookedMethod(XC_MethodHook.MethodHookParam hook) {
-                    try {
-                        Object result = hook.getResult();
-                        // ★ 只碰返回 int 的重载。startOperation 这类在本版框架里返回的是
-                        // SyncNotedAppOp 之类的对象，往它上面 setResult(Integer) 会让
-                        // 框架当场 ClassCastException —— 2026-08-30 就是这样把
-                        // system_server 打崩、整机卡死的（见 memory: hook-return-type-first）。
-                        if (!(result instanceof Integer)) return;
-                        if (((Integer) result).intValue() == MODE_ALLOWED) return;
-                        Object[] args = hook.args;
-                        if (args == null || args.length < 3) return;
-                        if (!(args[0] instanceof Integer) || ((Integer) args[0]).intValue() != OP_CAMERA) return;
-                        if (!(args[1] instanceof Integer)) return;
-                        int uid = ((Integer) args[1]).intValue();
-                        if (!isAon(uid, args)) return;
-                        hook.setResult(Integer.valueOf(MODE_ALLOWED));
-                        int n = GRANTS.incrementAndGet();
-                        if (n <= 3 || n % 500 == 0) {
-                            XposedBridge.log("AonCameraOpBridge: forced CAMERA appop ALLOWED for " + AON_PACKAGE
-                                    + " uid=" + uid + " (grant #" + n + ", was " + result + ")");
+            Class<?> target = XposedHelpers.findClass(SMART_DIM, loader);
+            int readyHooks = 0;
+            int startHooks = 0;
+            for (Method method : target.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if ("onSystemReady".equals(method.getName()) && types.length == 0) {
+                    XposedBridge.hookMethod(method, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            rememberSmartDim(param.thisObject);
                         }
-                    } catch (Throwable t) {
-                        // 热路径上出任何问题都必须放行原返回值，绝不改结果。
-                        XposedBridge.log(t);
+                    });
+                    readyHooks++;
+                } else if ("startSmartFaceGaze".equals(method.getName())
+                        && method.getReturnType() == Void.TYPE
+                        && types.length == 1 && types[0] == String.class) {
+                    XposedBridge.hookMethod(method, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            rememberSmartDim(param.thisObject);
+                            if (!NON_AON_CAMERAS.isEmpty()) {
+                                PAUSED_FOR_CAMERA.set(true);
+                                param.setResult(null);
+                                XposedBridge.log(TAG + ": deferred AON start while camera is busy");
+                            }
+                        }
+                    });
+                    startHooks++;
+                }
+            }
+            XposedBridge.log(TAG + ": installed SmartDim hooks ready=" + readyHooks
+                    + " start=" + startHooks);
+        } catch (Throwable error) {
+            SMART_DIM_HOOKED.set(false);
+            XposedBridge.log(TAG + ": SmartDim hook installation failed");
+            XposedBridge.log(error);
+        }
+    }
+
+    private static void hookCameraActivity(ClassLoader loader) {
+        if (!CAMERA_HOOKED.compareAndSet(false, true)) return;
+        try {
+            Class<?> proxy = XposedHelpers.findClass(
+                    "com.android.server.camera.CameraServiceProxy", loader);
+            Class<?> stats = XposedHelpers.findClass(
+                    "android.hardware.CameraSessionStats", loader);
+            XC_MethodHook activityHook = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.args == null || param.args.length != 1
+                                || param.args[0] == null) return;
+                        Object session = param.args[0];
+                        Object client = XposedHelpers.callMethod(session, "getClientName");
+                        if (!(client instanceof String) || AON_PACKAGE.equals(client)) return;
+                        Object stateValue = XposedHelpers.callMethod(session, "getNewCameraState");
+                        if (!(stateValue instanceof Integer)) return;
+                        Object idValue = XposedHelpers.callMethod(session, "getCameraId");
+                        String cameraId = idValue instanceof String ? (String) idValue : (String) client;
+                        int state = ((Integer) stateValue).intValue();
+                        if (state == CAMERA_STATE_OPEN) {
+                            NON_AON_CAMERAS.put(cameraId, Boolean.TRUE);
+                            pauseAonForCamera("opened:" + client);
+                        } else if (state == CAMERA_STATE_CLOSED) {
+                            NON_AON_CAMERAS.remove(cameraId);
+                            if (NON_AON_CAMERAS.isEmpty()) scheduleResume();
+                        }
+                    } catch (Throwable error) {
+                        XposedBridge.log(TAG + ": camera activity observation failed " + error);
                     }
                 }
             };
             int hooked = 0;
-            for (Method m : svc.getDeclaredMethods()) {
-                // 只认 checkOperation：它是判定入口，返回 int，且不在 startOp/noteOp 那种
-                // 每秒上千次的最热路径上。名字匹配之外**必须再按返回类型过滤**。
-                if (!"checkOperation".equals(m.getName())) continue;
-                if (m.getReturnType() != Integer.TYPE) continue;
-                Class<?>[] ps = m.getParameterTypes();
-                if (ps.length < 3 || ps[0] != Integer.TYPE || ps[1] != Integer.TYPE) continue;
-                XposedBridge.hookMethod(m, allow);
-                hooked++;
+            for (Method method : proxy.getDeclaredMethods()) {
+                Class<?>[] types = method.getParameterTypes();
+                if ("updateActivityCount".equals(method.getName()) && types.length == 1
+                        && types[0] == stats) {
+                    XposedBridge.hookMethod(method, activityHook);
+                    hooked++;
+                }
             }
-            XposedBridge.log("AonCameraOpBridge: installed on " + hooked + " int-returning checkOperation overloads (op=" + OP_CAMERA + ")");
-        } catch (Throwable t) { HOOKED.set(false); XposedBridge.log(t); }
+            XposedBridge.log(TAG + ": installed CameraService activity hooks=" + hooked);
+        } catch (Throwable error) {
+            CAMERA_HOOKED.set(false);
+            XposedBridge.log(TAG + ": CameraService hook installation failed");
+            XposedBridge.log(error);
+        }
     }
 
-    /**
-     * 只认 AON。优先按包名比对（第三个参数通常是 packageName），
-     * 拿不到包名时退回到已缓存的 uid，避免误伤别的应用。
-     */
-    private static boolean isAon(int uid, Object[] args) {
-        for (Object a : args) {
-            if (a instanceof String && AON_PACKAGE.equals(a)) { AON_UID.set(uid); return true; }
+    private static void hookCameraStartOperations(ClassLoader loader) {
+        if (!APPOPS_HOOKED.compareAndSet(false, true)) return;
+        try {
+            Class<?> service = XposedHelpers.findClass("com.android.server.appop.AppOpsService", loader);
+            XC_MethodHook handoff = new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        Object[] args = param.args;
+                        if (args == null || args.length < 4 || !(args[1] instanceof Integer)
+                                || ((Integer) args[1]).intValue() != OP_CAMERA) return;
+                        Object packageArg = args[3];
+                        if (!(packageArg instanceof String) || AON_PACKAGE.equals(packageArg)) return;
+                        // This is before CameraService opens the physical device.  The short
+                        // worker handoff is the port-side equivalent of stock closeAON.
+                        pauseAonForCamera("appop:" + packageArg);
+                    } catch (Throwable error) {
+                        XposedBridge.log(TAG + ": early camera handoff failed " + error);
+                    }
+                }
+            };
+            int hooked = 0;
+            for (Method method : service.getDeclaredMethods()) {
+                String name = method.getName();
+                Class<?>[] types = method.getParameterTypes();
+                if (("startOperation".equals(name) || "startOperationForDevice".equals(name))
+                        && types.length >= 4 && types[1] == Integer.TYPE
+                        && types[2] == Integer.TYPE && types[3] == String.class) {
+                    XposedBridge.hookMethod(method, handoff);
+                    hooked++;
+                }
+            }
+            XposedBridge.log(TAG + ": installed early CAMERA AppOps hooks=" + hooked);
+        } catch (Throwable error) {
+            APPOPS_HOOKED.set(false);
+            XposedBridge.log(TAG + ": AppOps hook installation failed");
+            XposedBridge.log(error);
         }
-        int known = AON_UID.get();
-        return known != -1 && known == uid;
+    }
+
+    private static void rememberSmartDim(Object smartDim) {
+        if (smartDim != null) SMART_DIM_INSTANCE.set(smartDim);
+    }
+
+    private static void pauseAonForCamera(String reason) {
+        final Object smartDim = SMART_DIM_INSTANCE.get();
+        if (smartDim == null || !isFaceGazeActive(smartDim)) return;
+        if (!PAUSED_FOR_CAMERA.compareAndSet(false, true)) return;
+        runOnSmartDimWorker(smartDim, new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (isFaceGazeActive(smartDim)) {
+                        XposedHelpers.callMethod(smartDim, "stopSmartFaceGaze", "cameraBusy");
+                        XposedBridge.log(TAG + ": stopped active AON before " + reason);
+                    }
+                } catch (Throwable error) {
+                    PAUSED_FOR_CAMERA.set(false);
+                    XposedBridge.log(TAG + ": AON stop failed " + error);
+                }
+            }
+        });
+    }
+
+    private static void scheduleResume() {
+        try {
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!NON_AON_CAMERAS.isEmpty() || !PAUSED_FOR_CAMERA.get()) return;
+                    final Object smartDim = SMART_DIM_INSTANCE.get();
+                    if (smartDim == null || !isSmartDimEnabledAndAwake(smartDim)) {
+                        PAUSED_FOR_CAMERA.set(false);
+                        return;
+                    }
+                    if (!PAUSED_FOR_CAMERA.compareAndSet(true, false)) return;
+                    runOnSmartDimWorker(smartDim, new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                if (NON_AON_CAMERAS.isEmpty()
+                                        && isSmartDimEnabledAndAwake(smartDim)
+                                        && !isFaceGazeActive(smartDim)) {
+                                    XposedHelpers.callMethod(smartDim, "startSmartFaceGaze",
+                                            "cameraReleased");
+                                    XposedBridge.log(TAG + ": resumed AON after camera release");
+                                }
+                            } catch (Throwable error) {
+                                XposedBridge.log(TAG + ": AON resume failed " + error);
+                            }
+                        }
+                    });
+                }
+            }, RESUME_DELAY_MS);
+        } catch (Throwable error) {
+            XposedBridge.log(TAG + ": could not schedule AON resume " + error);
+        }
+    }
+
+    private static boolean isFaceGazeActive(Object smartDim) {
+        try {
+            return XposedHelpers.getBooleanField(smartDim, "mIsSmartFaceGazeOn");
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isSmartDimEnabledAndAwake(Object smartDim) {
+        try {
+            Object enabled = XposedHelpers.callMethod(smartDim, "isSmartAONEnabled");
+            return Boolean.TRUE.equals(enabled)
+                    && XposedHelpers.getBooleanField(smartDim, "mIsWakefulnessAwake");
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void runOnSmartDimWorker(Object smartDim, Runnable work) {
+        try {
+            Object worker = XposedHelpers.getObjectField(smartDim, "mHandler");
+            if (worker instanceof Handler) {
+                Handler handler = (Handler) worker;
+                if (Looper.myLooper() == handler.getLooper()) {
+                    work.run();
+                    return;
+                }
+                try {
+                    Object completed = XposedHelpers.callMethod(handler, "runWithScissors", work,
+                            Long.valueOf(120L));
+                    if (Boolean.TRUE.equals(completed)) return;
+                } catch (Throwable ignored) {
+                    // Some framework builds hide runWithScissors.  Posting to the same
+                    // worker remains safe; the CameraService activity hook is a backup.
+                }
+                handler.post(work);
+                return;
+            }
+        } catch (Throwable ignored) {
+            // AON is optional.  A missing worker must never perturb the camera caller.
+        }
+        work.run();
     }
 }

@@ -49,8 +49,9 @@ done
 umount /system_ext/etc/Multimedia_Daemon_List.xml 2>/dev/null
 umount /vendor/etc/audio/sku_pineapple/mixer_paths_pineapple_mtp.xml 2>/dev/null
 
-# 5) AON 原生运行时与 32 位 libdl
+# 5) AON 原生运行时、QNN DSP skeleton 与 32 位 libdl
 umount /my_product/app/AONService/lib/arm64 2>/dev/null
+umount /vendor/lib/rfsa/adsp/libQnnHtpV75Skel.so 2>/dev/null
 umount /apex/com.android.runtime/lib/bionic/libdl.so 2>/dev/null
 
 # 6) 传感器能力表、小布唤醒窗口

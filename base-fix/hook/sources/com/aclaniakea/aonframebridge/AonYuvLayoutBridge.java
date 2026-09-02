@@ -10,6 +10,7 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,11 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * normalized before the original model consumes it; this class never creates
  * a face, gaze result, or framework attention callback.
  *
- * <p>The port's {@code nativeDelete(handle)} teardown is unsafe on the
- * transplanted SM8650 QNN/CDSP stack.  We therefore suppress only that native
- * destructor while allowing the stock Java release method to clear its handle
- * and lifecycle state.  This avoids the stale-Java-runtime loop without
- * changing inference input/output or extending the framework's own timeout.</p>
+ * <p>Model creation, inference and teardown remain inside the stock AON
+ * runtime.  This bridge changes only the camera-plane layout.</p>
  */
 public final class AonYuvLayoutBridge implements IXposedHookLoadPackage {
     private static final AtomicBoolean REPORTED = new AtomicBoolean(false);
@@ -64,15 +62,6 @@ public final class AonYuvLayoutBridge implements IXposedHookLoadPackage {
                         }
                     }
                 }});
-                // InferenceAiboost.b() must still run: it clears the Java-side
-                // native handle and marks the model released.  Only the
-                // transplanted native destructor is unsafe, so guard that
-                // private static native call instead of short-circuiting b().
-                XposedHelpers.findAndHookMethod("com.aiunit.aon.model.InferenceAiboost", loadPackageParam.classLoader, "nativeDelete", new Object[]{Long.TYPE, new XC_MethodHook() {
-                    protected void beforeHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
-                        methodHookParam.setResult(null);
-                    }
-                }});
                 XposedHelpers.findAndHookMethod("com.aiunit.aon.AONAttentionService", loadPackageParam.classLoader, "onUnbind", new Object[]{Intent.class, new XC_MethodHook() { // from class: com.aclaniakea.aonframebridge.AonYuvLayoutBridge.2
                     protected void afterHookedMethod(XC_MethodHook.MethodHookParam methodHookParam) {
                         AonYuvLayoutBridge.endReleasedSession();
@@ -90,7 +79,7 @@ public final class AonYuvLayoutBridge implements IXposedHookLoadPackage {
                         }
                     }
                 }});
-                XposedBridge.log("ColorOSAonYuvFix: real YUV normalizer and native destructor guard installed");
+                XposedBridge.log("ColorOSAonYuvFix: real YUV normalizer installed; stock QNN lifecycle retained");
             } catch (Throwable th) {
                 XposedBridge.log("ColorOSAonYuvFix: installation failed");
                 XposedBridge.log(th);
