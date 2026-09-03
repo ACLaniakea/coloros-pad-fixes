@@ -25,7 +25,7 @@ INCLUDE = (
 
 EXTERNAL = {
     "bin/lsposed-path-sync.jar": "fix-module/module/bin/lsposed-path-sync.jar",
-    "hook/PenBridge-Hook.apk": "releases/PenBridge-Hook-v3.2.0.apk",
+    "hook/PenBridge-Hook.apk": "releases/PenBridge-Hook-v3.2.1.apk",
 }
 
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1] / "module"
+REPO = ROOT.parents[1]
 def _module_version(module_dir: Path) -> str:
     """Read version= from module.prop so the artifact name cannot drift."""
     for line in (module_dir / "module.prop").read_text(encoding="utf-8").splitlines():
@@ -51,6 +52,19 @@ EXCLUDE_PREFIXES = (
     "payload/osense/.retired-handed-back-to-stock/",
     "payload/retired/",
 )
+
+# CryptoEng is maintained as its own source tree for auditability, but its
+# runtime payload is shipped by the real FixModule.  This avoids two modules
+# competing to replace the same HAL while keeping the implementation source
+# separate from unrelated system fixes.
+CRYPTOENG_PAYLOAD = {
+    "cryptoeng/setup.sh": "cryptoeng-hal-module/setup.sh",
+    "cryptoeng/bin/ce_proxy_certpin": "cryptoeng-hal-module/bin/ce_proxy_certpin",
+    "cryptoeng/bin/cryptoeng-backing": "cryptoeng-hal-module/bin/cryptoeng-backing",
+    "cryptoeng/bin/cryptoeng-original-default": "cryptoeng-hal-module/bin/cryptoeng-original-default",
+    "cryptoeng/odm/bin/hw/vendor-oplus-hardware-cryptoeng-service": (
+        "cryptoeng-hal-module/odm/bin/hw/vendor-oplus-hardware-cryptoeng-service"),
+}
 
 
 def verify_hook_payload(apk: Path) -> None:
@@ -94,6 +108,10 @@ def main() -> None:
     if not HOOK_APK.is_file():
         raise SystemExit(f"missing Hook APK: {HOOK_APK}")
     verify_hook_payload(HOOK_APK)
+    missing_cryptoeng = [source for source in CRYPTOENG_PAYLOAD.values()
+                         if not (REPO / source).is_file()]
+    if missing_cryptoeng:
+        raise SystemExit("missing integrated CryptoEng payload: " + ", ".join(missing_cryptoeng))
     patcher = ROOT / "tools" / "build_patcher.py"
     jar = ROOT / "bin" / "card-protocol-patcher.jar"
     if patcher.is_file():
@@ -125,6 +143,13 @@ def main() -> None:
         hook_info.external_attr = 0o644 << 16
         hook_info.compress_type = zipfile.ZIP_STORED
         dst.writestr(hook_info, HOOK_APK.read_bytes())
+        for rel, source in CRYPTOENG_PAYLOAD.items():
+            path = REPO / source
+            info = zipfile.ZipInfo(rel, date_time=(2026, 9, 3, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = ((0o755 if rel.endswith(("setup.sh", "ce_proxy_certpin", "cryptoeng-backing", "cryptoeng-original-default", "service")) else 0o644) & 0xFFFF) << 16
+            info.compress_type = zipfile.ZIP_STORED
+            dst.writestr(info, path.read_bytes())
     print(OUT)
 
 

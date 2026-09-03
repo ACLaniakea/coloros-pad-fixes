@@ -36,7 +36,7 @@
 | `OplusBSP-Modules-*.zip` | 调度、压缩内存、后台冻结等 BSP 内核模块 | 完整 3.x 方案必装 |
 | `PenBridge-Module-*.zip`、`PenBridge-Hook-*.apk`、`PenHidCtl-*.apk` | 手写笔桥接三件套 | 使用手写笔时安装 |
 | `SM8650Q-Scene-Scheduler-*.zip` | Scene 省电/均衡/性能/极速调度配置 | 使用 Scene 时安装 |
-| `CryptoengHAL-Module-*.zip` | 查找设备与一加互传联系人兼容 | 按需安装 |
+| `FixModule-*.zip` 内置 CryptoEng | 查找设备、密码本与一加互传联系人兼容 | 随主模块安装 |
 | `LenovoPadProGT-ZUI-Camera-Port-*.zip`、`ZUI-Camera-Compat-*.apk` | TB710FU ZUI 原厂相机移植 | 按需安装 |
 
 `base-fix/module` 与 `port-tuning` 是历史源码快照，**不要安装**；它们已合并至 `FixModule`。
@@ -86,27 +86,26 @@ adb shell uname -r
 
 在 KernelSU 管理器中安装以下模块，全部安装完成后再重启：
 
-1. `FixModule-v3.2.0.zip`
-2. `OplusBSP-Modules-v3.2.0.zip`
-3. 按需：`PenBridge-Module-v3.2.0.zip`
-4. 按需：`SM8650Q-Scene-Scheduler-v3.2.0.zip`
-5. 按需：`CryptoengHAL-Module-v3.2.0.zip`
-6. 按需：`LenovoPadProGT-ZUI-Camera-Port-v3.2.0.zip`
+1. `FixModule-v3.2.1.zip`（内置 CryptoEng）
+2. `OplusBSP-Modules-v3.2.1.zip`
+3. 按需：`PenBridge-Module-v3.2.1.zip`
+4. 按需：`SM8650Q-Scene-Scheduler-v3.2.1.zip`
+5. 按需：`LenovoPadProGT-ZUI-Camera-Port-v3.2.1.zip`
 
 命令行安装示例：
 
 ```bash
-adb push FixModule-v3.2.0.zip /sdcard/
-adb shell su -c 'ksud module install /sdcard/FixModule-v3.2.0.zip'
+adb push FixModule-v3.2.1.zip /sdcard/
+adb shell su -c 'ksud module install /sdcard/FixModule-v3.2.1.zip'
 ```
 
 ### 4. 安装并启用 LSPosed 模块
 
 ```bash
-adb install -r BaseFix-Hook-v3.2.0.apk
-adb install -r PenBridge-Hook-v3.2.0.apk       # 使用手写笔时
-adb install -r PenHidCtl-v3.2.0.apk            # 使用手写笔时
-adb install -r ZUI-Camera-Compat-v3.2.0.apk    # 使用 ZUI 相机时
+adb install -r BaseFix-Hook-v3.2.1.apk
+adb install -r PenBridge-Hook-v3.2.1.apk       # 使用手写笔时
+adb install -r PenHidCtl-v3.2.1.apk            # 使用手写笔时
+adb install -r ZUI-Camera-Compat-v3.2.1.apk    # 使用 ZUI 相机时
 ```
 
 在 LSPosed 管理器中启用模块，并使用 APK 显示的**推荐作用域**。`FixModule` 会补齐必需作用域的白名单记录，但不会替代你在 LSPosed 中启用模块的操作。
@@ -151,7 +150,7 @@ adb install -r ZUI-Camera-Compat-v3.2.0.apk    # 使用 ZUI 相机时
 
 **需要全部安装吗？**
 
-完整 3.x 方案需要配套镜像、主修复、BaseFix Hook 和 OPlus BSP。手写笔、Scene、CryptoEng、ZUI 相机均按需安装。
+完整 3.x 方案需要配套镜像、主修复、BaseFix Hook 和 OPlus BSP。手写笔、Scene 与 ZUI 相机均按需安装；CryptoEng 已内置于主修复。
 
 **可以不刷 boot/vendor_boot 吗？**
 
@@ -181,6 +180,7 @@ bash tools/build_all.sh
 
 ## 文档
 
+- [v3.2.1 发布说明](docs/3.2.1-release-notes.md)
 - [v3.2.0 发布说明](docs/3.2.0-release-notes.md)
 - [v3.1.0 发布说明](docs/3.1.0-release-notes.md)
 - [修复汇总与技术记录](修复汇总.md)

@@ -6,7 +6,7 @@ import shutil, subprocess, zipfile
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 STAGE = ROOT / "out/stage"
-OUT = ROOT / "releases/LenovoPadProGT-ZUI-Camera-Port-v3.2.0.zip"
+OUT = ROOT / "releases/LenovoPadProGT-ZUI-Camera-Port-v3.2.1.zip"
 SOURCE = REPO / "experimental/lenovo-zui-camera-port"
 
 if STAGE.exists(): shutil.rmtree(STAGE)
@@ -24,7 +24,7 @@ for xml in (camera / "system/etc/permissions").glob("*.xml"):
     copy(xml, STAGE / "system/etc/permissions" / xml.name)
 shutil.copytree(SOURCE / "lcaf-config/system/etc/camera", STAGE / "system/etc/camera",
                 dirs_exist_ok=True)
-copy(REPO / "zui-camera-compat-hook/releases/ZUI-Camera-Compat-v3.2.0.apk",
+copy(REPO / "zui-camera-compat-hook/releases/ZUI-Camera-Compat-v3.2.1.apk",
      STAGE / "hook/ZUI-Camera-Compat.apk")
 copy(REPO / "experimental/lenovo-zui-camera-port/zui-native-identity/out/stage/zygisk/arm64-v8a.so",
      STAGE / "zygisk/arm64-v8a.so")

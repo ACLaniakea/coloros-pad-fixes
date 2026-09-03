@@ -39,7 +39,7 @@ KS_PASS = os.environ.get("ACL_KS_PASS", "changeit")
 ALIAS = "aclaniakea"
 
 OUT_DIR = ROOT.parents[1] / "releases"
-OUT_APK = OUT_DIR / "PenHidCtl-v3.2.0.apk"
+OUT_APK = OUT_DIR / "PenHidCtl-v3.2.1.apk"
 
 
 def run(cmd: list[str]) -> None:
@@ -69,7 +69,7 @@ def main() -> None:
              "--auto-add-overlay", "--manifest", MANIFEST, "-R", tmp / "res.zip",
              "--java", tmp / "gen", "--min-sdk-version", "31",
              "--target-sdk-version", "35",
-             "--version-code", "302000", "--version-name", "3.2.0"])
+             "--version-code", "302001", "--version-name", "3.2.1"])
         (tmp / "classes").mkdir(parents=True, exist_ok=True)
         (tmp / "dex").mkdir(parents=True, exist_ok=True)
         run(["javac", "--release", "17",

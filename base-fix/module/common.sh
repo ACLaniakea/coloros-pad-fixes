@@ -58,7 +58,7 @@ apply_serial_fix() {
         return 0
     }
     for target in ro.serialno ro.boot.serialno ro.vendor.serialno \
-        vendor.boot.serialno persist.radio.serialno; do
+        vendor.boot.serialno persist.radio.serialno gsm.serial vendor.gsm.serial; do
         fill_serial_if_missing "$target"
     done
     log_msg "serial aliases verified from $SOURCE_PROP"

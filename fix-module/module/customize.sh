@@ -23,6 +23,7 @@ ui_print "- 去除每次开机 Hook dexopt，语音改事件驱动、应用建�
 ui_print "- 合并自：coloros_port_base_fix + coloros_port_tuning"
 ui_print "- 内置稳定 Hook APK 副本，消除 /data/app 冷启动路径竞态"
 ui_print "- 自动补齐 Hook 白名单：系统框架、Settings、AON、语音、电池等 scope.list 作用域"
+ui_print "- 内置 CryptoEng 分流代理：保留软件 HAL，补齐 10003 密钥派生"
 ui_print "- 恢复原厂 ROMUpdate Provider，修复 Scene 无障碍策略开关"
 ui_print "- 用修正 SoC-696 六核配置重载 perf HAL 并保持运行，消除 perf AIDL binder 风暴"
 ui_print "- 开机一次性恢复 governor 与 min/max 频点到本机硬件范围"
@@ -46,6 +47,15 @@ set_perm "$MODPATH/uninstall.sh" 0 0 0755
 set_perm "$MODPATH/common.sh" 0 0 0755
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0755
 set_perm_recursive "$MODPATH/hook" 0 0 0755 0644
+set_perm_recursive "$MODPATH/cryptoeng" 0 0 0755 0755
+set_perm "$MODPATH/cryptoeng/setup.sh" 0 0 0755
+
+# CryptoEng 已并入主模块；旧独立模块保留在磁盘上便于回退，但必须停用，
+# 否则两个代理会竞争同一个 vendor binder 服务。
+if [ -d /data/adb/modules/cryptoeng_hal_fix ]; then
+    touch /data/adb/modules/cryptoeng_hal_fix/disable
+    ui_print "- 已停用旧 CryptoEng 独立模块（功能已并入主模块）"
+fi
 
 if [ -f /data/adb/lspd/config/modules_config.db ] && \
         [ -f "$MODPATH/bin/lsposed-path-sync.jar" ] && \

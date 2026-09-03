@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.oplus.stdid">
+    <application android:label="StdID" android:allowBackup="false" android:hasCode="true">
+        <service android:name=".IdentifyService" android:exported="true">
+            <intent-filter>
+                <action android:name="action.com.oplus.stdid.ID_SERVICE" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

@@ -63,6 +63,21 @@ allow init nandswap process2 nosuid_transition;
 # unchanged.
 allow init hal_camera_default process2 nosuid_transition;
 
+# 集成的 CryptoEng 分流代理仍在原厂 hal_cryptoeng_oplus 域中运行；仅允许
+# 从模块的 nosuid 文件系统转入该既有域及其原厂数据访问，不扩大其它域权限。
+allow init hal_cryptoeng_oplus:process2 nosuid_transition;
+allow init hal_cryptoeng_oplus:process transition;
+allow init hal_cryptoeng_oplus_exec:file { execute read open map getattr entrypoint };
+allow hal_cryptoeng_oplus hal_cryptoeng_oplus_exec:file { execute execute_no_trans read open map getattr };
+allow hal_cryptoeng_oplus radio_prop:file read;
+allow hal_cryptoeng_oplus vendor_radio_prop:file read;
+allow hal_cryptoeng_oplus vendor_prop:file read;
+allow hal_cryptoeng_oplus property_type:file read;
+allow hal_cryptoeng_oplus vendor_persist_data_file:dir { read getattr open search };
+allow hal_cryptoeng_oplus vendor_persist_data_file:file { read write open getattr create unlink rename setattr append };
+allow hal_cryptoeng_oplus cryptoeng_data_file:dir { read write getattr open search create add_name remove_name };
+allow hal_cryptoeng_oplus cryptoeng_data_file:file { read write open getattr create unlink rename setattr append };
+
 # ---------------------------------------------------------------------------
 # 放行 oplus binder UX 通路（2026-08-29 v2.10.0）
 #

@@ -2,9 +2,12 @@
 # CryptoEng split proxy：10003 本地实现，其余命令交给已验证的软件 HAL。
 LOG=/data/local/tmp/ce_setup.log
 echo "=== setup $(date) ===" >> $LOG
-MODDIR=/data/adb/modules/cryptoeng_hal_fix
-SRC=$MODDIR/odm/bin/hw/vendor-oplus-hardware-cryptoeng-service
-BACKING_SRC=$MODDIR/bin/cryptoeng-backing
+# 独立包退役后同一脚本会作为 FixModule/cryptoeng/setup.sh 运行。
+# 所有负载都相对脚本自身定位：独立包时它是模块根目录，合并包时它是
+# FixModule/cryptoeng，二者都不再依赖硬编码的模块 ID。
+PAYLOADDIR=${0%/*}
+SRC=$PAYLOADDIR/odm/bin/hw/vendor-oplus-hardware-cryptoeng-service
+BACKING_SRC=$PAYLOADDIR/bin/cryptoeng-backing
 DST=/odm/bin/hw/vendor-oplus-hardware-cryptoeng-service
 CE=/mnt/ce_hal/ce_service
 BACKING=/mnt/ce_hal/ce_backing
@@ -39,7 +42,7 @@ pkill -f ce_backing 2>/dev/null
 sleep 1
 
 # 5. 复制 split 代理并启动（代理会自行拉起 backing 并注册 default）
-cp -f $MODDIR/bin/ce_proxy_certpin /mnt/ce_hal/ce_proxy_certpin
+cp -f $PAYLOADDIR/bin/ce_proxy_certpin /mnt/ce_hal/ce_proxy_certpin
 chmod 755 /mnt/ce_hal/ce_proxy_certpin
 chcon u:object_r:hal_cryptoeng_oplus_exec:s0 /mnt/ce_hal/ce_proxy_certpin
 setsid /mnt/ce_hal/ce_proxy_certpin > /data/local/tmp/ce_proxy.out 2>&1 < /dev/null &

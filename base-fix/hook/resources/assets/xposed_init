@@ -16,4 +16,6 @@ com.aclaniakea.orealityguard.OrealityDisableBridge
 com.aclaniakea.hmbirdguard.HmbirdCompatGuard
 com.aclaniakea.dolbybridge.SoundEffectsMenuFix
 com.aclaniakea.osharecontactcompat.OShareContactCryptoCompat
+com.aclaniakea.stdidcompat.StdIdGuidCompat
+com.aclaniakea.omkmscompat.OmkmsSoftwareFallback
 com.aclaniakea.flashlightlevelbridge.FlashlightLevelBridge

@@ -13,5 +13,8 @@
         <item>com.oplus.gesture</item>
         <item>com.android.systemui</item>
         <item>com.heytap.accessory</item>
+        <item>com.oplus.stdsp</item>
+        <item>com.heytap.openid</item>
+        <item>com.coloros.codebook</item>
     </array>
 </resources>

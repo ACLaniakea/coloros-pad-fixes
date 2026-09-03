@@ -29,6 +29,15 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# CryptoEng 分流代理：命令 10003 由本地实现，其他请求继续交给经验证的
+# 软件 HAL。使用原 HAL 域、服务名和 linker namespace，不替换 /odm 分区。
+if [ -x "$MODDIR/cryptoeng/setup.sh" ]; then
+    "$MODDIR/cryptoeng/setup.sh"
+    log_msg "integrated CryptoEng proxy staged"
+else
+    log_msg "ERROR: integrated CryptoEng payload missing"
+fi
+
 # ============================================================================
 # IRQ 默认亲和掩码：必须在 post-fs-data 就写，写晚了对已注册的中断毫无作用。
 #

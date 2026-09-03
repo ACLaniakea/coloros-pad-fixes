@@ -31,6 +31,46 @@ const DIAGNOSTIC_CERT_SHA256: [u8; 32] = [
     0xb7, 0xdb, 0x01, 0x29, 0x83, 0x3f, 0x8b, 0xa7,
 ];
 
+/// OMK/KMS uses a distinct, big-endian TA framing rather than the public
+/// CryptoEng MethodBuffer framing:
+///   cmd_id | payload_len | parameter_count | (type | len | value)*
+///
+/// Keep this recogniser deliberately narrow.  A KMS packet is not a public
+/// MethodBuffer even when its first word happens to look like a command id.
+fn kms_command_id(buffer: &[u8]) -> Option<u32> {
+    if buffer.len() < 12 {
+        return None;
+    }
+    let command = u32::from_be_bytes(buffer[0..4].try_into().ok()?);
+    // OMK command IDs currently occupy the 0x320 range.  This prevents
+    // ordinary CryptoEng MethodBuffers from being misclassified.
+    if !(0x320..=0x3ff).contains(&command) {
+        return None;
+    }
+    let payload_len = u32::from_be_bytes(buffer[4..8].try_into().ok()?) as usize;
+    let parameter_count = u32::from_be_bytes(buffer[8..12].try_into().ok()?) as usize;
+    if payload_len != buffer.len().checked_sub(12)? || parameter_count > 64 {
+        return None;
+    }
+    Some(command)
+}
+
+/// Build a successful OMK/KMS TA response.  The result layout is the same
+/// as the request framing, prefixed by a zero TA status word.
+fn kms_success(command: u32, parameters: &[(u32, &[u8])]) -> Vec<u8> {
+    let payload_len: usize = parameters.iter().map(|(_, value)| 8 + value.len()).sum();
+    let mut out = Vec::with_capacity(12 + payload_len);
+    out.extend_from_slice(&command.to_be_bytes());
+    out.extend_from_slice(&0u32.to_be_bytes());
+    out.extend_from_slice(&(parameters.len() as u32).to_be_bytes());
+    for (kind, value) in parameters {
+        out.extend_from_slice(&kind.to_be_bytes());
+        out.extend_from_slice(&(value.len() as u32).to_be_bytes());
+        out.extend_from_slice(value);
+    }
+    out
+}
+
 fn log_event(message: &str) {
     use std::io::Write;
     if let Ok(mut file) = std::fs::OpenOptions::new()
@@ -52,6 +92,33 @@ impl Interface for ProxyService {}
 
 impl ICryptoeng for ProxyService {
     fn cryptoeng_invoke_command(&self, buffer: &[u8]) -> rsbinder::BinderResult<Vec<u8>> {
+        // 0x321 is the stock OMK "is TEE purpose supported" probe.  It is a
+        // capability query only: no key material is created, imported, or
+        // exposed here.  The port has the KMS client and lock-screen binding,
+        // but its compatible software backend omitted this TA probe entirely.
+        // Reply in the stock KMS framing so the client can proceed to its
+        // subsequent authenticated operations, which remain delegated until
+        // each protocol is independently implemented.
+        if kms_command_id(buffer) == Some(0x321) {
+            const PURPOSE_TEE_SUPPORTED: u32 = 0x2d4;
+            const TRUE_BE: [u8; 4] = 1u32.to_be_bytes();
+            log_event("OMK KMS capability probe 0x321 served");
+            return Ok(kms_success(0x321, &[(PURPOSE_TEE_SUPPORTED, &TRUE_BE)]));
+        }
+
+        // 0x337 is the stock OMK TA-availability probe issued immediately
+        // before SRP derives its lock-screen-bound verifier.  The official
+        // client reads boolean parameter 0x2d4 (724); no key material or SRP
+        // value is exchanged by this probe.  The shared software backend
+        // returns an empty buffer for it, which aborts the whole registration
+        // before the later authenticated operation can be dispatched.
+        if kms_command_id(buffer) == Some(0x337) {
+            const TA_AVAILABLE: u32 = 0x2d4;
+            const TRUE_BE: [u8; 4] = 1u32.to_be_bytes();
+            log_event("OMK KMS TA availability probe 0x337 served");
+            return Ok(kms_success(0x337, &[(TA_AVAILABLE, &TRUE_BE)]));
+        }
+
         let request = match Request::parse(buffer) {
             Ok(request) => request,
             Err(_) => return self.backing.cryptoeng_invoke_command(buffer),
