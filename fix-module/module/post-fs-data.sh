@@ -29,6 +29,14 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# ColorOS' OplusSchedGroupManager is gated before system_server loads by this
+# property.  The port left it unset even though this kernel exports the full
+# cpuctl group layout (including ssfg), so system_server silently fell back to
+# generic foreground scheduling.  The stock PKX110 reference sets it to true.
+# Set it at post-fs-data, rather than late in service.sh, so framework thread
+# group decisions use the OEM path from the first user unlock onward.
+resetprop sys.oplus.cpuctl_extension true
+
 # CryptoEng 分流代理：命令 10003 由本地实现，其他请求继续交给经验证的
 # 软件 HAL。使用原 HAL 域、服务名和 linker namespace，不替换 /odm 分区。
 if [ -x "$MODDIR/cryptoeng/setup.sh" ]; then

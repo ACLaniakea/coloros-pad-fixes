@@ -22,6 +22,34 @@ logcat_pid=
 last_pid=
 event_fifo="$MODDIR/aon-process-events.fifo"
 
+# KernelSU creates the per-app mount namespace immediately after zygote forks
+# the process.  am_proc_start can arrive while the child still shares zygote's
+# namespace.  Binding at that point verifies successfully but is lost when
+# KernelSU switches the child, leaving AON with the original JNI runtime.
+# Wait only in response to an AON process-start event; this is bounded and is
+# not a resident polling loop.
+wait_for_app_mount_namespace() {
+    aon_pid="$1"
+    zygote_pid="$(pidof zygote64 2>/dev/null)"
+    set -- $zygote_pid
+    zygote_pid="$1"
+    zygote_ns=
+    [ -n "$zygote_pid" ] && zygote_ns="$(readlink "/proc/$zygote_pid/ns/mnt" 2>/dev/null)"
+
+    attempt=0
+    while [ "$attempt" -lt 40 ]; do
+        [ -d "/proc/$aon_pid" ] || return 1
+        aon_ns="$(readlink "/proc/$aon_pid/ns/mnt" 2>/dev/null)"
+        if [ -n "$aon_ns" ] && { [ -z "$zygote_ns" ] || [ "$aon_ns" != "$zygote_ns" ]; }; then
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.05
+    done
+    log_msg "ERROR: AON private mount namespace not ready pid=$aon_pid zygote_ns=$zygote_ns aon_ns=$aon_ns"
+    return 1
+}
+
 resume_stopped_process() {
     if [ -n "$stopped_pid" ]; then
         kill -CONT "$stopped_pid" 2>/dev/null
@@ -53,6 +81,7 @@ attach_runtime() {
     esac
     [ -d "/proc/$aon_pid" ] || return 1
     [ "$aon_pid" = "$last_pid" ] && return 0
+    wait_for_app_mount_namespace "$aon_pid" || return 1
     if kill -STOP "$aon_pid" 2>/dev/null; then
         stopped_pid="$aon_pid"
         if [ -e "/proc/$aon_pid/ns/mnt" ] &&
@@ -80,6 +109,7 @@ attach_runtime() {
             expected_skel=$(sha256sum "$AON_DSP_SKEL_SOURCE" 2>/dev/null | awk '{print $1}')
             if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ] && [ "$actual_aiboost" = "$expected_aiboost" ] && [ "$actual_skel" = "$expected_skel" ]; then
                 log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost skel=$actual_skel"
+                last_pid="$aon_pid"
             else
                 log_msg "ERROR: AON namespace runtime mismatch pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost skel=$actual_skel"
             fi
@@ -87,7 +117,6 @@ attach_runtime() {
             log_msg "ERROR: AON namespace runtime attach failed pid=$aon_pid"
         fi
         resume_stopped_process
-        last_pid="$aon_pid"
     fi
 }
 

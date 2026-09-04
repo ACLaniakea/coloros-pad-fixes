@@ -12,6 +12,7 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 import java.lang.reflect.Method;
+import java.io.FileOutputStream;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,6 +42,13 @@ public final class AonCameraOpBridge implements IXposedHookLoadPackage {
     private static final int CAMERA_STATE_OPEN = 0;
     private static final int CAMERA_STATE_CLOSED = 3;
     private static final long RESUME_DELAY_MS = 750L;
+    private static final String FRONT_CAMERA_ID = "1";
+    private static final int FRONT_LED_ON = 150;
+    private static final String[] FRONT_LED_PATHS = {
+            "/sys/class/leds/blue/brightness",
+            "/sys/class/leds/green/brightness",
+            "/sys/class/leds/red/brightness"
+    };
 
     private static final AtomicBoolean SMART_DIM_HOOKED = new AtomicBoolean(false);
     private static final AtomicBoolean CAMERA_HOOKED = new AtomicBoolean(false);
@@ -49,6 +57,7 @@ public final class AonCameraOpBridge implements IXposedHookLoadPackage {
     private static final AtomicBoolean PAUSED_FOR_CAMERA = new AtomicBoolean(false);
     private static final ConcurrentHashMap<String, Boolean> NON_AON_CAMERAS =
             new ConcurrentHashMap<>();
+    private static final AtomicBoolean FRONT_LED_WRITTEN = new AtomicBoolean(false);
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpp) {
@@ -119,11 +128,13 @@ public final class AonCameraOpBridge implements IXposedHookLoadPackage {
                         Object session = param.args[0];
                         Object client = XposedHelpers.callMethod(session, "getClientName");
                         if (!(client instanceof String) || AON_PACKAGE.equals(client)) return;
+                        String clientName = (String) client;
                         Object stateValue = XposedHelpers.callMethod(session, "getNewCameraState");
                         if (!(stateValue instanceof Integer)) return;
                         Object idValue = XposedHelpers.callMethod(session, "getCameraId");
                         String cameraId = idValue instanceof String ? (String) idValue : (String) client;
                         int state = ((Integer) stateValue).intValue();
+                        updateFrontLed(cameraId, clientName, state);
                         if (state == CAMERA_STATE_OPEN) {
                             NON_AON_CAMERAS.put(cameraId, Boolean.TRUE);
                             pauseAonForCamera("opened:" + client);
@@ -151,6 +162,41 @@ public final class AonCameraOpBridge implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": CameraService hook installation failed");
             XposedBridge.log(error);
         }
+    }
+
+    /**
+     * Lenovo's camera stack lacks ColorOS's front-camera LED bridge.  The
+     * framework already receives ownership events with the client package,
+     * so write LEDs directly here instead of polling dumpsys every second.
+     */
+    private static void updateFrontLed(String cameraId, String client, int state) {
+        if (!FRONT_CAMERA_ID.equals(cameraId) || isIndicatorExcludedClient(client)) return;
+        final boolean on;
+        if (state == CAMERA_STATE_OPEN) on = true;
+        else if (state == CAMERA_STATE_CLOSED) on = false;
+        else return;
+        if (FRONT_LED_WRITTEN.get() == on) return;
+        try {
+            byte[] value = Integer.toString(on ? FRONT_LED_ON : 0).getBytes("US-ASCII");
+            for (String path : FRONT_LED_PATHS) {
+                try (FileOutputStream output = new FileOutputStream(path)) {
+                    output.write(value);
+                }
+            }
+            FRONT_LED_WRITTEN.set(on);
+            XposedBridge.log(TAG + ": front indicator=" + (on ? "on" : "off")
+                    + " client=" + client);
+        } catch (Throwable error) {
+            // Cosmetic I/O must never perturb the camera ownership path.
+            XposedBridge.log(TAG + ": front indicator write failed " + error);
+        }
+    }
+
+    private static boolean isIndicatorExcludedClient(String client) {
+        return "android".equals(client)
+                || AON_PACKAGE.equals(client)
+                || "com.oplus.facelock".equals(client)
+                || "com.oplus.faceunlock".equals(client);
     }
 
     private static void hookCameraStartOperations(ClassLoader loader) {

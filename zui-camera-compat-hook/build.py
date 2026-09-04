@@ -13,7 +13,7 @@ STUB_PATCHES = REPO / "base-fix/hook/stub-patches"
 SOURCE = REPO / "experimental/lenovo-zui-camera-port/ZuiCameraCompatBridge.java"
 R8 = Path(os.environ.get("ACL_R8_JAR", "/run/media/ACLaniakea/IXUNICS/pad/tools/dex/r8.jar"))
 KEYSTORE = Path(os.environ.get("ACL_KS", "/run/media/ACLaniakea/IXUNICS/pad/keys/aclaniakea.jks"))
-OUT = ROOT / "releases/ZUI-Camera-Compat-v3.2.1.apk"
+OUT = ROOT / "releases/ZUI-Camera-Compat-v4.0.0.apk"
 
 def run(*args):
     subprocess.run([str(x) for x in args], check=True)

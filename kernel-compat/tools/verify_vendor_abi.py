@@ -62,41 +62,73 @@ def exported_symbols(symvers: Path) -> dict[str, str]:
     return exported
 
 
+def module_exports(path: Path) -> set[str]:
+    """Return the export names provided by one vendor module."""
+    try:
+        out = subprocess.run(
+            # __ksymtab entries in vendor .ko files are local read-only
+            # symbols, so --global-only would incorrectly hide every one.
+            ["nm", "-a", "--defined-only", str(path)],
+            capture_output=True, text=True, check=False,
+        ).stdout
+    except FileNotFoundError:
+        sys.exit("nm is required to inspect module exports; install binutils")
+
+    exports = set()
+    for line in out.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        name = fields[-1]
+        for prefix in ("__ksymtab_gpl_", "__ksymtab_"):
+            if name.startswith(prefix):
+                exports.add(name[len(prefix):])
+                break
+    return exports
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--modules-dir", required=True, type=Path,
-                        help="directory of .ko files pulled from /vendor/lib/modules")
+    parser.add_argument("--modules-dir", required=True, action="append", type=Path,
+                        help="directory of .ko files; repeat for vendor_boot, vendor_dlkm and system_dlkm")
     parser.add_argument("--symvers", required=True, type=Path,
                         help="Module.symvers of the candidate kernel")
     parser.add_argument("--show", type=int, default=15,
                         help="how many examples to print per category")
     args = parser.parse_args()
 
-    modules = sorted(args.modules_dir.rglob("*.ko"))
+    modules = sorted({module for root in args.modules_dir for module in root.rglob("*.ko")})
     if not modules:
-        sys.exit(f"no .ko files under {args.modules_dir}")
+        sys.exit(f"no .ko files under: {', '.join(map(str, args.modules_dir))}")
     exported = exported_symbols(args.symvers)
     if not exported:
         sys.exit(f"no exported symbols parsed from {args.symvers}")
 
     required: dict[tuple[str, str], list[str]] = {}
+    vendor_exports = set()
     for module in modules:
+        vendor_exports.update(module_exports(module))
         for symbol, crc in module_requirements(module):
             required.setdefault((symbol, crc), []).append(module.name)
 
     mismatched = []
     inter_module = set()
+    missing = []
     for (symbol, crc), users in sorted(required.items()):
         if symbol not in exported:
-            inter_module.add(symbol)
+            if symbol in vendor_exports:
+                inter_module.add(symbol)
+            else:
+                missing.append((symbol, crc, users))
         elif exported[symbol] != crc:
             mismatched.append((symbol, crc, exported[symbol], users))
 
     print(f"modules            : {len(modules)}")
     print(f"required (sym,crc) : {len(required)}")
-    print(f"kernel-provided    : {len(required) - len(inter_module) - len(mismatched)}")
+    print(f"kernel-provided    : {len(required) - len(inter_module) - len(missing) - len(mismatched)}")
     print(f"inter-module       : {len(inter_module)}  (expected; supplied by the vendor tree)")
+    print(f"missing exports    : {len(missing)}")
     print(f"CRC mismatches     : {len(mismatched)}")
 
     for symbol in sorted(inter_module)[:args.show]:
@@ -104,9 +136,11 @@ def main() -> int:
     for symbol, want, got, users in mismatched[:args.show]:
         print(f"  MISMATCH     : {symbol} module wants {want}, kernel exports {got}"
               f"  [{', '.join(sorted(set(users))[:3])}]")
+    for symbol, _crc, users in missing[:args.show]:
+        print(f"  MISSING      : {symbol}  [{', '.join(sorted(set(users))[:3])}]")
 
-    if mismatched:
-        print("\nFAIL: these vendor modules would refuse to load on this kernel.")
+    if mismatched or missing:
+        print("\nFAIL: candidate kernel is missing required exports or has incompatible CRCs.")
         return 1
     print("\nPASS: every kernel-provided symbol matches; vendor modules would still load.")
     return 0

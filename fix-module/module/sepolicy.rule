@@ -63,6 +63,10 @@ allow init nandswap process2 nosuid_transition;
 # unchanged.
 allow init hal_camera_default process2 nosuid_transition;
 
+# 前摄指示灯由 system_server 内 CameraServiceProxy 的事件桥接一次性写入。
+# 节点标签与原厂显示/图形 sysfs 相同；只增加 brightness 文件的最小访问集。
+allow system_server vendor_sysfs_graphics file { open write getattr };
+
 # 集成的 CryptoEng 分流代理仍在原厂 hal_cryptoeng_oplus 域中运行；仅允许
 # 从模块的 nosuid 文件系统转入该既有域及其原厂数据访问，不扩大其它域权限。
 allow init hal_cryptoeng_oplus:process2 nosuid_transition;

@@ -1,6 +1,6 @@
 id=lenovo_zui_camera
 name=联想平板 Pro GT - ZUI 原厂相机
-version=3.2.1
-versionCode=302001
+version=4.0.0
+versionCode=400000
 author=ACLaniakea
 description=TB710FU 原厂 ZUI 相机、相机助手与扫码组件的系统应用部署包；不替换相机 HAL。

@@ -56,6 +56,58 @@ fi
 # it only desynchronised the UI from the zram that was running anyway.
 setprop sys.oplus.hmbird.manager.enable 0
 
+# ============================================================================
+# Oplus service cgroups: restore the stock system_server placement
+#
+# The PKX110 stock reference puts system_server in memory:/apps/systemserver
+# (owner system:system, app_score=300, swappiness=100) and cpu:/ssfg with
+# cpu.shares=4096.  The port creates active/inactive but omits the dedicated
+# systemserver memcg, while also leaving the existing ssfg group unused.  This
+# one-shot bridge recreates only that missing stock group with stock ownership
+# and moves the already-started process.  It does not tune app_score,
+# swappiness, SystemUI, or any dynamic foreground group.
+# ============================================================================
+restore_stock_systemserver_groups() {
+    _pid=$(pidof system_server 2>/dev/null | awk '{print $1}')
+    case "$_pid" in ''|*[!0-9]*) log_msg "WARN: systemserver group restore: pid unavailable"; return 0 ;; esac
+
+    _mem=/dev/memcg/apps/systemserver
+    if [ -d /dev/memcg/apps ]; then
+        [ -d "$_mem" ] || mkdir "$_mem" 2>/dev/null
+        if [ -d "$_mem" ]; then
+            chown system:system "$_mem" 2>/dev/null
+            chmod 700 "$_mem" 2>/dev/null
+            for _file in cgroup.procs tasks; do
+                [ -e "$_mem/$_file" ] || continue
+                chown system:system "$_mem/$_file" 2>/dev/null
+                chmod 644 "$_mem/$_file" 2>/dev/null
+            done
+            for _file in memory.app_score memory.swappiness; do
+                [ -e "$_mem/$_file" ] || continue
+                chown root:system "$_mem/$_file" 2>/dev/null
+                chmod 660 "$_mem/$_file" 2>/dev/null
+            done
+            echo "$_pid" > "$_mem/cgroup.procs" 2>/dev/null
+        fi
+    fi
+
+    _tasks=/dev/cpuctl/ssfg/tasks
+    _shares=/dev/cpuctl/ssfg/cpu.shares
+    if [ -w "$_tasks" ] && [ -w "$_shares" ]; then
+        echo 4096 >"$_shares" 2>/dev/null
+        echo "$_pid" >"$_tasks" 2>/dev/null
+    fi
+    _mem_group=$(awk -F: '$2 == "memory" {print $3; exit}' "/proc/$_pid/cgroup" 2>/dev/null)
+    _cpu_group=$(awk -F: '$2 == "cpu" {print $3; exit}' "/proc/$_pid/cgroup" 2>/dev/null)
+    _weight=$(cat "$_shares" 2>/dev/null)
+    if [ "$_mem_group" = /apps/systemserver ] && [ "$_cpu_group" = /ssfg ] && [ "$_weight" = 4096 ]; then
+        log_msg "stock systemserver groups restored: pid=$_pid mem=$_mem_group cpu=$_cpu_group shares=$_weight"
+    else
+        log_msg "WARN: systemserver groups incomplete: mem=$_mem_group cpu=$_cpu_group shares=$_weight"
+    fi
+}
+restore_stock_systemserver_groups
+
 # AOSP/ColorOS protects excessive cached processes for ten minutes after the
 # first user unlock. The 12 GB source phone can absorb that burst, but on the
 # 8 GB tablet it keeps the whole CE restore set resident while kswapd and AMS
@@ -641,6 +693,7 @@ exempt_persistent_memcg() {
     _n=0
     _seen=" "
     _names=""
+
     for _p in /proc/[0-9]*; do
         _adj=$(cat "$_p/oom_score_adj" 2>/dev/null) || continue
         case "$_adj" in
@@ -1279,9 +1332,10 @@ check_speaker_calibration() {
 
 check_speaker_calibration
 
-# ===== frontled: 前摄指示灯守护（base-fix 前摄灯修复，2026-09-01 合并） =====
-if [ -f "$MODDIR/bin/front-led-daemon.sh" ]; then
-    # KernelSU reaps ordinary background children when service.sh exits.
-    # A separate session keeps the event-driven front-camera LED watcher alive.
-    setsid /system/bin/sh "$MODDIR/bin/front-led-daemon.sh" "$MODDIR" >/dev/null 2>&1 &
-fi
+# ===== frontled: 前摄指示灯（事件驱动，2026-09-04） =====
+# CameraServiceProxy 的 LSPosed bridge 直接消费相机所有权事件并写 RGB 节点。
+# 旧版 shell 每秒 dumpsys media.camera 会在 system_server 侧制造持续 binder
+# 唤醒，恰好与解锁动画竞争；不再启动任何轮询守护。开机只清理一次残留亮度。
+for frontled in /sys/class/leds/blue/brightness /sys/class/leds/green/brightness /sys/class/leds/red/brightness; do
+    echo 0 >"$frontled" 2>/dev/null
+done

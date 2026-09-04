@@ -1,6 +1,6 @@
 id=cryptoeng_hal_fix
 name=联想平板 Pro GT - CryptoEng 兼容
 author=ACLaniakea
-version=3.2.1
-versionCode=302001
+version=4.0.0
+versionCode=400000
 description=保留软件 HAL 修复查找设备；补齐一加互传联系人（10003 HKDF + 10009 证书验证）。

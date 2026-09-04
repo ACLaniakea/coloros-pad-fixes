@@ -395,9 +395,17 @@ read_level_from_file() {
 cache_hardware_battery() {
     level="$1"
     valid_level "$level" || return 0
-    settings put global ipe_pencil_battery_level "$level" >/dev/null 2>&1
-    settings put global lenovo_pen_last_valid_battery "$level" >/dev/null 2>&1
-    settings put global lenovo_pen_hardware_battery_valid 1 >/dev/null 2>&1
+    # A CPS/HID read can be repeated by several monitors.  Settings writes
+    # wake SettingsProvider and IPeManager, so only publish an actual change.
+    current=$(settings get global ipe_pencil_battery_level 2>/dev/null | tr -d '\r')
+    [ "$current" = "$level" ] || \
+        settings put global ipe_pencil_battery_level "$level" >/dev/null 2>&1
+    current=$(settings get global lenovo_pen_last_valid_battery 2>/dev/null | tr -d '\r')
+    [ "$current" = "$level" ] || \
+        settings put global lenovo_pen_last_valid_battery "$level" >/dev/null 2>&1
+    current=$(settings get global lenovo_pen_hardware_battery_valid 2>/dev/null | tr -d '\r')
+    [ "$current" = 1 ] || \
+        settings put global lenovo_pen_hardware_battery_valid 1 >/dev/null 2>&1
     now=$(date '+%s' 2>/dev/null)
     case "$now" in
         ''|*[!0-9]*) ;;
@@ -748,6 +756,16 @@ publish_hall_state() {
 
 monitor_battery_cache() {
     while [ ! -e "$CPS_DISABLED" ]; do
+        # Before the real HOGP link exists, IPeManager deliberately owns an
+        # unknown battery state. Re-injecting a cached level every 10 seconds
+        # makes it clear that state again, then restarts the same UI/BT work.
+        # Hall-edge publication already preserves the last known value for
+        # the capsule; continuous repair begins only after a real link.
+        connected=$(settings get global lenovo_pen_link_connected 2>/dev/null | tr -d '\r')
+        if [ "$connected" != 1 ]; then
+            sleep_sec 10
+            continue
+        fi
         before=$(settings get global ipe_pencil_battery_level 2>/dev/null | tr -d '\r')
         level=$(read_hardware_battery)
         # The OEM process can publish an unknown sample after the Root boot
@@ -770,6 +788,14 @@ monitor_charging_cache() {
     last=$(settings get global lenovo_pen_hardware_charge_state 2>/dev/null | tr -d '\r')
     case "$last" in 0|1) ;; *) last=-1 ;; esac
     while [ ! -e "$CPS_DISABLED" ]; do
+        # As with battery repair, avoid fighting IPeManager's disconnected
+        # state machine. A Hall edge still publishes the physical dock/charge
+        # snapshot once; periodic correction is for an established BLE link.
+        connected=$(settings get global lenovo_pen_link_connected 2>/dev/null | tr -d '\r')
+        if [ "$connected" != 1 ]; then
+            sleep_sec 10
+            continue
+        fi
         docked=$(read_hall_state)
         case "$docked" in
             0|1)
@@ -847,6 +873,8 @@ in_user_action_window() {
 monitor_real_bt_state() {
     last=-1
     last_oem_recovery=0
+    oem_recovery_attempts=0
+    oem_recovery_exhausted=0
     while [ ! -e "$CPS_DISABLED" ]; do
         if real_bt_connected; then
             connected=1
@@ -907,6 +935,12 @@ monitor_real_bt_state() {
                 --es macAddr "$mac" \
                 --es source hardware_hall >/dev/null 2>&1
             echo "[$(date '+%F %T')] real BT state mirror connected=$connected (was $current)"
+            # A new physical ACL/HOGP session is the only sound reason to
+            # retry OEM GATT-session recovery.  Do not carry a failed budget
+            # across a genuine disconnect/reconnect edge.
+            oem_recovery_attempts=0
+            oem_recovery_exhausted=0
+            last_oem_recovery=0
             last="$connected"
         fi
         if [ "$connected" = 1 ] \
@@ -916,10 +950,21 @@ monitor_real_bt_state() {
             case "$now:$last_oem_recovery" in
                 *[!0-9:]*|:*) ;;
                 *)
-                    if [ "$now" -ge "$last_oem_recovery" ] && [ "$((now - last_oem_recovery))" -ge 30 ]; then
+                    if [ "$oem_recovery_attempts" -lt 3 ] \
+                            && [ "$now" -ge "$last_oem_recovery" ] \
+                            && [ "$((now - last_oem_recovery))" -ge 30 ]; then
                         last_oem_recovery="$now"
+                        oem_recovery_attempts=$((oem_recovery_attempts + 1))
                         request_oem_pen_action "$OEM_CONNECT_ACTION"
-                        echo "[$(date '+%F %T')] live HOGP missing OEM haptic session; recovery requested"
+                        echo "[$(date '+%F %T')] live HOGP missing OEM haptic session; recovery requested attempt=$oem_recovery_attempts/3"
+                    elif [ "$oem_recovery_attempts" -ge 3 ] && [ "$oem_recovery_exhausted" = 0 ]; then
+                        # The OEM receiver rejected a live link repeatedly.
+                        # Retrying forever turns a missing optional session
+                        # into a 30-second Bluetooth/system_server CPU spike.
+                        # The direct GATT haptic path remains available; try
+                        # OEM recovery again only after a real link edge.
+                        oem_recovery_exhausted=1
+                        echo "[$(date '+%F %T')] OEM haptic recovery deferred until next real BT link edge"
                     fi
                     ;;
             esac
