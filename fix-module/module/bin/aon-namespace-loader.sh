@@ -22,12 +22,18 @@ logcat_pid=
 last_pid=
 event_fifo="$MODDIR/aon-process-events.fifo"
 
-# KernelSU creates the per-app mount namespace immediately after zygote forks
-# the process.  am_proc_start can arrive while the child still shares zygote's
-# namespace.  Binding at that point verifies successfully but is lost when
-# KernelSU switches the child, leaving AON with the original JNI runtime.
-# Wait only in response to an AON process-start event; this is bounded and is
-# not a resident polling loop.
+# KernelSU normally creates the per-app mount namespace immediately after
+# zygote forks the process.  am_proc_start can arrive while the child still
+# shares zygote's namespace.  Binding at that point verifies successfully but
+# can be lost when KernelSU switches the child, leaving AON with the original
+# JNI runtime.
+#
+# Some builds intentionally keep this system package in its inherited app
+# namespace, however.  Treating that valid topology as a permanent "not
+# ready" state was a race: after an AON process restart the loader abandoned
+# the runtime bind altogether, so nativeCreate saw the port's old DSP skeleton.
+# Wait only in response to an AON process-start event; when no namespace split
+# happens in the bounded window, bind into the stable inherited namespace.
 wait_for_app_mount_namespace() {
     aon_pid="$1"
     zygote_pid="$(pidof zygote64 2>/dev/null)"
@@ -46,8 +52,8 @@ wait_for_app_mount_namespace() {
         attempt=$((attempt + 1))
         sleep 0.05
     done
-    log_msg "ERROR: AON private mount namespace not ready pid=$aon_pid zygote_ns=$zygote_ns aon_ns=$aon_ns"
-    return 1
+    log_msg "AON namespace unchanged after bounded wait; attaching inherited namespace pid=$aon_pid ns=$aon_ns"
+    return 0
 }
 
 resume_stopped_process() {
