@@ -364,8 +364,16 @@ echo "[$(date '+%F %T')] stable LSPosed Pen Hook payload expected"
 # still come from the CPS/GATT-backed settings and uevent; this monitor only
 # repairs the physical magnetic edge.
 read_hall_state() {
-    hall1=$(cat "$PEN1_HALL" 2>/dev/null | tr -d '\r')
-    hall2=$(cat "$PEN2_HALL" 2>/dev/null | tr -d '\r')
+    # This path is sampled once per second for physical attach/detach.  Using
+    # cat|tr here used to fork four short-lived processes for every sample
+    # (two readers plus two filters).  sysfs values are newline-terminated,
+    # so POSIX read returns the same value without a process launch.  Keep
+    # invalid/missing nodes represented as an empty value and let the existing
+    # state machine report -1 rather than fabricating a magnetic edge.
+    hall1=
+    hall2=
+    [ -r "$PEN1_HALL" ] && IFS= read -r hall1 <"$PEN1_HALL"
+    [ -r "$PEN2_HALL" ] && IFS= read -r hall2 <"$PEN2_HALL"
     case "$hall1:$hall2" in
         0:1|1:0|0:0) echo 1 ;; # docked (either orientation)
         1:1) echo 0 ;; # detached

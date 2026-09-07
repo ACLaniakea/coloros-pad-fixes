@@ -29,6 +29,23 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# Athena 原厂关闭内存扩展时会同时写：
+#   persist.sys.oplus.nandswap=false
+#   persist.sys.oplus.nandswap.swapsize=0
+# 滑块索引另存于 Settings.Secure.customize_ram_swap_value，重新打开时再由
+# Athena 根据索引恢复档位。移植系统偶尔只落了开关，留下旧的 swapsize=8，
+# 于是底层把“上次档位”误当成“当前扩展”。这里按原厂关闭回调补齐一次性镜像，
+# 不改 UI 的滑块索引，也不启动常驻同步服务。
+if [ "$(getprop persist.sys.oplus.nandswap)" != "true" ]; then
+    _ram_swap_size=$(getprop persist.sys.oplus.nandswap.swapsize)
+    _ram_swap_curr=$(getprop persist.sys.oplus.nandswap.swapsize.curr)
+    if [ "$_ram_swap_size" != "0" ] || [ "$_ram_swap_curr" != "0" ]; then
+        resetprop -p persist.sys.oplus.nandswap.swapsize 0
+        resetprop -p persist.sys.oplus.nandswap.swapsize.curr 0
+        log_msg "ram-expansion state reconciled: disabled, stale size=$_ram_swap_size curr=$_ram_swap_curr -> 0"
+    fi
+fi
+
 # ColorOS' OplusSchedGroupManager is gated before system_server loads by this
 # property.  The port left it unset even though this kernel exports the full
 # cpuctl group layout (including ssfg), so system_server silently fell back to
@@ -308,6 +325,15 @@ patch_stock_nandswap() {
 
     [ -f "$_src" ] || { log_msg "nandswap-patch: 原件不存在，跳过"; return 0; }
 
+    # 幂等保护：/product 可能已经被本模块上一轮 bind 过（例如手动 rerun
+    # post-fs-data 或 KSU 重新挂载时）。不要在已经带有新状态分支的脚本上再次
+    # 对旧锚点做 sed，否则会把一行嵌套两次，导致 nandswap 服务语法损坏。
+    if grep -qF 'fn_enable" != "true"' "$_src" \
+        && grep -qF 'mem_total" -le 8388608' "$_src"; then
+        log_msg "nandswap-patch: 当前脚本已含 UI 开关优先分支，保持现状"
+        return 0
+    fi
+
     # 特征 A：开口的最后一档。
     if ! grep -q 'threshold_wakeup_hybridswapd="2200 1800 2200 1536"' "$_src"; then
         log_msg "nandswap-patch: 未匹配到 8G/16G 共用档，原件已变，跳过"
@@ -363,23 +389,16 @@ patch_stock_nandswap() {
     # B：把 $zram2ufs_ratio 填进本该由它占据的两列。调用顺序已核对：
     #    main() 先跑 configure_zram_parameters（内含 configure_hybridswap_parameters）
     #    才跑 nandswap_init，所以第 212 行处这个变量一定有值；且第 18 行有默认 30 兜底。
-    # C：内存扩展档位。原件只认 4/8/12：
-    #        if   [[ "$prop_nandswap_size" == "4"  ]]; then swap_size_mb=4096
-    #        elif [[ "$prop_nandswap_size" == "8"  ]]; then swap_size_mb=8192
-    #        elif [[ "$prop_nandswap_size" == "12" ]]; then swap_size_mb=12288
-    #        else swap_size_mb=4096; zram_increase_limit=2048; fi
-    #    本机 persist.sys.oplus.nandswap.cfg 是 "4,6,8"，6 档没有对应分支；而且
-    #    $prop_nandswap_size 是脚本**第 13 行、加载时**就 getprop 好的，真正干活
-    #    的那次调用发生在开机 154ms 的 post-fs-data（第 123 行 sys.oplus.nandswap.init
-    #    一次性闸门决定只有第一次生效，boot_completed 那次直接 exit）。结果无论
-    #    用户在设置里选几 GB，都落进兜底分支 → disksize = 4096+2048 = 6144M，
-    #    /proc/swaps 恒显示 6GB，而 eswap 那半边（第 142 行读 swapsize.curr）却
-    #    老老实实按 8GB 走 —— 用户看到的"改成 8GB 重启后还是 6GB"就是这么来的。
-    #    改法：在原链最前面插一段通用换算，2~16 GB 一律 size*1024；swapsize 读空
-    #    时回落到 swapsize.curr（第 142 行证明这个属性在那一刻是读得到的）。
-    #    zram_increase_limit 保持 0 不动 —— 原厂对"认识的档位"就是这么设计的，
-    #    disksize 正好等于用户选的容量。
-    sed -e 's%if \[\[ "$prop_nandswap_size" == "4" \]\]; then%prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize); if ! [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null; then prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize.curr); fi; if [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null \&\& [ "$prop_nandswap_size" -le 16 ] 2>/dev/null; then swap_size_mb=$((prop_nandswap_size * 1024)); elif [[ "$prop_nandswap_size" == "4" ]]; then%' \
+    # C：把“内存扩展开关”和“记忆档位”分开处理。原机 PKX110 的原厂实现中，
+    # fn_enable=false 时不会拿上次的 swapsize 作为当前 zram 容量，而是按真实
+    # MemTotal 选择基础 zram：8/12GB 档都是 5632MB；只有扩展开启时才使用
+    # persist.sys.oplus.nandswap.swapsize。平板原脚本把这两个状态混成一条链，
+    # 所以 UI 关闭后仍按旧的 8GB 档创建 zram。
+    #
+    # 开启时仍支持 2~16GB 通用档位，兼容 4/6/8/12GB 等不同设备；关闭时由上方
+    # 状态同步清理运行时 swapsize 镜像，滑块索引仍由 Athena 保存在 Secure 中。
+    sed -e 's%if \[\[ "$prop_nandswap_size" == "4" \]\]; then%if [ "$fn_enable" != "true" ]; then if [ "$mem_total" -le 524288 ]; then swap_size_mb=384; elif [ "$mem_total" -le 1048576 ]; then swap_size_mb=768; elif [ "$mem_total" -le 2097152 ]; then swap_size_mb=1280; elif [ "$mem_total" -le 3145728 ]; then swap_size_mb=1536; elif [ "$mem_total" -le 4194304 ]; then swap_size_mb=2560; elif [ "$mem_total" -le 6291456 ]; then swap_size_mb=3072; elif [ "$mem_total" -le 8388608 ]; then swap_size_mb=5632; elif [ "$mem_total" -le 12582912 ]; then swap_size_mb=5632; else swap_size_mb=7680; fi; else prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize); if ! [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null; then prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize.curr); fi; if [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null \&\& [ "$prop_nandswap_size" -le 16 ] 2>/dev/null; then swap_size_mb=$((prop_nandswap_size * 1024)); elif [[ "$prop_nandswap_size" == "4" ]]; then%' \
+        -e '/^[[:space:]][[:space:]]zram_increase=\$(expr/i\		fi' \
         "$_src" >"$_work" 2>/dev/null
 
     # 改完必须还是合法脚本，否则 nandswap 服务整个起不来，eswap 全没。
@@ -409,8 +428,10 @@ patch_stock_nandswap() {
         return 0
     fi
     # C 单独判：没匹配上只是内存扩展档位没修好，不该连累 A/B 一起放弃。
-    if grep -qF 'swap_size_mb=$((prop_nandswap_size * 1024))' "$_work"; then
-        _c_ok="档位通用换算已插入"
+    if grep -qF 'swap_size_mb=$((prop_nandswap_size * 1024))' "$_work" \
+        && grep -qF 'fn_enable" != "true"' "$_work" \
+        && grep -qF 'mem_total" -le 8388608' "$_work"; then
+        _c_ok="原厂关闭档基础 zram + 开启档通用换算已插入"
     else
         _c_ok="WARN 档位链未匹配，内存扩展仍会锁在 6144M"
     fi
@@ -797,8 +818,10 @@ resetprop -p persist.sys.horae.enable 1
 resetprop -p persist.sys.tango_zygote32.start 0
 stop zygote_tango
 
-# AON's JNI originally hard-codes an ODM path, but Android's app linker
-# namespace forbids that path. Bind the retained native stack plus the
+# AON's recovered JNI ultimately resolves AIBoost from its original ODM path.
+# Do not expose it through a global module overlay; the event-driven namespace
+# loader provides that path only to AON after KernelSU creates its private mount
+# namespace. Bind the retained stack plus the
 # matching AIBoost and AIUnit QNN runtime into the AON app's permitted library
 # directory. The QNN bundle includes the SM8650 HTP V75 unsigned skeleton,
 # which is required for genuine NPU model initialization.

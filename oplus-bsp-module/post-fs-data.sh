@@ -25,6 +25,35 @@ log_msg() {
     echo "$(date '+%m-%d %H:%M:%S') $*" >>"$LOGFILE" 2>/dev/null
 }
 
+# The r1+ experimental kernel can contain these targets in vmlinux.  Keep the
+# .ko files as a rollback path, but never insmod a second copy.  Built-in
+# targets use their Kbuild names, while the fallback package uses the names
+# below.
+module_present() {
+    m="$1"
+    [ -d "/sys/module/$m" ] && return 0
+    case "$m" in
+        oplus_cpu_sched_sched_assist) [ -d /sys/module/sched_assist ] ;;
+        oplus_cpu_sched_eas_opt) [ -d /sys/module/eas_opt ] ;;
+        oplus_cpu_sched_frame_boost) [ -d /sys/module/frame_boost ] ;;
+        oplus_cpu_sched_sched_info) [ -d /sys/module/oplus_sched_info ] ;;
+        oplus_cpu_sched_qos_sched) [ -d /sys/module/qos_sched ] ;;
+        oplus_cpu_sched_task_sched) [ -d /sys/module/task_sched_info ] ;;
+        oplus_cpu_sched_task_cpustats) [ -d /sys/module/task_cpustats ] ;;
+        oplus_cpu_detection) [ -d /sys/module/task_overtime ] ;;
+        oplus_cpu_waker_identify) [ -d /sys/module/waker_identify ] ;;
+        oplus_mm_mm_osvelte) [ -d /sys/module/logger ] ;;
+        oplus_mm_memload_opt_mapped_protect) [ -d /sys/module/mapped_protect ] ;;
+        oplus_mm_dump_tasks_mem) [ -d /sys/module/tasks_memory ] ;;
+        oplus_mm_async_reclaim_opt_pcppages_opt) [ -d /sys/module/pcppages_opt ] ;;
+        oplus_mm_async_reclaim_opt_kshrink_slabd) [ -d /sys/module/kshrink_slabd ] ;;
+        oplus_bsp_lz4k) [ -d /sys/module/oplus_bsp_lz4k ] ;;
+        cpufreq_effiency) [ -d /sys/module/oplus_cpu_cpufreq_effiency ] ;;
+        oplus_ipc) [ -d /sys/module/binder_main ] ;;
+        *) return 1 ;;
+    esac
+}
+
 # 日志一律追加，绝不清空。
 # 上一版这里是 `: >"$LOGFILE"`，结果开机失败那一次的模块日志被下一次开机
 # 冲掉了，只能回头去啃 ECC 已经报损的 ramoops。失败现场只有一份，别自己删。
@@ -73,10 +102,8 @@ done
 # hybridswap。
 #
 # 备忘（2026-08-28）：sched_assist 的源码其实就在内核树 drivers/oplus/cpu/sched/
-#   sched_assist/ 里（一个没接进 drivers/Makefile 的孤儿目录），实测可以编进
-#   vmlinux 内建。但**不采纳**：设备上这个 ko 本来就装得好好的，内建版与预编 ko
-#   撞名 411 个符号、二选一，等于用刷内核的风险换零功能增量；而且原厂 ColorOS
-#   上它本来就是 vendor_dlkm 里的 ko，内建反而偏离原厂。保持 ko 形式。
+#   sched_assist/ 里；如果目标内核已经把这些目标内建，下面的加载循环会通过
+#   /sys/module 识别并跳过对应 .ko。外挂文件保留给旧内核回退使用。
 # ---------------------------------------------------------------------------
 MODULES="
 oplus_cpu_sched_sched_assist
@@ -210,8 +237,8 @@ for m in $MODULES; do
         failed=$((failed + 1))
         continue
     fi
-    if grep -q "^$m " /proc/modules 2>/dev/null; then
-        log_msg "already loaded: $m"
+    if module_present "$m" || grep -q "^$m " /proc/modules 2>/dev/null; then
+        log_msg "already present (loaded or built-in): $m"
         loaded=$((loaded + 1))
         continue
     fi

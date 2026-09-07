@@ -51,11 +51,11 @@ echo "== 3/8 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py
 
 echo "== 4/8 refresh PenHidCtl inside pen-bridge module =="
-cp releases/PenHidCtl-v3.2.1.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
+cp releases/PenHidCtl-v4.0.0.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
 echo "== 5/8 root module zips =="
 python3 fix-module/tools/build_fix.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v3.2.1.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v4.0.0.zip
 
 echo "== 6/8 OPlus BSP kernel modules =="
 python3 oplus-bsp-module/tools/build_oplus_bsp.py
@@ -63,11 +63,8 @@ python3 oplus-bsp-module/tools/build_oplus_bsp.py
 echo "== 7/8 SM8650Q Scene scheduler =="
 python3 scheduler-module/tools/build_scheduler.py
 
-echo "== 8/9 ZUI Camera Hook and module =="
+echo "== 8/8 ZUI Camera Hook and module =="
 python3 zui-camera-compat-hook/build.py
 python3 zui-camera-module/tools/build_module.py
-
-echo "== 9/9 optional tuning module =="
-python3 port-tuning/tools/build_tuning.py
 echo "== releases =="
 ls -la releases/

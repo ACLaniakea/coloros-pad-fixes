@@ -3,4 +3,4 @@ name=联想平板 Pro GT - OPlus BSP 内核模块
 version=4.0.0
 versionCode=400000
 author=ACLaniakea
-description=加载一加 BSP 的 30 个内核模块：调度增强、压缩内存、后台冻结。做法是按符号依赖顺序 insmod，并补一个 hyperSched 桩模块满足 sched-walt 的符号校验。
+description=提供一加 BSP 调度、压缩内存与后台冻结能力；已内建到内核时自动跳过重复加载，并保留外挂回退路径。

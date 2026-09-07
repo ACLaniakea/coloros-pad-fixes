@@ -7,20 +7,17 @@ MODDIR="$1"
 AON_PACKAGE=com.aiunit.aon
 AON_PAYLOAD=/data/local/tmp/coloros-aon-runtime-v2459
 AON_TARGET=/my_product/app/AONService/lib/arm64
+AON_ODM_TARGET=/odm/lib64
 AON_DSP_SKEL_TARGET=/vendor/lib/rfsa/adsp/libQnnHtpV75Skel.so
 AON_DSP_SKEL_SOURCE=$AON_PAYLOAD/cdsp/unsigned/libQnnHtpV75Skel.so
-# libaiboost_jni is a recovered Lenovo binary.  It uses an absolute
-# dlopen("/odm/lib64/libaiboost.so") instead of the app library namespace.
-# KernelSU gives apps a private mount namespace, so the module's global ODM
-# overlay is not visible there.  Mount the self-contained runtime directory
-# only in the AON process before it can call nativeCreate.
-AON_ODM_TARGET=/odm/lib64
+BUSYBOX=/data/adb/ksu/bin/busybox
+# The recovered Lenovo JNI ultimately resolves AIBoost through the original
+# /odm/lib64 path. Expose that path only inside AON's private namespace; never
+# create a global module overlay or alter zygote's inherited namespace.
 EXPECTED_JNI=80aedb964ca38112a003a8f77b72bca0bbf37ac221017e678e031f09cde428fc
 
 stopped_pid=
-logcat_pid=
 last_pid=
-event_fifo="$MODDIR/aon-process-events.fifo"
 
 # KernelSU normally creates the per-app mount namespace immediately after
 # zygote forks the process.  am_proc_start can arrive while the child still
@@ -43,17 +40,49 @@ wait_for_app_mount_namespace() {
     [ -n "$zygote_pid" ] && zygote_ns="$(readlink "/proc/$zygote_pid/ns/mnt" 2>/dev/null)"
 
     attempt=0
-    while [ "$attempt" -lt 40 ]; do
+    while [ "$attempt" -lt 100 ]; do
         [ -d "/proc/$aon_pid" ] || return 1
         aon_ns="$(readlink "/proc/$aon_pid/ns/mnt" 2>/dev/null)"
         if [ -n "$aon_ns" ] && { [ -z "$zygote_ns" ] || [ "$aon_ns" != "$zygote_ns" ]; }; then
             return 0
         fi
         attempt=$((attempt + 1))
-        sleep 0.05
+        if [ -x "$BUSYBOX" ]; then
+            "$BUSYBOX" usleep 5000
+        else
+            sleep 0.01
+        fi
     done
     log_msg "AON namespace unchanged after bounded wait; attaching inherited namespace pid=$aon_pid ns=$aon_ns"
     return 0
+}
+
+has_private_mount_namespace() {
+    aon_pid="$1"
+    zygote_pid="$(pidof zygote64 2>/dev/null)"
+    set -- $zygote_pid
+    zygote_pid="$1"
+    [ -n "$zygote_pid" ] || return 1
+    aon_ns="$(readlink "/proc/$aon_pid/ns/mnt" 2>/dev/null)"
+    zygote_ns="$(readlink "/proc/$zygote_pid/ns/mnt" 2>/dev/null)"
+    [ -n "$aon_ns" ] && [ -n "$zygote_ns" ] && [ "$aon_ns" != "$zygote_ns" ]
+}
+
+wait_for_process_identity() {
+    aon_pid="$1"
+    attempt=0
+    while [ "$attempt" -lt 50 ]; do
+        [ -d "/proc/$aon_pid" ] || return 1
+        process_name="$(tr '\000' '\n' <"/proc/$aon_pid/cmdline" 2>/dev/null | head -1)"
+        [ "$process_name" = "$AON_PACKAGE" ] && return 0
+        attempt=$((attempt + 1))
+        if [ -x "$BUSYBOX" ]; then
+            "$BUSYBOX" usleep 5000
+        else
+            sleep 0.01
+        fi
+    done
+    return 1
 }
 
 resume_stopped_process() {
@@ -65,8 +94,6 @@ resume_stopped_process() {
 
 cleanup() {
     resume_stopped_process
-    [ -n "$logcat_pid" ] && kill "$logcat_pid" 2>/dev/null
-    rm -f "$event_fifo" 2>/dev/null
 }
 
 trap 'cleanup; exit 0' INT TERM EXIT
@@ -86,10 +113,21 @@ attach_runtime() {
         ''|*[!0-9]*) return 1 ;;
     esac
     [ -d "/proc/$aon_pid" ] || return 1
+    # ActivityManager logs the fork while cmdline is still "zygote64". Wait
+    # briefly for specialization, then reject stale or recycled PIDs.
+    wait_for_process_identity "$aon_pid" || return 1
     [ "$aon_pid" = "$last_pid" ] && return 0
+    # KernelSU switches this app to a private mount namespace about 25 ms
+    # after process creation on the target. Poll at 5 ms and freeze only after
+    # that transition; freezing earlier prevents KernelSU from completing it.
     wait_for_app_mount_namespace "$aon_pid" || return 1
     if kill -STOP "$aon_pid" 2>/dev/null; then
         stopped_pid="$aon_pid"
+        if ! has_private_mount_namespace "$aon_pid"; then
+            log_msg "ERROR: refusing AON runtime attach in zygote mount namespace pid=$aon_pid"
+            resume_stopped_process
+            return 1
+        fi
         if [ -e "/proc/$aon_pid/ns/mnt" ] &&
            nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_ODM_TARGET" 2>/dev/null &&
            nsenter -t "$aon_pid" -m -- mount --bind "$AON_PAYLOAD" "$AON_TARGET" 2>/dev/null &&
@@ -114,10 +152,10 @@ attach_runtime() {
             expected_aiboost=$(sha256sum "$AON_PAYLOAD/libaiboost.so" 2>/dev/null | awk '{print $1}')
             expected_skel=$(sha256sum "$AON_DSP_SKEL_SOURCE" 2>/dev/null | awk '{print $1}')
             if [ "$file_bind_failed" -eq 0 ] && [ "$actual_jni" = "$EXPECTED_JNI" ] && [ "$actual_aiboost" = "$expected_aiboost" ] && [ "$actual_skel" = "$expected_skel" ]; then
-                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost skel=$actual_skel"
+                log_msg "AON namespace runtime attached pid=$aon_pid jni=$actual_jni private_odm_aiboost=$actual_aiboost skel=$actual_skel"
                 last_pid="$aon_pid"
             else
-                log_msg "ERROR: AON namespace runtime mismatch pid=$aon_pid jni=$actual_jni odm_aiboost=$actual_aiboost skel=$actual_skel"
+                log_msg "ERROR: AON namespace runtime mismatch pid=$aon_pid jni=$actual_jni private_odm_aiboost=$actual_aiboost skel=$actual_skel"
             fi
         else
             log_msg "ERROR: AON namespace runtime attach failed pid=$aon_pid"
@@ -126,40 +164,28 @@ attach_runtime() {
     fi
 }
 
-log_msg "AON namespace loader armed with ActivityManager process events"
+log_msg "AON namespace loader armed with ActivityManager process-start logs"
 
 # Cover the small window between module startup and logcat subscription.
 current_pid=$(pidof "$AON_PACKAGE" 2>/dev/null)
 set -- $current_pid
 attach_runtime "$1"
 
-# am_proc_start is emitted immediately after ActivityManager forks an app.  A
-# blocking logcat subscription reacts at process creation without the old
-# 20Hz pidof loop, which consumed minutes of CPU time and generated hundreds
-# of thousands of scheduler wakeups during a normal uptime.
+# This port does not emit every AON launch to the events buffer's am_proc_start
+# tag, but ActivityManager's system-buffer "Start proc" record is present for
+# every service launch. A blocking subscription reacts without the old 20 Hz
+# pidof loop and extracts the PID from the record after verifying the package.
 while true; do
-    rm -f "$event_fifo" 2>/dev/null
-    if ! mkfifo "$event_fifo" 2>/dev/null; then
-        log_msg "ERROR: AON process-event FIFO creation failed"
-        sleep 5
-        continue
-    fi
-    logcat -b events -v raw -T 1 -s am_proc_start:I '*:S' \
-        >"$event_fifo" 2>/dev/null &
-    logcat_pid=$!
-    while IFS= read -r event; do
-        case "$event" in
-            \[*",$AON_PACKAGE,"*)
-                event_tail=${event#*,}
-                event_pid=${event_tail%%,*}
-                attach_runtime "$event_pid"
-                ;;
-        esac
-    done <"$event_fifo"
-    kill "$logcat_pid" 2>/dev/null
-    wait "$logcat_pid" 2>/dev/null
-    logcat_pid=
-    rm -f "$event_fifo" 2>/dev/null
+    logcat -b system -v raw -T 1 -s ActivityManager:I '*:S' 2>/dev/null |
+        while IFS= read -r event; do
+            case "$event" in
+                *"Start proc "*":${AON_PACKAGE}/"*)
+                    event_tail=${event#*Start proc }
+                    event_pid=${event_tail%%:*}
+                    attach_runtime "$event_pid"
+                    ;;
+            esac
+        done
     log_msg "AON process-event stream restarted"
     sleep 1
 done

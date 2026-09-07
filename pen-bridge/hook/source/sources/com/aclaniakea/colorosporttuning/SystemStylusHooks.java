@@ -103,10 +103,11 @@ final class SystemStylusHooks {
                 SystemStylusHooks.updateRefreshFromState(context);
             }
             // Real Hall/GATT/root broadcasts are the primary path. This poll
-            // is only reconciliation; 4 Hz consumed minutes of system_server
-            // CPU during long standby and amplified wake refault pressure.
+            // is only reconciliation. The Root hall monitor remains the
+            // immediate magnetic-edge owner, so a slower framework fallback
+            // avoids periodic system_server work without delaying UI updates.
             SystemStylusHooks.pollHandler.postDelayed(
-                    this, SystemStylusHooks.screenOn ? 1000L : 5000L);
+                    this, SystemStylusHooks.screenOn ? 2000L : 10000L);
         }
     };
     private static int lastOemPresent = -1;
@@ -413,42 +414,16 @@ final class SystemStylusHooks {
                     SystemStylusHooks.restorePenAfterBoot(context, 0);
                 }
             }, 2000L);
-            handler.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda9
-                @Override // java.lang.Runnable
-                public final void run() {
-                    LenovoPenUEventBridge.wakeOemForCurrentPen(context);
-                }
-            }, 3500L);
-            handler.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda10
-                @Override // java.lang.Runnable
-                public final void run() {
-                    LenovoPenUEventBridge.wakeOemForCurrentPen(context);
-                }
-            }, 10000L);
-            handler.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda11
-                @Override // java.lang.Runnable
-                public final void run() {
-                    LenovoPenUEventBridge.wakeOemForCurrentPen(context);
-                }
-            }, 20000L);
-            handler.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda12
-                @Override // java.lang.Runnable
-                public final void run() {
-                    SystemStylusHooks.syncColorOsPenState(context);
-                }
-            }, 1000L);
-            handler.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda13
-                @Override // java.lang.Runnable
-                public final void run() {
-                    SystemStylusHooks.syncColorOsPenState(context);
-                }
-            }, 5000L);
+            // Root owns the bounded CoreService/HID boot connection. Repeating
+            // OEM wake broadcasts here created competing GATT sessions, while
+            // three snapshots replayed the same state into system_server.
+            // One delayed snapshot is enough after PackageManager/BT settle.
             handler.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda14
                 @Override // java.lang.Runnable
                 public final void run() {
                     SystemStylusHooks.syncColorOsPenState(context);
                 }
-            }, 15000L);
+            }, 5000L);
         }
         if (!monitorReady) {
             registerMonitor(context);

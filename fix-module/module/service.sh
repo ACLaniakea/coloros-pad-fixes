@@ -649,6 +649,29 @@ else
     log_msg "hybridswap: 节点不存在，跳过 zram2ufs 调整"
 fi
 
+# Qualcomm/ColorOS 的原厂 post-boot 脚本对 SM8650 系列明确写入
+#   /proc/sys/vm/swappiness       = 100
+#   /dev/memcg/memory.swappiness  = 100
+# 但移植系统中这两个值在 nandswap 完成后仍会停留在 GKI 默认的 150；apps
+# 及其子分组则由 Athena/OSense 动态管理，不能在这里整树覆盖。这里仅做一次
+# 启动收尾同步，复现原厂 post-boot 的两个全局写入，不启动常驻服务，也不碰
+# 内存扩展开关、容量档位或 HybridSwap 节点。
+restore_stock_swappiness_once() {
+    _stock_vm_swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null)
+    _stock_root_swappiness=$(cat /dev/memcg/memory.swappiness 2>/dev/null)
+
+    if [ -w /proc/sys/vm/swappiness ] && [ "$_stock_vm_swappiness" != "100" ]; then
+        printf '100\n' >/proc/sys/vm/swappiness 2>/dev/null
+    fi
+    if [ -w /dev/memcg/memory.swappiness ] && [ "$_stock_root_swappiness" != "100" ]; then
+        printf '100\n' >/dev/memcg/memory.swappiness 2>/dev/null
+    fi
+
+    log_msg "stock swappiness reconciled: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root_memcg=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null)"
+}
+
+restore_stock_swappiness_once
+
 # ============================================================================
 # 常驻系统进程的 memcg 豁免（原厂缺口）
 #

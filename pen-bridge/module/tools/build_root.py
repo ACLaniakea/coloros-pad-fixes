@@ -31,10 +31,20 @@ EXTERNAL = {
 
 def build(module_dir: Path, output: Path) -> None:
     repo = module_dir.parents[1]
-    subprocess.run([
-        sys.executable,
-        str(repo / "fix-module/module/tools/build_lsposed_sync.py"),
-    ], check=True)
+    # Keep release packaging possible on a host without the Android/Smali
+    # toolchain.  The synchronized helper is deterministic and the checked-in
+    # artifact is the validated fallback used by FixModule as well; fail only
+    # if neither a rebuild nor that artifact is available.
+    sync_jar = repo / "fix-module/module/bin/lsposed-path-sync.jar"
+    try:
+        subprocess.run([
+            sys.executable,
+            str(repo / "fix-module/module/tools/build_lsposed_sync.py"),
+        ], check=True)
+    except subprocess.CalledProcessError:
+        if not sync_jar.is_file():
+            raise
+        print(f"toolchain unavailable; keeping {sync_jar}")
     missing = [name for name in INCLUDE if not (module_dir / name).is_file()]
     missing += [name for name, source in EXTERNAL.items()
                 if not (repo / source).is_file()]

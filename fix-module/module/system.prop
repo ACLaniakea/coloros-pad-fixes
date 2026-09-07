@@ -24,11 +24,11 @@ ro.oplus.audio.dolby.movieToMusic_support=true
 # 不属于"内核节点补齐后可以撤销"的那一批。
 sys.oplus.hmbird.manager.enable=0
 
-# persist.sys.oplus.nandswap 一律不由本模块写。
-# 它不是开关，而是 Settings.Secure.customize_ram_swap_state 的派生镜像；
-# 更要紧的是原厂 init.oplus.nandswap.sh 把 persist.sys.oplus.nandswap.swapsize
-# 当作**输入**（disksize = swapsize + zram_increase），我们回写等于每次开机
-# 让它自我膨胀。现在 hybridswap 与内存扩展整条链路都交还给原厂脚本。
+# persist.sys.oplus.nandswap 的开关仍由 Athena/Settings 掌管；post-fs-data 只在
+# 已经为 false 且 swapsize 镜像残留时按原厂关闭回调补写 0，不接管用户开关。
+# 原厂 init.oplus.nandswap.sh 把 swapsize 当作当前 zram 输入，所以必须清掉这个
+# 残留才能避免“UI 已关、实际仍按上次 8GB 建 zram”；开启后的容量与 hybridswap
+# 仍交给原厂脚本。
 
 # ---------------------------------------------------------------------------
 # 压掉基带残留造成的日志刷屏（v2.10.0）

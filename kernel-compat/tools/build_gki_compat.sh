@@ -49,7 +49,7 @@ make -C "${MODULE_DIR}" \
     KERNEL_OUT="${OUTPUT_DIR}" \
     LLVM=1 ARCH=arm64 W=1
 
-for module in oplus_shell_temp_compat oplus_mm_compat; do
+for module in oplus_shell_temp_compat oplus_mm_compat oplus_zsmalloc_cma_guard; do
     echo "Built ${MODULE_DIR}/${module}.ko"
     modinfo "${MODULE_DIR}/${module}.ko"
     modprobe --show-modversions "${MODULE_DIR}/${module}.ko"
@@ -57,4 +57,5 @@ done
 
 python3 "${SCRIPT_DIR}/verify_module_abi.py" "${SYMVERS_FILE}" \
     "${MODULE_DIR}/oplus_shell_temp_compat.ko" \
-    "${MODULE_DIR}/oplus_mm_compat.ko"
+    "${MODULE_DIR}/oplus_mm_compat.ko" \
+    "${MODULE_DIR}/oplus_zsmalloc_cma_guard.ko"

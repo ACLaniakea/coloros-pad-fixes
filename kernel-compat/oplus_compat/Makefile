@@ -1,6 +1,7 @@
 ifneq ($(KERNELRELEASE),)
 obj-m += oplus_shell_temp_compat.o
 obj-m += oplus_mm_compat.o
+obj-m += oplus_zsmalloc_cma_guard.o
 else
 KERNEL_SRC ?=
 KERNEL_OUT ?=

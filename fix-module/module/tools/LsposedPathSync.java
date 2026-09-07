@@ -31,6 +31,16 @@ public final class LsposedPathSync {
     private static final String SCOPE_ENTRY = "META-INF/xposed/scope.list";
     private static final String FRAMEWORK_SCOPE_IN_LIST = "android";
     private static final String FRAMEWORK_SCOPE_IN_DB = "system";
+    // These scopes belonged exclusively to the retired XiaoBu/BWV experiment.
+    // Unlike ordinary user-selected scopes, leaving them in LSPosed's database
+    // keeps the module injected into an enabled assistant process even after
+    // its packaged scope.list was reduced. Remove only this explicit retired
+    // set; do not erase any other manual scope selected by the user.
+    private static final String[] RETIRED_BASE_SCOPES = {
+            "com.heytap.speechassist",
+            "com.oplus.ovoicemanager.wakeup",
+            "com.oplus.gesture"
+    };
 
     private LsposedPathSync() {}
 
@@ -83,6 +93,12 @@ public final class LsposedPathSync {
                 // Existing user-selected Pen scopes are preserved. The Pen
                 // module passes its packaged scope list explicitly at boot.
                 scopes = new String[0];
+            }
+            if (BASE_MODULE.equals(module)) {
+                for (String retiredScope : RETIRED_BASE_SCOPES) {
+                    db.execSQL("DELETE FROM scope WHERE module_pkg_name=? AND app_pkg_name=? AND user_id=0",
+                            new Object[] {module, retiredScope});
+                }
             }
             scopeCount = scopes.length;
             for (String scope : scopes) {

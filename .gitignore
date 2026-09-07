@@ -53,6 +53,9 @@ zui-camera-module/out/
 zui-camera-module/hook/*.apk
 zui-camera-module/zygisk/*.so
 experimental/lenovo-zui-camera-port/zui-native-identity/out/
+# 原厂 ZUI 相机 APK 与废弃 AON 二进制只作为本地构建输入/归档；不得进入源码历史。
+experimental/lenovo-zui-camera-port/lenovo-zui-camera-module/system/priv-app/ZuiCamera/
+experiments/abandoned-aon-odm-alias/
 
 # 本机逆向、SDK、日志与抓帧；不属于可复现源码。
 androguard.db
@@ -69,4 +72,5 @@ workspace/aon-*.yuv
 workspace/aon-service.apk
 workspace/aon-service.dex
 workspace/aperture-final.png
+workspace/toolchains/
 fix-module/module/hook/BaseFix-Hook.apk

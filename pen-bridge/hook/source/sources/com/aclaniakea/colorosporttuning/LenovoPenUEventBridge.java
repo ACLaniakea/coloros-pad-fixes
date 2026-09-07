@@ -78,10 +78,12 @@ final class LenovoPenUEventBridge extends UEventObserver {
         if (zMacValid) {
             zConnected = HookUtils.linkConnected(this.context) > 0 || HookUtils.bluetoothConnected(this.context, strMac);
         }
-        if (iBattery == 0 && !zConnected) {
-            // The kernel framework publishes LEVEL=0 between the Hall attach
-            // edge and pen power/GATT readiness. It is an unknown placeholder,
-            // not a hardware battery measurement.
+        if (iBattery == 0) {
+            // The kernel framework publishes LEVEL=0 while a docked pen is
+            // powering up. A stale ACL mirror can already say "connected", so
+            // link state cannot make this raw kernel value trustworthy. Keep
+            // it unknown here; a real BLE/GATT battery callback may still
+            // publish a genuine 0% value.
             iBattery = -1;
         }
         int iPhysicalDocked = HookUtils.physicalDocked(this.context);

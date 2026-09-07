@@ -41,6 +41,16 @@ loader 必须在每个新 AON PID 恢复运行前，把同一份已校验的 2.3
 bind 到该 PID 私有视图中的 `/vendor/lib/rfsa/adsp/libQnnHtpV75Skel.so`。
 只挂载应用库目录或只改全局 `/vendor` 都不充分。
 
+后续还定位到一个独立的链接器问题：旧模块把 `libaiboost.so` 同时暴露在
+应用库目录和 `/odm/lib64`。恢复版 JNI 以 soname 加载该库时，Bionic 可能先把
+它规范化为 `/odm/lib64/libaiboost.so`，随后因应用 classloader namespace 不允许
+访问 ODM 路径而拒绝加载。AON 进程仍在、相机仍能出帧，但模型创建失败，表现为
+功能在进程回收或重启后随机失效。
+
+最终包不再提供全局 ODM 同名别名。namespace loader 只在确认 AON 已拥有独立
+mount namespace 后，同时部署应用库目录和该 JNI 要求的 `/odm/lib64` 私有视图；
+若仍与 zygote 共用命名空间则拒绝操作，避免影响系统进程和 KernelSU 授权状态。
+
 同时，恢复的 delegate 原本把 `ADSP_LIBRARY_PATH` 写成以分隔符开头的路径
 串，首项为空。TB710FU 上这会让 QNN 在创建 HTP session 前失败。模块使用
 SHA-256 限定的一字节修正移除空首项，保留原有的绝对路径及搜索顺序；不改
@@ -87,8 +97,17 @@ namespace bind，并同时校验 JNI、ODM AIBoost 与 skeleton 的 SHA。运行
 
 - `AonSmartFaceGazeCompat` 只补齐移植 AON 缺失的 `0x60007` profile/capability 表项，框架的 SmartDim 状态机与 Binder 操作不改写。
 - `AonYuvLayoutBridge` 只做相机缓冲区布局转换。
+- AIBoost 的 `/odm/lib64` 入口只存在于 AON 私有命名空间，不建立全局同名别名。
 - `nativeCreate`、模型推理、`FaceInfo` 事件、Attention 成功/失败、`nativeDelete` 全部由 AON 原始实现处理。
 - 调试阶段的逐帧探针已从实际安装路径移除，避免额外 logcat I/O 和 CPU 唤醒。
+
+## 冷启动验收
+
+2026-09-06 通过框架原生入口 `cmd attention call checkAttention` 验证。该调用重新
+拉起 AON 后，loader 从 `ActivityManager` 的 `Start proc` 记录取得新 PID 并完成私有
+命名空间挂载。设备日志确认原始 AIBoost 4.11.6 成功创建会话，QNN HTP V75 delegate
+接管模型全部 90 个节点。`getLastTestCallbackCode=3` 只表示本次注意力检测超时，不是
+JNI、QNN 或 DSP 初始化失败。
 
 ## 实机验证证据
 

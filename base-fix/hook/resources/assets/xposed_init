@@ -9,8 +9,8 @@ com.aclaniakea.aoncameraopbridge.AonCameraOpBridge
 com.aclaniakea.aonframebridge.AonYuvLayoutBridge
 com.aclaniakea.aonsmartfacegazecompat.AonSmartFaceGazeCompat
 com.aclaniakea.lenovocolormodebridge.LenovoColorModeBridge
-com.aclaniakea.colorosvoicewakeupbridge.ColorOSVoiceWakeupBridge
 com.aclaniakea.soundtriggerguard.SoundTriggerTrackerGuard
+com.aclaniakea.wiredaccessoryguard.WiredAccessoryUEventGuard
 com.aclaniakea.batteryhealthbridge.BatteryHealthBridge
 com.aclaniakea.orealityguard.OrealityDisableBridge
 com.aclaniakea.hmbirdguard.HmbirdCompatGuard

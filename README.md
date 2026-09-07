@@ -14,7 +14,7 @@
 项目以配套内核、KernelSU 模块和 LSPosed Hook 补齐移植系统的硬件适配、框架兼容与外设桥接。
 
 > [!WARNING]
-> **4.0.0 请只刷 Release 内的 `boot-ACLaniakea-SM8650Q-droidspaces-r1.img`。** 它是已在 TB710FU 实机验证的配套内核。Release 附带的 `vendor_boot-ColorOS16-original-TB710FU.img` 仅用于回退原始 ColorOS 引导链，不能与本项目的 boot 混刷。
+> **4.0.0 必须成对刷入 Release 内的 `boot-ACLaniakea-SM8650Q-droidspaces-r1.img` 与 `vendor_boot-hyperSched-stub.img`。** 两者均已在 TB710FU 实机验证。`vendor_boot-ColorOS16-original-TB710FU.img` 仅用于回退原始 ColorOS 引导链，不能与本项目的 boot 混刷。
 >
 > 不希望刷分区时，请使用最后一个纯模块版本 [v2.0.15](../../releases/tag/v2.0.15)。它不包含 3.0.0 及之后的内核级、调度与内存扩展修复，也不再维护。
 
@@ -30,11 +30,12 @@
 | 文件 | 用途 | 安装要求 |
 |---|---|---|
 | `boot-ACLaniakea-SM8650Q-droidspaces-r1.img` | 已验证的 SM8650Q 配套内核 | **必刷，先刷** |
+| `vendor_boot-hyperSched-stub.img` | 与 4.0.0 boot 成套的阻塞版 vendor_boot | **必刷，与 boot 同时刷入** |
 | `vendor_boot-ColorOS16-original-TB710FU.img` | 原始 ColorOS vendor_boot 回退镜像 | **仅回退使用，不参与正常安装** |
 | `FixModule-*.zip` | 主修复模块 | **必装** |
 | `BaseFix-Hook-*.apk` | 主修复的 LSPosed Hook | **必装** |
 | `OplusBSP-Modules-*.zip` | 调度、压缩内存、后台冻结等 BSP 内核模块 | 完整 3.x 方案必装 |
-| `PenBridge-Module-*.zip`、`PenBridge-Hook-*.apk`、`PenHidCtl-*.apk` | 手写笔桥接三件套 | 使用手写笔时安装 |
+| `PenBridge-Root-*.zip`、`PenBridge-Hook-*.apk`、`PenHidCtl-*.apk` | 手写笔桥接三件套 | 使用手写笔时安装 |
 | `SM8650Q-Scene-Scheduler-*.zip` | Scene 省电/均衡/性能/极速调度配置 | 使用 Scene 时安装 |
 | `FixModule-*.zip` 内置 CryptoEng | 查找设备、密码本与一加互传联系人兼容 | 随主模块安装 |
 | `LenovoPadProGT-ZUI-Camera-Port-*.zip`、`ZUI-Camera-Compat-*.apk` | TB710FU ZUI 原厂相机移植 | 按需安装 |
@@ -52,7 +53,7 @@
 
 ## 安装
 
-安装顺序固定为：**boot 内核 → KernelSU 模块 → LSPosed APK 与作用域 → 完整重启**。
+安装顺序固定为：**boot + 配套 vendor_boot → KernelSU 模块 → LSPosed APK 与作用域 → 完整重启**。
 
 ### 1. 备份当前镜像
 
@@ -67,11 +68,12 @@ adb shell su -c 'dd if=/dev/block/by-name/vendor_boot_a of=/sdcard/vendor_boot_a
 
 ### 2. 刷入配套内核
 
-正常升级只刷 Release 中的 boot 镜像，**不要**刷入回退用的原始 vendor_boot：
+正常安装应成对刷入 Release 中的 boot 与阻塞版 vendor_boot，**不要**刷入回退用的原始 vendor_boot：
 
 ```bash
 adb reboot bootloader
 fastboot flash boot boot-ACLaniakea-SM8650Q-droidspaces-r1.img
+fastboot flash vendor_boot vendor_boot-hyperSched-stub.img
 fastboot reboot
 ```
 
@@ -87,7 +89,7 @@ adb shell uname -r
 
 1. `FixModule-v4.0.0.zip`（内置 CryptoEng）
 2. `OplusBSP-Modules-v4.0.0.zip`
-3. 按需：`PenBridge-Module-v4.0.0.zip`
+3. 按需：`PenBridge-Root-v4.0.0.zip`
 4. 按需：`SM8650Q-Scene-Scheduler-v4.0.0.zip`
 5. 按需：`LenovoPadProGT-ZUI-Camera-Port-v4.0.0.zip`
 
@@ -109,7 +111,7 @@ adb install -r ZUI-Camera-Compat-v4.0.0.apk    # 使用 ZUI 相机时
 
 在 LSPosed 管理器中启用模块，并使用 APK 显示的**推荐作用域**。`FixModule` 会补齐必需作用域的白名单记录，但不会替代你在 LSPosed 中启用模块的操作。
 
-基础修复的常用作用域包括 `android`、`SystemUI`、设置、AON、语音、手写笔与配件相关进程；ZUI 相机兼容 Hook 只应作用于 `com.zui.camera`。不要把 ZUI Hook 勾选到其他应用。
+基础修复的常用作用域包括 `android`、`SystemUI`、设置、AON、手写笔与配件相关进程；小布唤醒已关闭，不应再勾选语音唤醒相关进程。ZUI 相机兼容 Hook 只应作用于 `com.zui.camera`。不要把 ZUI Hook 勾选到其他应用。
 
 完成后执行**完整重启**，不要仅重启 zygote。
 
@@ -118,7 +120,7 @@ adb install -r ZUI-Camera-Compat-v4.0.0.apk    # 使用 ZUI 相机时
 ### 升级
 
 1. 从同一 Release 下载全套镜像、模块和 APK。
-2. 只刷入新的配套 `boot`；保留当前 vendor_boot。
+2. 成对刷入新的配套 `boot` 与 `vendor_boot-hyperSched-stub`。
 3. 覆盖安装模块和 APK。
 4. 完整重启后再检查 KernelSU 与 LSPosed 状态。
 
@@ -153,7 +155,7 @@ adb install -r ZUI-Camera-Compat-v4.0.0.apk    # 使用 ZUI 相机时
 
 **可以不刷 boot/vendor_boot 吗？**
 
-不建议。4.0.0 的 BSP 依赖配套 boot 内核提供的符号和接口；`vendor_boot` 保留当前可用版本即可。只想使用纯模块方案时请改用 v2.0.15。
+不建议。4.0.0 的 BSP 依赖配套 boot 内核提供的符号和接口，也依赖成套阻塞版 `vendor_boot` 的启动配置。只想使用纯模块方案时请改用 v2.0.15。
 
 **ZUI 相机是否替换底层相机 HAL？**
 
