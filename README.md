@@ -21,6 +21,7 @@
 ## 功能概览
 
 - 系统适配：显示与环境光、144 Hz、性能/温控拓扑、内存与交换、音频与传感器链路。
+- DroidSpaces 内核基线：完整 Linux 容器命名空间、BinderFS/ashmem/memfd、OverlayFS/FUSE、seccomp 与 io_uring；Arch 等容器直接走内核隔离与 Android 显示桥接，不依赖用户态伪实现。
 - 相机与 AON：相机服务稳定性、前摄占用仲裁、AON 注视感知运行时兼容、物理前摄指示灯。
 - 手写笔：BLE/HID 连接、电量与充电、磁吸状态、设备空间和触觉反馈桥接。
 - 扩展能力：Scene 调度、OPlus BSP 内核模块、CryptoEng 查找设备/互传兼容、ZUI 原厂相机移植。
@@ -29,7 +30,7 @@
 
 | 文件 | 用途 | 安装要求 |
 |---|---|---|
-| `boot-ACLaniakea-SM8650Q-droidspaces-r1.img` | 已验证的 SM8650Q 配套内核 | **必刷，先刷** |
+| `boot-ACLaniakea-SM8650Q-droidspaces-r1.img` | 已验证的 SM8650Q r1+ 配套内核，含 DroidSpaces 容器特性 | **必刷，先刷** |
 | `vendor_boot-hyperSched-stub.img` | 与 4.0.0 boot 成套的阻塞版 vendor_boot | **必刷，与 boot 同时刷入** |
 | `vendor_boot-ColorOS16-original-TB710FU.img` | 原始 ColorOS vendor_boot 回退镜像 | **仅回退使用，不参与正常安装** |
 | `FixModule-*.zip` | 主修复模块 | **必装** |
