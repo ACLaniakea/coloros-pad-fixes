@@ -92,7 +92,7 @@ adb shell uname -r
 2. `OplusBSP-Modules-v4.0.1.zip`
 3. 按需：`PenBridge-Root-v4.0.1.zip`
 4. 按需：`SM8650Q-Scene-Scheduler-v4.0.1.zip`
-5. 按需：`LenovoPadProGT-ZUI-Camera-Port-v4.0.0.zip`
+5. 按需：`LenovoPadProGT-ZUI-Camera-Port-v4.0.1.zip`
 
 命令行安装示例：
 
