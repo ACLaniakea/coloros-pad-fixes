@@ -1101,13 +1101,22 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             page.addView(search, new android.widget.LinearLayout.LayoutParams(-1, dp(context, 52)));
             final android.widget.ListView list = new android.widget.ListView(context);
             list.setDivider(null);
+            // The rows carry the card (see applyCardBackground), so nothing
+            // between them may paint an opaque fill of its own.  Neither of
+            // these was the cause of the dark-mode regression -- both were
+            // tried alone and changed nothing -- they just keep the row
+            // backgrounds unobstructed.
+            list.setCacheColorHint(android.graphics.Color.TRANSPARENT);
+            list.setScrollingCacheEnabled(false);
+            list.setBackground(null);
             list.setAdapter(adapter);
             // Use the same pale rounded card treatment as the Settings app
             // manager.  A naked ListView here lost the grey list container
             // that makes this page read as a native ColorOS sub-page.
             android.widget.FrameLayout listCard = new android.widget.FrameLayout(context);
-            listCard.setBackgroundResource(0x7f0807ab); // card_list_item_full_bg
-            listCard.setClipToOutline(true);
+            // The card is drawn per row (see applyCardBackground); this
+            // container only supplies the ColorOS page insets.
+            listCard.setBackground(null);
             listCard.addView(list, new android.widget.FrameLayout.LayoutParams(-1, -1));
             android.widget.LinearLayout.LayoutParams cardParams =
                     new android.widget.LinearLayout.LayoutParams(-1, 0, 1f);
@@ -1204,6 +1213,110 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
         @Override public int getCount() { return shown.size(); }
         @Override public ResolveInfo getItem(int p) { return shown.get(p); }
         @Override public long getItemId(int p) { return p; }
+        /**
+         * ColorOS draws its list cards on the rows, not behind the list:
+         * activity_app_picker has no card container, manage_applications_item
+         * carries no background, and Settings ships the family
+         * card_list_item_{head,body,foot,full}_bg for exactly this.
+         *
+         * Setting those drawables directly does not work here: branch probes
+         * confirmed the name resolves, getDrawable() returns non-null and
+         * setBackground() runs, yet every sample inside a row read #000000
+         * under the dark theme while the stock app manager on the same device
+         * read #1a1a1a.  Their shapes fill with {@code ?attr/couiColorCard},
+         * and reading that through Resources#getColor in this context yields
+         * an opaque black at night -- ColorOS applies runtime RRO theme
+         * overlays, so the value in the resource table is not what comes back.
+         * A forced opaque fill on the same row did render, which is what ruled
+         * the drawing path itself out.
+         *
+         * So the geometry is taken from the position and the fill is read the
+         * way Settings' own pages read it, through COUIContextUtil (see
+         * cardFillColor).  Under the light theme the same attribute is opaque
+         * white, which is why only dark mode ever looked broken.
+         */
+        private void applyCardBackground(android.view.View row, int position) {
+            try {
+                int count = getCount();
+                boolean first = position == 0;
+                boolean last = position == count - 1;
+                float r = cardRadiusPx();
+                float[] radii = count <= 1 ? new float[] {r, r, r, r, r, r, r, r}
+                        : first ? new float[] {r, r, r, r, 0, 0, 0, 0}
+                        : last ? new float[] {0, 0, 0, 0, r, r, r, r}
+                        : new float[] {0, 0, 0, 0, 0, 0, 0, 0};
+                android.graphics.drawable.GradientDrawable shape =
+                        new android.graphics.drawable.GradientDrawable();
+                shape.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+                shape.setCornerRadii(radii);
+                shape.setColor(cardFillColor());
+                row.setBackground(shape);
+            } catch (Throwable ignored) { }
+        }
+
+        private float cardRadiusPx() {
+            try {
+                int id = context.getResources().getIdentifier(
+                        "coui_round_corner_m", "dimen", SETTINGS);
+                if (id != 0) return context.getResources().getDimension(id);
+            } catch (Throwable ignored) { }
+            return dp(context, 16);
+        }
+
+        /**
+         * coui_color_card is documented as #ffffffff by day and #1affffff at
+         * night (10% white meant to composite onto the page).  On this ROM the
+         * night value does not come back that way -- ColorOS applies runtime
+         * RRO theme overlays, and the resolved colour is opaque black, i.e.
+         * exactly the page colour, which is why the card was invisible.
+         *
+         * So the translucent overlay is honoured when that is what comes back,
+         * and anything else falls through to the values the stock app manager
+         * actually renders on this device (measured: #1a1a1a at night,
+         * #ffffff by day, page #000000 / #f0f1f2).
+         */
+        private int cardFillColor() {
+            boolean night = (context.getResources().getConfiguration().uiMode
+                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                    == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+            // Preferred source of truth: the same helper the OEM pages use.
+            int card = couiAttrColor("couiColorCard");
+            if (card == 0) card = colorByName("coui_color_card", 0);
+            int alpha = android.graphics.Color.alpha(card);
+            if (alpha != 0 && alpha != 0xFF) {
+                int page = night ? 0xFF000000 : 0xFFF0F1F2;
+                float f = alpha / 255f;
+                return android.graphics.Color.rgb(
+                        Math.round(android.graphics.Color.red(card) * f
+                                + android.graphics.Color.red(page) * (1 - f)),
+                        Math.round(android.graphics.Color.green(card) * f
+                                + android.graphics.Color.green(page) * (1 - f)),
+                        Math.round(android.graphics.Color.blue(card) * f
+                                + android.graphics.Color.blue(page) * (1 - f)));
+            }
+            return night ? 0xFF1A1A1A : 0xFFFFFFFF;
+        }
+
+        /** COUIContextUtil.getAttrColor is how Settings' own pages read COUI colours. */
+        private int couiAttrColor(String attrName) {
+            try {
+                int attr = context.getResources().getIdentifier(attrName, "attr", SETTINGS);
+                if (attr == 0) return 0;
+                Class<?> util = context.getClassLoader()
+                        .loadClass("com.coui.appcompat.contextutil.COUIContextUtil");
+                return (Integer) XposedHelpers.callStaticMethod(util, "getAttrColor", context, attr);
+            } catch (Throwable ignored) { }
+            return 0;
+        }
+
+        private int colorByName(String name, int fallback) {
+            try {
+                int id = context.getResources().getIdentifier(name, "color", SETTINGS);
+                if (id != 0) return context.getColor(id);
+            } catch (Throwable ignored) { }
+            return fallback;
+        }
+
         @Override public android.view.View getView(int p, android.view.View convert, android.view.ViewGroup parent) {
             android.view.View row = convert == null ? android.view.LayoutInflater.from(context).inflate(0x7f0d033a, parent, false) : convert;
             ResolveInfo info = getItem(p); ((android.widget.ImageView) row.findViewById(0x7f0a00f5)).setImageDrawable(info.loadIcon(context.getPackageManager()));
@@ -1229,6 +1342,7 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             }
             if (mark != null) mark.setChecked(info.activityInfo.packageName.equals(
                     Settings.Secure.getString(context.getContentResolver(), AI_PACKAGE)));
+            applyCardBackground(row, p);
             return row;
         }
     }
