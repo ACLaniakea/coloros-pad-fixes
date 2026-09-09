@@ -51,11 +51,11 @@ echo "== 3/8 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py
 
 echo "== 4/8 refresh PenHidCtl inside pen-bridge module =="
-cp releases/PenHidCtl-v4.0.1.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
+cp releases/PenHidCtl-v4.0.2.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
 echo "== 5/8 root module zips =="
 python3 fix-module/tools/build_fix.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v4.0.1.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v4.0.2.zip
 
 echo "== 6/8 OPlus BSP kernel modules =="
 python3 oplus-bsp-module/tools/build_oplus_bsp.py
@@ -66,5 +66,13 @@ python3 scheduler-module/tools/build_scheduler.py
 echo "== 8/8 ZUI Camera Hook and module =="
 python3 zui-camera-compat-hook/build.py
 python3 zui-camera-module/tools/build_module.py
+# 这两步写进各自模块的 releases/ 子目录，不会自动汇总到顶层。
+# 4.0.1 那次是手工拷的，结果 4.0.2 构建时差点漏掉相机模块——补上。
+cp zui-camera-compat-hook/releases/ZUI-Camera-Compat-v4.0.2.apk releases/
+cp zui-camera-module/releases/LenovoPadProGT-ZUI-Camera-Port-v4.0.2.zip releases/
+
+echo "== SHA256SUMS =="
+( cd releases && sha256sum *-v4.0.2.* > SHA256SUMS-v4.0.2.txt )
+
 echo "== releases =="
 ls -la releases/

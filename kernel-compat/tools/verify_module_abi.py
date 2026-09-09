@@ -31,9 +31,20 @@ def main() -> int:
             "dependency here so it is a decision rather than a silent change."
         ),
     )
+    parser.add_argument(
+        "--allow-restricted",
+        default="",
+        help=(
+            "Comma-separated restricted-hook symbols explicitly audited for "
+            "this module.  All other android_rvh imports remain rejected."
+        ),
+    )
     args = parser.parse_args()
     allowed_depends = {
         name.strip() for name in args.allow_depends.split(",") if name.strip()
+    }
+    allowed_restricted = {
+        name.strip() for name in args.allow_restricted.split(",") if name.strip()
     }
 
     expected_crc = {}
@@ -59,7 +70,7 @@ def main() -> int:
             crc, symbol = line.split()[:2]
             if expected_crc.get(symbol) != crc.lower():
                 mismatches.append((symbol, crc, expected_crc.get(symbol)))
-            if "android_rvh_" in symbol:
+            if "android_rvh_" in symbol and symbol not in allowed_restricted:
                 restricted_hooks.append(symbol)
         if mismatches:
             for symbol, actual, expected in mismatches:

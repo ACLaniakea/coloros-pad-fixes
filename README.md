@@ -182,6 +182,7 @@ bash tools/build_all.sh
 
 ## 文档
 
+- [v4.0.2 发布说明](docs/4.0.2-release-notes.md)
 - [v4.0.1 发布说明](docs/4.0.1-release-notes.md)
 - [v3.2.1 发布说明](docs/3.2.1-release-notes.md)
 - [v3.2.0 发布说明](docs/3.2.0-release-notes.md)

@@ -119,21 +119,28 @@ static bool equals(const char* a, const char* b) {
   }
 }
 
-static bool is_zui_camera_process(char* observed, usize observed_size) {
-  char cmdline[128] = {};
-  int fd = open("/proc/self/cmdline", kReadOnly);
+// Identify the target by name rather than by UID.  A UID is assigned at
+// install time and differs on every device, so it can never be a compile-time
+// constant; resolving it from /data/system/packages.list is no better, because
+// that file is labelled packages_list_file and the zygote domain cannot read
+// it.  /proc/self/comm needs no permission at all and is set by AOSP's
+// SpecializeCommon() -> SetThreadName() *before* postAppSpecialize runs, so it
+// already carries the app's nice_name there.  (cmdline does not: argv[0] is
+// rewritten later, in RuntimeInit, which is why it still reads "zygote64".)
+//
+// SetThreadName keeps only the trailing 15 characters of a longer name;
+// "com.zui.camera" is 14, so it survives whole.
+static bool is_zui_camera_process() {
+  const int fd = open("/proc/self/comm", kReadOnly);
   if (fd < 0) return false;
-  long count = read(fd, cmdline, sizeof(cmdline) - 1);
+  char comm[64] = {};
+  const long n = read(fd, comm, sizeof(comm) - 1);
   close(fd);
-  if (observed_size) {
-    usize i = 0;
-    while (i + 1 < observed_size && cmdline[i]) {
-      observed[i] = cmdline[i];
-      ++i;
-    }
-    observed[i] = '\0';
-  }
-  return count > 0 && equals(cmdline, "com.zui.camera");
+  if (n <= 0) return false;
+  usize len = static_cast<usize>(n);
+  while (len && (comm[len - 1] == '\n' || comm[len - 1] == '\r')) --len;
+  comm[len] = '\0';
+  return equals(comm, "com.zui.camera");
 }
 
 static int hex_value(char c) {
@@ -270,36 +277,19 @@ class ZuiNativeIdentity final : public ModuleBase {
     env_ = env;
   }
 
-  void preAppSpecialize(AppSpecializeArgs* args) override {
-    target_ = false;
-    // ReZygisk 515 deliberately supplies a null JNIEnv here, so nice_name
-    // cannot be decoded through JNI. UID is a required public ABI field and
-    // is stable for this installed ZUI camera package (u0_a366 = 10366).
-    if (args && args->uid) {
-      const int uid = *reinterpret_cast<const int*>(args->uid);
-      target_ = (uid == 10366);
-      __android_log_print(kLogInfo, "ZuiNativeIdentity", "pre: uid=%d target=%d", uid, target_);
-      return;
-    }
-    if (!env_ || !env_->functions || !args || !args->nice_name) return;
-    using GetStringUtfChars = const char* (*)(void*, void*, unsigned char*);
-    using ReleaseStringUtfChars = void (*)(void*, void*, const char*);
-    auto get_chars = reinterpret_cast<GetStringUtfChars>(const_cast<void*>(env_->functions[169]));
-    auto release_chars = reinterpret_cast<ReleaseStringUtfChars>(const_cast<void*>(env_->functions[170]));
-    if (!get_chars || !release_chars) return;
-    const char* name = get_chars(env_, args->nice_name, nullptr);
-    if (!name) return;
-    target_ = equals(name, "com.zui.camera");
-    __android_log_print(kLogInfo, "ZuiNativeIdentity", "pre: nice_name=%s target=%d", name, target_);
-    release_chars(env_, args->nice_name, name);
-  }
+  // Nothing to decide here.  ReZygisk 515 deliberately supplies a null JNIEnv
+  // in this callback, so nice_name cannot be decoded, and the UID is useless
+  // without a device-specific constant.  The decision moves to
+  // postAppSpecialize, where /proc/self/comm is already the app's name.
+  void preAppSpecialize(AppSpecializeArgs*) override {}
 
   void postAppSpecialize(const AppSpecializeArgs*) override {
+    target_ = is_zui_camera_process();
     if (!target_) {
       if (api_ && api_->set_option) api_->set_option(api_->impl, kDlcloseModuleLibrary);
       return;
     }
-    __android_log_print(kLogInfo, "ZuiNativeIdentity", "post: target selected from nice_name");
+    __android_log_print(kLogInfo, "ZuiNativeIdentity", "post: target selected from /proc/self/comm");
     auto find_property = reinterpret_cast<FindProperty>(dlsym(nullptr, "__system_property_find"));
     int patched = 0;
     if (find_property) {
@@ -321,12 +311,12 @@ class ZuiNativeIdentity final : public ModuleBase {
 
 extern "C" __attribute__((visibility("default")))
 void zygisk_module_entry(ApiTable* table, JNIEnv* env) {
-  __android_log_print(kLogInfo, "ZuiNativeIdentity", "entry: ReZygisk ABI v4 registration requested");
+  __android_log_print(kLogInfo, "ZuiNativeIdentity", "entry: registration requested");
   static ZuiNativeIdentity module;
   static ModuleAbi abi = {
-      // This device uses ReZygisk 515. Its working Device Faker module
-      // declares public ABI v4 (verified from its registration entry), so do
-      // the same instead of assuming current upstream Magisk's v5.
+      // Placeholder: the real version is chosen by the stepping loop below.
+      // v4 was verified against ReZygisk 515's public table layout, which is
+      // what the ApiTable/AppSpecializeArgs declarations above describe.
       4, &module,
       [](ModuleBase* m, AppSpecializeArgs* args) {
         static_cast<ZuiNativeIdentity*>(m)->preAppSpecialize(args);
@@ -341,10 +331,24 @@ void zygisk_module_entry(ApiTable* table, JNIEnv* env) {
         static_cast<ZuiNativeIdentity*>(m)->postServerSpecialize(args);
       },
   };
-  if (table && table->register_module && table->register_module(table, &abi)) {
-    module.onLoad(table, env);
-    __android_log_print(kLogInfo, "ZuiNativeIdentity", "entry: registration accepted");
-  } else {
-    __android_log_print(kLogInfo, "ZuiNativeIdentity", "entry: registration rejected");
+  if (!table || !table->register_module) {
+    __android_log_print(kLogInfo, "ZuiNativeIdentity", "entry: no register_module in api table");
+    return;
   }
+  // v4 is what this module's ApiTable/AppSpecializeArgs layout was verified
+  // against, so try it first and keep the known-good path unchanged.  A loader
+  // that refuses it gets stepped down instead of silently doing nothing: the
+  // only fields touched here (uid, set_option) exist from v2 onwards.
+  static const long kAbiVersions[] = {4, 3, 2};
+  for (const long version : kAbiVersions) {
+    abi.api_version = version;
+    if (table->register_module(table, &abi)) {
+      module.onLoad(table, env);
+      __android_log_print(kLogInfo, "ZuiNativeIdentity",
+                          "entry: registration accepted at ABI v%ld", version);
+      return;
+    }
+  }
+  __android_log_print(kLogInfo, "ZuiNativeIdentity",
+                      "entry: registration rejected at every attempted ABI version");
 }

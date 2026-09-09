@@ -32,6 +32,21 @@ log_msg "boot_completed after ${i}s; fuse disarmed"
 # 原厂脚本由 boot_completed 触发，给它时间跑完（建 swapfile + losetup 较慢）
 sleep 45
 
+# The tablet product script is an older branch and leaves zram_opt at 160/60.
+# The reference phone's current osvelte profile resolves to 125/60.  Apply the
+# same contextual policy once after the product script finishes; this is a
+# one-shot boot action, not a resident daemon, and only runs when the genuine
+# external zram_opt module has registered its control plane.
+MEM_POLICY=/proc/oplus_mem/swappiness_para
+MEM_DYNAMIC=/proc/oplus_mem/dynamic_swappiness
+if [ -w "$MEM_POLICY" ]; then
+    echo 'direct_swappiness=60' >"$MEM_POLICY" 2>/dev/null
+    echo 'vm_swappiness=125' >"$MEM_POLICY" 2>/dev/null
+    echo 'swapd_swappiness=125' >"$MEM_POLICY" 2>/dev/null
+    [ -w "$MEM_DYNAMIC" ] && echo '125 0 125 0' >"$MEM_DYNAMIC" 2>/dev/null
+    log_msg "zram_opt policy aligned to reference: vm=125 direct=60 swapd=125 dynamic=125/0/125/0"
+fi
+
 Z=/sys/block/zram0
 log_msg "--- post-boot state ---"
 log_msg "modules: $(grep -c . /proc/modules) loaded; oplus_* = $(grep -c '^oplus_' /proc/modules)"

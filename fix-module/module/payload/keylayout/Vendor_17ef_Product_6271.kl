@@ -1,0 +1,11 @@
+# Lenovo Keyboard Pack for Yoga Tab Keyboard (USB 17ef:6271).
+# Lenovo exposes these keys as HID Consumer usages rather than Linux keycodes.
+# 0x391 is the hardware microphone-privacy switch, not media-volume mute.
+key usage 0x000c0391 MUTE FALLBACK_USAGE_MAPPING
+
+# These are policy-visible Android consumer keys.  ColorOS discards F13..F15
+# before KeyGestureController, whereas these reach its normal keyboard path.
+# LenovoKeyboardBridge then calls the existing OPlus window managers.
+key usage 0x000c0394 VOICE_ASSIST FALLBACK_USAGE_MAPPING
+key usage 0x000c0395 HELP FALLBACK_USAGE_MAPPING
+key usage 0x000c0398 ASSIST FALLBACK_USAGE_MAPPING

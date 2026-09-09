@@ -753,9 +753,18 @@ bind_over sys_osense_memory_decisionmaker_config.xml
 # "system_server artifacts on /system OK" 因而从不重编；而它编到
 # /data/misc/apexdata 的产物会在下次开机被自己当多余清掉（实测三次）。
 #
-# 产物必须手工重编。**不能**用模块的 system/ 目录投递：这台设备上 KernelSU
-# 的模块 system 自动挂载不工作（模块原有的 system/system_ext/etc/horae/
-# horae_.conf 同样从未生效），项目一贯手工 bind，这里沿用同一套路。
+# 产物必须手工重编，并且刻意**不**走模块的 system/ 目录投递，而是手工 bind。
+#
+# 起初我把"模块 system/ 不生效"归因为 KernelSU 自动挂载不工作，那是错的：
+# 真正的原因是本机装了 hybrid_mount 作为 metamodule 接管挂载，而它的
+# config.toml 里带有当前版本不认识的字段（daemon_startup_mode、[kasumi]），
+# TOML 解析失败使其在 config 阶段中止，storage_mode 退化为 none、零挂载。
+# 修好配置后模块 system/ 恢复正常。
+#
+# 但这里仍然保持手工 bind，理由是**减少依赖**：AOT 产物的绑定必须早于
+# zygote，且不应受第三方挂载后端的可用性影响——它一旦再次失效，system/
+# 投递会静默失灵，而手工 bind 不受牵连（已在其失效与恢复两种状态下各验证
+# 过一次）。
 #
 # 重编命令（三个参数缺一不可，每个都是踩坑换来的）：
 #   BCP=$(adb shell echo '$BOOTCLASSPATH')

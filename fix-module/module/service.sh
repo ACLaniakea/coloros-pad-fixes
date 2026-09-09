@@ -723,13 +723,88 @@ restore_stock_swappiness_once
 # 名单不写死 uid（各机安装后 appid 不同），按 oom_score_adj <= -700 现场枚举：
 # 这正好是 AOSP 的 PERSISTENT_PROC_ADJ(-800) / SYSTEM_ADJ(-900) / PERSISTENT_SERVICE_ADJ(-700)
 # 三档，即"内核眼里绝不该被换出"的那批。普通应用最低也只到 0（前台）。
+#
+# ---------------------------------------------------------------------------
+# 2026-09-09 修正：原实现假设了 per-uid 布局，在本机是空转
+#
+# 上面写的"per-uid memcg 模式"只是两种布局之一。实测本机跑的是 **per-package**
+# 布局：/dev/memcg/apps/ 下是 com.tencent.mm、com.zui.camera 这样的包名组，外加
+# 原厂的三个分层组 active / inactive / systemserver，而 uid_* 只存在一个
+# （uid_1001，用量 0 MB）。原实现只往 /dev/memcg/apps/uid_$uid/ 写，于是除了
+# 那个空组以外一个也没写中 —— 整段是空转的。
+#
+# 后果是全树停在 300，一律落进 swapd_memcgs_param 的 level 1
+# （score 100-399，ub_mem2zram_ratio=80），实测：
+#
+#   /apps/active        launcher 397 MB + SystemUI 278 MB + assistantscreen 163 MB
+#                       —— 共 838 MB 躺在 zram 里
+#   /apps/systemserver  system_server(adj -900) 234 MB
+#
+# 这三个恰好是解锁必用的进程。息屏后点亮的 6 秒窗口内实测 pgsteal_direct
+# 非零 —— 直接回收发生在申请页的那个线程上下文里，也就是 UI 线程被同步阻塞，
+# 这就是解锁动画和锁屏壁纸卡顿的来源。
+#
+# ---------------------------------------------------------------------------
+# 重要：这是**主动偏离原厂**，不是修复移植缺陷
+#
+# 2026-09-09 拿真机 ColorOS 对照过（PKX110 / V16.1.0 / 11 GB）：那边
+# /apps/active、/apps/systemserver、/apps/inactive 以及全部 per-package 组
+# **同样都是 300**，swapd_memcgs_param 的分级表也逐字相同，system_server 与
+# SystemUI 的组归属也一致。所以"原厂建了组却没打分"是原厂设计，不是移植断的。
+#
+# 保留这段改动的理由是另一条：原厂把 min_free_kbytes（手机 23168 / 平板 11584）
+# 和 avail_buffers（2500 / 2300）都按内存容量分了档，**唯独
+# ub_mem2zram_ratio=80 不随内存大小变**。同一个 80% 压缩率放在 11 GB 手机上
+# 还剩 3.5 GB 余量，放在 7.4 GiB 的本机就开始抖动。这里补的正是那个缺失的
+# 内存档位。
+#
+# 实测收益与代价（息屏 90s 后唤醒，同一次开机内 A/B）：
+#   换入        58.6 MB -> 17.6 MB   (-70%)
+#   直接回收    79.7 MB -> 0
+#   主缺页      15731  -> 5127       (-67%)
+#   代价        MemAvailable 约 -200 MB，两组用量收敛，零 LMK/OOM 击杀
+#
+# 只跑了单次、代价只观察了 3 分钟；若日后出现后台应用留存变差或击杀增多，
+# 第一个该回退的就是这里（把 active / systemserver 写回 300 即可）。
+# ---------------------------------------------------------------------------
+#
+# 改法：不再猜路径，直接从 /proc/PID/cgroup 的 :memory: 行读出进程**实际所在**
+# 的 memcg 再写。这样两种布局都覆盖，per-uid 布局下解析出来的正好还是
+# /apps/uid_X/pid_Y，与原行为等价。
+#
+# 两个绝不能写的组：
+#   /  和 /apps  —— 根组，写 0 等于全局豁免，swap 直接失效
+#   /apps/inactive —— 原厂用来装"已不活跃"的桶，本机 697 MB，里面确实混进了
+#                     几个 adj=-800 的常驻守护（qms / ims / dataservices），
+#                     但同时也装着几十个纯缓存应用。没有更细的粒度可用，
+#                     宁可漏保护那几个守护，也不能把整桶豁免掉 —— 8 GB 机器
+#                     上那等于放弃 swap。这里只记一条日志备查。
+# ---------------------------------------------------------------------------
 # ============================================================================
 exempt_persistent_memcg() {
     [ -d /dev/memcg/apps ] || { log_msg "memcg-exempt: /dev/memcg/apps 不存在，跳过"; return 0; }
 
+    # 只在小内存档位偏离原厂。理由见上文：原厂把 min_free_kbytes 和
+    # avail_buffers 都按内存分了档，唯独 ub_mem2zram_ratio=80 不分；12/16 GB
+    # 上余量足够，实测手机（11 GB）也确实一直跑原厂的 300 且没有可感知抖动，
+    # 那里就该保持原厂。RamSizeGB 的算法与原厂 init.kernel.post_boot-memory.sh
+    # 一致，好让这里的档位和原厂那套对得上。
+    _memtotal_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    case "$_memtotal_kb" in
+        ''|*[!0-9]*)
+            log_msg "memcg-exempt: 读不出 MemTotal，保守起见保持原厂 app_score"
+            return 0 ;;
+    esac
+    _ram_gb=$(( _memtotal_kb / 1048576 + 1 ))
+    if [ "$_ram_gb" -gt 8 ]; then
+        log_msg "memcg-exempt: RAM=${_ram_gb}GB > 8GB，保持原厂 app_score=300，不偏离"
+        return 0
+    fi
+
     _n=0
     _seen=" "
     _names=""
+    _inactive_hits=0
 
     for _p in /proc/[0-9]*; do
         _adj=$(cat "$_p/oom_score_adj" 2>/dev/null) || continue
@@ -739,16 +814,27 @@ exempt_persistent_memcg() {
         esac
         [ "$_adj" -le -700 ] 2>/dev/null || continue
 
-        _uid=$(awk '/^Uid:/{print $2; exit}' "$_p/status" 2>/dev/null)
-        [ -n "$_uid" ] || continue
-        # 同一个 uid 下往往有几十个进程（uid_0/uid_1000 尤其），去重，否则重复写几百次
-        case "$_seen" in *" $_uid "*) continue ;; esac
-        _seen="$_seen$_uid "
+        # 关键：用进程实际所在的 memcg，不猜布局
+        _mc=$(awk -F: '/:memory:/{print $3; exit}' "$_p/cgroup" 2>/dev/null)
+        [ -n "$_mc" ] || continue
 
-        _d=/dev/memcg/apps/uid_$_uid
+        case "$_mc" in
+            /|/apps)
+                continue ;;            # 根组，见上文
+            /apps/inactive)
+                _inactive_hits=$((_inactive_hits + 1))
+                continue ;;
+            *) ;;
+        esac
+
+        # 同一个组下往往有几十个进程，去重，否则重复写几百次
+        case "$_seen" in *" $_mc "*) continue ;; esac
+        _seen="$_seen$_mc "
+
+        _d=/dev/memcg$_mc
         [ -f "$_d/memory.app_score" ] || continue
 
-        # uid 层与它下面所有 pid 层都写：匿名页是记在叶子 memcg 上的。
+        # 组本身与它下面所有 pid 层都写：匿名页是记在叶子 memcg 上的。
         echo 0 > "$_d/memory.app_score" 2>/dev/null
         for _pd in "$_d"/pid_*/; do
             [ -f "$_pd/memory.app_score" ] && echo 0 > "$_pd/memory.app_score" 2>/dev/null
@@ -756,14 +842,30 @@ exempt_persistent_memcg() {
 
         if [ "$(cat "$_d/memory.app_score" 2>/dev/null)" = 0 ]; then
             _n=$((_n + 1))
-            _names="$_names $_uid"
+            _names="$_names $_mc"
+        fi
+    done
+
+    # 发现循环只能找到"此刻组里有 adj<=-700 进程"的组，而本脚本在
+    # sys.boot_completed 就跑，实测那时 SystemUI 还没落进 /apps/active
+    # （2026-09-09 开机日志只写中了 systemserver）。active 和 systemserver 是
+    # 原厂固定的分层组，本来就是这段 8 GB 档策略的目标，不该靠时序去撞，
+    # 这里显式对齐一次；分数写在组上，之后谁进来都按这个策略走。
+    for _g in systemserver active; do
+        _gd=/dev/memcg/apps/$_g
+        [ -f "$_gd/memory.app_score" ] || continue
+        [ "$(cat "$_gd/memory.app_score" 2>/dev/null)" = 0 ] && continue
+        echo 0 > "$_gd/memory.app_score" 2>/dev/null
+        if [ "$(cat "$_gd/memory.app_score" 2>/dev/null)" = 0 ]; then
+            _n=$((_n + 1))
+            _names="$_names /apps/$_g(显式)"
         fi
     done
 
     if [ "$_n" -gt 0 ]; then
-        log_msg "memcg-exempt: 已给 $_n 个常驻 uid 写 app_score=0 —— uid:$_names"
+        log_msg "memcg-exempt: RAM=${_ram_gb}GB，已给 $_n 个 memcg 写 app_score=0 ——$_names（/apps/inactive 中另有 $_inactive_hits 个 adj<=-700 进程，按策略不豁免整桶）"
     else
-        log_msg "WARN: memcg-exempt: 没找到任何 adj<=-700 的 uid memcg，前台豁免链路可能没起来"
+        log_msg "WARN: memcg-exempt: 没找到任何可写的 adj<=-700 memcg（inactive 命中 $_inactive_hits），前台豁免链路可能没起来"
     fi
 }
 

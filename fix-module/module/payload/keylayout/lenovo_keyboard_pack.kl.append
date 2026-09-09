@@ -1,0 +1,10 @@
+
+# Lenovo Keyboard Pack for Yoga Tab Keyboard (USB 17ef:6271).
+# KSU hybrid mount cannot add a new file to /system/usr/keylayout on this
+# dynamic-partition port.  post-fs-data appends these to a private copy of the
+# stock Generic.kl and bind-mounts that existing target instead.
+# 0x391 is the hardware microphone-privacy switch, not media-volume mute.
+key usage 0x000c0391 MUTE
+key usage 0x000c0394 F13
+key usage 0x000c0395 F14
+key usage 0x000c0398 F15

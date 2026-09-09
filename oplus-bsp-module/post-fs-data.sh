@@ -126,6 +126,8 @@ oplus_cpu_sched_eas_opt
 oplus_cpu_sched_frame_boost
 oplus_cpu_sched_task_sched
 oplus_cpu_waker_identify
+oplus_bsp_zram_opt
+oplus_bsp_kswapd_opt
 oplus_mm_hybridswap_zram
 oplus_mm_exit_mm_optimize
 ua_cpu_ioctl
@@ -137,6 +139,10 @@ oplus_bsp_lz4k
 cpufreq_effiency
 oplus_resctrl
 "
+
+# 原机同构的内存策略层：二者只挂 Android GKI 已有的 reclaim hooks，
+# 不替换已工作的 zram/HybridSwap 驱动。二者位于 MODULES 里的
+# HybridSwap 之前，使 init.oplus.nandswap.sh 能写入其动态参数。
 
 # ---------------------------------------------------------------------------
 # 末尾三个是自行补编的（sweep 脚本当年漏掉了它们）：

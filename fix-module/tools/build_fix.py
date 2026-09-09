@@ -93,6 +93,14 @@ def verify_hook_payload(apk: Path) -> None:
 
 
 def main() -> None:
+    keyboard_builder = ROOT.parents[0] / "tools" / "build_keyboard_bridge.py"
+    keyboard_binary = ROOT / "bin" / "lenovo-keyboard-bridge"
+    try:
+        subprocess.run([sys.executable, str(keyboard_builder)], check=True)
+    except (subprocess.CalledProcessError, SystemExit):
+        if not keyboard_binary.is_file():
+            raise
+        print(f"toolchain unavailable; keeping {keyboard_binary}")
     # Same policy as the patcher jar below: rebuild from source when the
     # toolchain is present, but fall back to the checked-in build product
     # rather than refusing to package. Both jars are byte-reproducible, so a
