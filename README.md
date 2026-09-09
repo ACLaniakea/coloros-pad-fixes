@@ -14,7 +14,7 @@
 项目以配套内核、KernelSU 模块和 LSPosed Hook 补齐移植系统的硬件适配、框架兼容与外设桥接。
 
 > [!WARNING]
-> **4.0.0 必须成对刷入 Release 内的 `boot-ACLaniakea-SM8650Q-droidspaces-r1.img` 与 `vendor_boot-hyperSched-stub.img`。** 两者均已在 TB710FU 实机验证。`vendor_boot-ColorOS16-original-TB710FU.img` 仅用于回退原始 ColorOS 引导链，不能与本项目的 boot 混刷。
+> **4.0.1 必须成对刷入 Release 内的 `boot-ACLaniakea-SM8650Q-droidspaces-r1.img` 与 `vendor_boot-hyperSched-stub.img`。** 两者均已在 TB710FU 实机验证。`vendor_boot-ColorOS16-original-TB710FU.img` 仅用于回退原始 ColorOS 引导链，不能与本项目的 boot 混刷。
 >
 > 不希望刷分区时，请使用最后一个纯模块版本 [v2.0.15](../../releases/tag/v2.0.15)。它不包含 3.0.0 及之后的内核级、调度与内存扩展修复，也不再维护。
 
@@ -31,7 +31,7 @@
 | 文件 | 用途 | 安装要求 |
 |---|---|---|
 | `boot-ACLaniakea-SM8650Q-droidspaces-r1.img` | 已验证的 SM8650Q r1+ 配套内核，含 DroidSpaces 容器特性 | **必刷，先刷** |
-| `vendor_boot-hyperSched-stub.img` | 与 4.0.0 boot 成套的阻塞版 vendor_boot | **必刷，与 boot 同时刷入** |
+| `vendor_boot-hyperSched-stub.img` | 与 4.0.1 boot 成套的阻塞版 vendor_boot | **必刷，与 boot 同时刷入** |
 | `vendor_boot-ColorOS16-original-TB710FU.img` | 原始 ColorOS vendor_boot 回退镜像 | **仅回退使用，不参与正常安装** |
 | `FixModule-*.zip` | 主修复模块 | **必装** |
 | `BaseFix-Hook-*.apk` | 主修复的 LSPosed Hook | **必装** |
@@ -78,7 +78,7 @@ fastboot flash vendor_boot vendor_boot-hyperSched-stub.img
 fastboot reboot
 ```
 
-不要将实验内核、旧 BSP 模块与 4.0.0 内核混用。启动后可用以下命令确认内核版本：
+不要将实验内核、旧 BSP 模块与 4.0.1 内核混用。启动后可用以下命令确认内核版本：
 
 ```bash
 adb shell uname -r
@@ -88,26 +88,26 @@ adb shell uname -r
 
 在 KernelSU 管理器中安装以下模块，全部安装完成后再重启：
 
-1. `FixModule-v4.0.0.zip`（内置 CryptoEng）
-2. `OplusBSP-Modules-v4.0.0.zip`
-3. 按需：`PenBridge-Root-v4.0.0.zip`
-4. 按需：`SM8650Q-Scene-Scheduler-v4.0.0.zip`
+1. `FixModule-v4.0.1.zip`（内置 CryptoEng）
+2. `OplusBSP-Modules-v4.0.1.zip`
+3. 按需：`PenBridge-Root-v4.0.1.zip`
+4. 按需：`SM8650Q-Scene-Scheduler-v4.0.1.zip`
 5. 按需：`LenovoPadProGT-ZUI-Camera-Port-v4.0.0.zip`
 
 命令行安装示例：
 
 ```bash
-adb push FixModule-v4.0.0.zip /sdcard/
-adb shell su -c 'ksud module install /sdcard/FixModule-v4.0.0.zip'
+adb push FixModule-v4.0.1.zip /sdcard/
+adb shell su -c 'ksud module install /sdcard/FixModule-v4.0.1.zip'
 ```
 
 ### 4. 安装并启用 LSPosed 模块
 
 ```bash
-adb install -r BaseFix-Hook-v4.0.0.apk
-adb install -r PenBridge-Hook-v4.0.0.apk       # 使用手写笔时
-adb install -r PenHidCtl-v4.0.0.apk            # 使用手写笔时
-adb install -r ZUI-Camera-Compat-v4.0.0.apk    # 使用 ZUI 相机时
+adb install -r BaseFix-Hook-v4.0.1.apk
+adb install -r PenBridge-Hook-v4.0.1.apk       # 使用手写笔时
+adb install -r PenHidCtl-v4.0.1.apk            # 使用手写笔时
+adb install -r ZUI-Camera-Compat-v4.0.1.apk    # 使用 ZUI 相机时
 ```
 
 在 LSPosed 管理器中启用模块，并使用 APK 显示的**推荐作用域**。`FixModule` 会补齐必需作用域的白名单记录，但不会替代你在 LSPosed 中启用模块的操作。
@@ -152,11 +152,11 @@ adb install -r ZUI-Camera-Compat-v4.0.0.apk    # 使用 ZUI 相机时
 
 **需要全部安装吗？**
 
-完整 4.0.0 方案需要配套 boot、主修复、BaseFix Hook 和 OPlus BSP。手写笔、Scene 与 ZUI 相机均按需安装；CryptoEng 已内置于主修复。
+完整 4.0.1 方案需要配套 boot、主修复、BaseFix Hook 和 OPlus BSP。手写笔、Scene 与 ZUI 相机均按需安装；CryptoEng 已内置于主修复。
 
 **可以不刷 boot/vendor_boot 吗？**
 
-不建议。4.0.0 的 BSP 依赖配套 boot 内核提供的符号和接口，也依赖成套阻塞版 `vendor_boot` 的启动配置。只想使用纯模块方案时请改用 v2.0.15。
+不建议。4.0.1 的 BSP 依赖配套 boot 内核提供的符号和接口，也依赖成套阻塞版 `vendor_boot` 的启动配置。只想使用纯模块方案时请改用 v2.0.15。
 
 **ZUI 相机是否替换底层相机 HAL？**
 
@@ -182,7 +182,7 @@ bash tools/build_all.sh
 
 ## 文档
 
-- [v4.0.0 发布说明](docs/4.0.0-release-notes.md)
+- [v4.0.1 发布说明](docs/4.0.1-release-notes.md)
 - [v3.2.1 发布说明](docs/3.2.1-release-notes.md)
 - [v3.2.0 发布说明](docs/3.2.0-release-notes.md)
 - [v3.1.0 发布说明](docs/3.1.0-release-notes.md)
