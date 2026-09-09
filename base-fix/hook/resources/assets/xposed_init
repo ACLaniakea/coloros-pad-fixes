@@ -20,3 +20,4 @@ com.aclaniakea.osharecontactcompat.OShareContactCryptoCompat
 com.aclaniakea.stdidcompat.StdIdGuidCompat
 com.aclaniakea.omkmscompat.OmkmsSoftwareFallback
 com.aclaniakea.flashlightlevelbridge.FlashlightLevelBridge
+com.aclaniakea.lenovokeyboardbridge.LenovoKeyboardBridge
