@@ -1493,6 +1493,25 @@ tune_topapp_affinity() {
 
 tune_topapp_affinity
 
+# ============================================================================
+# system_server AOT 产物自愈（2026-09-09）
+#
+# post-fs-data 里的 bind_system_server_oat 只负责**绑定**已有产物；产物本身
+# 不入安装包（54MB+46MB，且绑定具体 ROM 构建）。这里在开机完成后判断本机
+# 是否需要重编，需要才做——判据是 system_server 有没有真的映射 .odex。
+#
+# 放在后台且排在 service.sh 末尾：dex2oat 要数分钟并占满 CPU，不能挡住其余
+# 修复，也不该和开机高峰抢资源。产物在**下次开机**才由 post-fs-data 绑定，
+# 所以这是一次性的延迟收益，不是每次开机的开销。
+# ============================================================================
+if [ -x "$MODDIR/bin/art-oat-repair.sh" ]; then
+    (
+        # 让开机高峰过去再编，避免和首次解锁的换页争 CPU
+        sleep 180
+        sh "$MODDIR/bin/art-oat-repair.sh" "$MODDIR"
+    ) &
+fi
+
 # ===== frontled: 前摄指示灯（事件驱动，2026-09-04） =====
 # CameraServiceProxy 的 LSPosed bridge 直接消费相机所有权事件并写 RGB 节点。
 # 旧版 shell 每秒 dumpsys media.camera 会在 system_server 侧制造持续 binder
