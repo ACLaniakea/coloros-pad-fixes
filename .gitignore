@@ -74,3 +74,4 @@ workspace/aon-service.dex
 workspace/aperture-final.png
 workspace/toolchains/
 fix-module/module/hook/BaseFix-Hook.apk
+fix-module/module/payload/oat/

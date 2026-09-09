@@ -29,6 +29,56 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# The detachable keyboard is exposed by Lenovo's platform driver on BUS_HOST,
+# so Android defaults it to an internal device and ColorOS disables the native
+# trackpad controls.  Correct only that device's classification through the
+# documented per-device IDC path.
+LENOVO_IDC_SOURCE="$MODDIR/payload/idc/Vendor_17ef_Product_6271.idc"
+LENOVO_IDC_DIR=/data/system/devices/idc
+LENOVO_IDC_TARGET="$LENOVO_IDC_DIR/Vendor_17ef_Product_6271.idc"
+if [ -f "$LENOVO_IDC_SOURCE" ]; then
+    mkdir -p "$LENOVO_IDC_DIR" 2>/dev/null
+    cp -f "$LENOVO_IDC_SOURCE" "$LENOVO_IDC_TARGET" 2>/dev/null
+    chown 0:0 "$LENOVO_IDC_TARGET" 2>/dev/null
+    chmod 0644 "$LENOVO_IDC_TARGET" 2>/dev/null
+    restorecon "$LENOVO_IDC_TARGET" 2>/dev/null || \
+        chcon u:object_r:system_data_file:s0 "$LENOVO_IDC_TARGET" 2>/dev/null
+    log_msg "Lenovo keyboard/trackpad classified as detachable external input"
+fi
+
+# ============================================================================
+# Lenovo Keyboard Pack private consumer keys
+#
+# KernelSU Hybrid Mount cannot add a file beneath the EROFS system keylayout
+# directory.  Android's documented per-device data path is checked *before*
+# Generic.kl, though, and does not have that limitation.  A device-specific
+# layout *replaces* Generic rather than extending it, so compose a complete
+# copy of the stock Generic map plus Lenovo's four private usages.  This keeps
+# normal typing intact while scoping the additional mappings to 17ef:6271.
+# ============================================================================
+LENOVO_KL_SOURCE="$MODDIR/payload/keylayout/Vendor_17ef_Product_6271.kl"
+LENOVO_KL_GENERIC=/system/usr/keylayout/Generic.kl
+LENOVO_KL_DIR=/data/system/devices/keylayout
+LENOVO_KL_TARGET="$LENOVO_KL_DIR/Vendor_17ef_Product_6271.kl"
+if [ -f "$LENOVO_KL_SOURCE" ] && [ -f "$LENOVO_KL_GENERIC" ]; then
+    mkdir -p "$LENOVO_KL_DIR" 2>/dev/null
+    # Recreate on each early boot: the file is tiny and this also replaces the
+    # short, broken layout produced by older module revisions.
+    if { cat "$LENOVO_KL_GENERIC"; printf '\n'; cat "$LENOVO_KL_SOURCE"; } >"$LENOVO_KL_TARGET.tmp" 2>/dev/null; then
+        mv -f "$LENOVO_KL_TARGET.tmp" "$LENOVO_KL_TARGET"
+        chown 0:0 "$LENOVO_KL_TARGET" 2>/dev/null
+        chmod 0644 "$LENOVO_KL_TARGET" 2>/dev/null
+        restorecon "$LENOVO_KL_TARGET" 2>/dev/null || chcon u:object_r:system_data_file:s0 "$LENOVO_KL_TARGET" 2>/dev/null
+    fi
+    log_msg "Lenovo keyboard device-specific layout ready"
+fi
+
+# Do not overlay the keylayout directory: some vendor input stacks keep an
+# early file-descriptor cache for Generic.kl and lose normal alphanumeric keys
+# when its directory mount changes.  The dedicated data layout above remains
+# available for stacks that support it; otherwise the stock Generic layout is
+# deliberately left untouched until a device-specific provider is available.
+
 # Athena 原厂关闭内存扩展时会同时写：
 #   persist.sys.oplus.nandswap=false
 #   persist.sys.oplus.nandswap.swapsize=0
@@ -685,6 +735,87 @@ bind_over() {
 #     CRLF 改成 LF；要改就从 .stock-baseline/ 拿原件做文本级 patch。
 bind_over sys_memory_nirvana_config.xml
 bind_over sys_osense_memory_decisionmaker_config.xml
+
+# ============================================================================
+# system_server 的 AOT 产物：用本机重编的版本覆盖移植包里失配的那份
+#
+# 症状：解锁卡顿、system_server 占用高。定位到 ART —— system_server 主体
+# services.jar（18MB dex）在纯解释执行 + JIT，`Jit thread pool` 累计占
+# uptime 的 5.4%（同代 ColorOS 对照机 0.167%）。
+#
+# 根因：移植时 services.jar 的主 dex 被换过（zip CRC 变了），配套 oat 产物
+# 没重建。/system/framework/oat/arm64/services.vdex 里的 5 个 location
+# checksum 只有 classes.dex 那个对不上，ART 要求全部匹配，一个不符即整份
+# 拒绝，退回从 jar 直读原始 dex。同一个 checksum 也让 services.jar.prof
+# 失效，所以 speed-profile 编译只产出 0.2MB 空壳，必须用 speed 全量编。
+#
+# 系统自己修不了：odrefresh 只看文件存在性与 apex 版本，报告
+# "system_server artifacts on /system OK" 因而从不重编；而它编到
+# /data/misc/apexdata 的产物会在下次开机被自己当多余清掉（实测三次）。
+#
+# 产物必须手工重编。**不能**用模块的 system/ 目录投递：这台设备上 KernelSU
+# 的模块 system 自动挂载不工作（模块原有的 system/system_ext/etc/horae/
+# horae_.conf 同样从未生效），项目一贯手工 bind，这里沿用同一套路。
+#
+# 重编命令（三个参数缺一不可，每个都是踩坑换来的）：
+#   BCP=$(adb shell echo '$BOOTCLASSPATH')
+#   dex2oat64 --android-root=out/empty \
+#     --instruction-set=arm64 --instruction-set-features=default \
+#     --instruction-set-variant=kryo300 --compiler-filter=speed \
+#     --no-abort-on-hard-verifier-error --no-abort-on-soft-verifier-error \
+#     --dex-file=/system/framework/services.jar \
+#     --oat-file=<out>/services.odex --app-image-file=<out>/services.art \
+#     --boot-image=/system/framework/boot.art:/system/framework/boot-framework-adservices.art \
+#     --class-loader-context=PCL[/system/framework/com.android.location.provider.jar] \
+#     --runtime-arg -Xbootclasspath:$BCP --runtime-arg -Xbootclasspath-locations:$BCP
+#
+#   1) --compiler-filter=speed  —— speed-profile 因 profile 同源失效只出空壳
+#   2) --boot-image 必须是**双组件链**（冒号分隔）—— 单组件会让头部记成
+#      "i;22/..." 而运行时是 "i;22/...:i;29/..."，校验和结构不符
+#   3) --class-loader-context 必须是 PCL[com.android.location.provider.jar]
+#      —— 它是 SYSTEMSERVERCLASSPATH 里排在 services.jar 前面的那个 jar。
+#      缺这一项时 ART 的表现是**收下 vdex、拒绝 odex**（只映射 .vdex），
+#      极易误判成校验失败。判据：dexoptanalyzer 退出码为 0（认为产物可用）
+#      但 maps 里没有 .odex，就是 context 不匹配。
+#
+# 验证方法：`grep services /proc/$(pidof system_server)/maps`，三个产物
+# （.art/.odex/.vdex）全部出现才算生效。产物头部的 classpath 字段应与
+# 正常设备上的一致，含 jar 的 checksum。
+#
+# 已确认：三个产物全部被 ART 采纳（连续重启复现）。
+# 未确认：对解锁掉帧与 system_server 占用的实际改善幅度——采样窗口有用户
+# 操作干扰，尚未取得干净的稳态对照，不在此处宣称收益。
+#
+# 已知脆弱点：产物绑定在当前 /system boot 镜像上。若某次 odrefresh 重建了
+# boot 镜像到 apexdata，ART 会改用那条链，这份产物随即失配，退回解释执行
+# （不会更糟）。
+#
+# 产物不入库（54MB+46MB，且绑定具体构建）。模块安装包里若无 payload/oat/，
+# 本函数静默跳过，不影响其余修复。
+# ============================================================================
+bind_system_server_oat() {
+    _src="$MODDIR/payload/oat"
+    _dst=/system/framework/oat/arm64
+    [ -d "$_src" ] || return 0
+    for _f in services.odex services.vdex services.art; do
+        [ -f "$_src/$_f" ] || { log_msg "system_server oat: 缺 $_f，整组跳过"; return 0; }
+    done
+    _done=""
+    for _f in services.odex services.vdex services.art; do
+        [ -f "$_dst/$_f" ] || continue
+        chown 0:0 "$_src/$_f"
+        chmod 0644 "$_src/$_f"
+        chcon u:object_r:system_file:s0 "$_src/$_f" 2>/dev/null
+        if mount --bind "$_src/$_f" "$_dst/$_f" 2>/dev/null; then
+            _done="$_done $_f"
+        else
+            log_msg "WARN: system_server oat bind 失败 $_f"
+        fi
+    done
+    [ -n "$_done" ] && log_msg "system_server oat 已绑定本机重编产物:$_done"
+}
+
+bind_system_server_oat
 
 # ============================================================================
 # OPlus 特性表覆盖（增量派生，不再 bind 手工快照）
