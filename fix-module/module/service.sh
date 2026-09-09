@@ -33,6 +33,20 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# Do not keep a userspace keyboard bridge resident.  The detachable keyboard
+# layout is installed during post-fs-data; functional-key handling is kept in
+# the module's in-process Settings/framework compatibility layer instead.
+
+# ColorOS stores the trackpad master state independently from its proprietary
+# Bluetooth-keyboard capability provider.  The Lenovo cover is wired, so that
+# provider cannot report firmware capability and leaves a missing value as
+# "off".  Seed only the documented global default once; the Settings switch
+# remains the source of truth afterwards.
+if [ "$(settings get global tpEnable 2>/dev/null)" = null ]; then
+    settings put global tpEnable 1 2>/dev/null
+    log_msg "Lenovo detachable trackpad default enabled"
+fi
+
 # A previous diagnostic force-stop left the product AON package in Android's
 # persisted stopped state.  Do not launch it here: merely make the stock
 # SmartFaceGaze/Attention bind path eligible again when the user enables AON.
@@ -1354,6 +1368,66 @@ check_speaker_calibration() {
 }
 
 check_speaker_calibration
+
+# ============================================================================
+# 移植包把充电控制节点开成了全局可写（2026-09-09）
+#
+# /system/etc/init/init.lwky.rc 是移植者自带的（不是原厂），它在 boot_completed
+# 时做了这些：
+#     chown system system + chmod 0666  battery/charging_enable
+#     chown system system + chmod 0666  battery/charge_control_limit
+#     chown system system + chmod 0666  usb/real_type
+# 实测三个节点都是 -rw-rw-rw- system system。charging_enable 全局可写意味着
+# **任何一个应用都能停掉本机充电**；charge_control_limit 能给充电限档；
+# real_type 本身是只读状态节点，开成全局可写没有任何意义。
+#
+# 根因是 lwky_charge / lwky_cover 两个常驻 root 守护进程跑在 u:r:shell:s0 域
+# 上——移植者没写 sepolicy，改用放宽 DAC 权限硬顶。真正的修法是给它们配独立
+# 域并换掉这个 rc，但那要动开机流程，seclabel 配错会让充电保护和磁吸保护套
+# 一起起不来，暂不触碰。
+#
+# 这里只做最小且精确的收敛：**只去掉 other 的写位，其余一律不动。**
+#     charging_enable / charge_control_limit   0666 -> 0664
+#     real_type（只读状态）                     0666 -> 0444
+# 属主保持 system:system，所以既有的两条写入路径都不受影响：ColorOS 充电保护
+# 走 system，lwky_charge 走 root。变化只是应用侧失去写权限。
+#
+# 不收 other 的读位：这三个值都不敏感，收了只会给未知的读者制造破坏面。
+# /proc/{game_mode,game_edge,support_pen,gesture_control} 被同一个 rc 开成
+# 0666，但可能由移植者那套非 system 的设置界面读写，**这次不动**。
+#
+# 可逆：init.lwky.rc 每次开机都会重放它的 chmod，卸载模块重启即回到原状，
+# 不需要任何持久化记录。
+# ============================================================================
+harden_lwky_charge_nodes() {
+    _bat=/sys/class/power_supply/battery
+    _usb=/sys/class/power_supply/usb
+    # 不盲睡：等 init.lwky.rc 那条 chmod 0666 真的落下来再收，否则可能抢在它
+    # 前面、随后又被它覆盖回去。service.sh 走到这里时它早该跑完了，这段轮询
+    # 只是兜底，正常路径下 _w=0 直接过。
+    _w=0
+    while [ "$_w" -lt 15 ]; do
+        [ "$(stat -c %a "$_bat/charging_enable" 2>/dev/null)" = 666 ] && break
+        _w=$((_w + 1))
+        sleep 1
+    done
+    _changed=""
+    for _n in "$_bat/charging_enable" "$_bat/charge_control_limit"; do
+        [ -e "$_n" ] || continue
+        [ "$(stat -c %a "$_n" 2>/dev/null)" = 666 ] || continue
+        chmod 0664 "$_n" 2>/dev/null && _changed="$_changed ${_n##*/}=664"
+    done
+    if [ "$(stat -c %a "$_usb/real_type" 2>/dev/null)" = 666 ]; then
+        chmod 0444 "$_usb/real_type" 2>/dev/null && _changed="$_changed real_type=444"
+    fi
+    if [ -n "$_changed" ]; then
+        log_msg "lwky charge nodes hardened (waited ${_w}s):$_changed"
+    else
+        log_msg "lwky charge nodes: none left at 0666 after ${_w}s, untouched"
+    fi
+}
+
+harden_lwky_charge_nodes
 
 # ===== frontled: 前摄指示灯（事件驱动，2026-09-04） =====
 # CameraServiceProxy 的 LSPosed bridge 直接消费相机所有权事件并写 RGB 节点。
