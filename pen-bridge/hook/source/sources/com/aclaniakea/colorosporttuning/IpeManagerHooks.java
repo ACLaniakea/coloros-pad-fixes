@@ -56,6 +56,8 @@ final class IpeManagerHooks {
     private static final List<Object> pencilPanelCallbacks = new ArrayList();
     private static volatile String lastStockProfileMac = "";
     private static volatile String lastStockGattConnectMac = "";
+    private static final String PEN_HAPTIC_PAGE_EXTRA = "aclaniakea_lenovo_pen_haptic_page";
+    private static final List<Object> writingHapticPatternRows = new ArrayList();
 
     static void install(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         ipeClassLoader = loadPackageParam.classLoader;
@@ -271,6 +273,7 @@ final class IpeManagerHooks {
         installRiskGuard(loadPackageParam);
         installGestureTextBridge(loadPackageParam);
         installWritingHapticPreference(loadPackageParam);
+        installStockTouchFeedbackBridge(loadPackageParam);
         installPencilPanelControlBridge(loadPackageParam);
         installMyDevicesCardBatteryBridge(loadPackageParam);
         installMyDevicesStateBridge(loadPackageParam);
@@ -1648,6 +1651,338 @@ final class IpeManagerHooks {
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.setting.fragment.t0", "onResume", xC_MethodHook);
     }
 
+    /** Attach the bridge only when the stock tactile-feedback page was opened
+     * from our global-writing row.  Opening that OEM page elsewhere remains
+     * entirely stock. */
+    private static void installStockTouchFeedbackBridge(final XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        XC_MethodHook tactilePage = new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam hook) {
+                configureStockTouchFeedbackBridge(loadPackageParam.classLoader, hook.thisObject);
+            }
+        };
+        HookUtils.hookAll(loadPackageParam.classLoader,
+                "com.oplus.ipemanager.btadsorb.setting.fragment.e1", "onCreatePreferences",
+                tactilePage);
+        // The stock fragment re-renders its own rows in onResume; re-apply the
+        // hiding there so they cannot come back after the page is revisited.
+        HookUtils.hookAll(loadPackageParam.classLoader,
+                "com.oplus.ipemanager.btadsorb.setting.fragment.e1", "onResume", tactilePage);
+        // Preserve the OEM callbacks, then mirror their real values to the
+        // Lenovo transport.  Hooking after rather than replacing the callback
+        // keeps IPe's own BLE settings path and UI state intact.
+        HookUtils.hookAll(loadPackageParam.classLoader,
+                "com.oplus.ipemanager.btadsorb.setting.fragment.u0", "onPreferenceChange",
+                new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam hook) {
+                        mirrorStockTouchFeedbackSwitch(hook.thisObject, hook.args);
+                    }
+                });
+        HookUtils.hookAll(loadPackageParam.classLoader,
+                "com.oplus.ipemanager.btadsorb.setting.fragment.z0", "onProgressChanged",
+                new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam hook) {
+                        mirrorStockTouchFeedbackLevel(hook.thisObject, hook.args);
+                    }
+                });
+        HookUtils.hookAll(loadPackageParam.classLoader, "androidx.preference.Preference",
+                "performClick", new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                        handleWritingHapticPatternClick(hook);
+                    }
+                });
+    }
+
+    private static boolean isOurStockTouchFeedbackPage(Object fragment) {
+        try {
+            Object activity = fragment.getClass().getMethod("getActivity", new Class[0])
+                    .invoke(fragment, new Object[0]);
+            return activity instanceof android.app.Activity
+                    && "com.oplus.ipemanager.btadsorb.setting.activity.PencilTouchFeedbackActivity"
+                    .equals(activity.getClass().getName());
+        } catch (Throwable ignored) { return false; }
+    }
+
+    private static void configureStockTouchFeedbackBridge(final ClassLoader loader,
+            final Object fragment) {
+        if (!isOurStockTouchFeedbackPage(fragment)) return;
+        try {
+            final Context context = (Context) fragment.getClass()
+                    .getMethod("getContext", new Class[0]).invoke(fragment, new Object[0]);
+            if (context == null) return;
+            Object screen = fragment.getClass().getMethod("getPreferenceScreen", new Class[0])
+                    .invoke(fragment, new Object[0]);
+            if (screen == null) return;
+            Method find = screen.getClass().getMethod("findPreference", CharSequence.class);
+            Class<?> pref0 = Class.forName("androidx.preference.Preference", false, loader);
+            Method setVisible = pref0.getMethod("setVisible", Boolean.TYPE);
+            // All three OEM rows here are addressed to hardware this pen does
+            // not have: `s0.u0` (written feedback) and `s0.N` (level) write a
+            // ColorOS INTERFACE characteristic the pen never exposes, and the
+            // OEM binder's setFunctionFeedbackEnable is an empty method that
+            // only logs.  Leaving controls on screen that cannot move anything
+            // is worse than not showing them, so they are hidden and replaced
+            // by one switch wired to the transport that does work.  The rows
+            // themselves are untouched OEM objects; only visibility changes.
+            for (String hidden : new String[]{"pencil_write_feedback",
+                    "pencil_function_feedback", "pencil_section_seek_bar",
+                    "writing_feedback_trial_area"}) {
+                Object row = find.invoke(screen, hidden);
+                if (row != null) setVisible.invoke(row, false);
+            }
+            // The stock page reads its own local_config store in onResume;
+            // keep that store in step with the real Lenovo transport state so
+            // nothing else in IPe acts on a stale value.
+            boolean writingEnabled = Settings.Global.getInt(context.getContentResolver(),
+                    "lenovo_pen_global_writing_haptic", 1) != 0;
+            stockPutBoolean(loader, context, "sp_key_unic_written_feedback_state", writingEnabled);
+            if (find.invoke(screen, "lenovo_pen_haptic_patterns") != null) {
+                Object existing = find.invoke(screen, "lenovo_pen_global_writing_haptic");
+                if (existing != null) existing.getClass().getMethod("setChecked", Boolean.TYPE)
+                        .invoke(existing, writingEnabled);
+                return;
+            }
+            addGlobalWritingHapticSwitch(loader, context, screen, writingEnabled);
+            synchronized (writingHapticPatternRows) { writingHapticPatternRows.clear(); }
+            Class<?> pref = Class.forName("androidx.preference.Preference", false, loader);
+            Class<?> categoryType = Class.forName("com.coui.appcompat.preference.COUIPreferenceCategory", false, loader);
+            Object category = categoryType.getConstructor(Context.class,
+                    android.util.AttributeSet.class).newInstance(context, null);
+            pref.getMethod("setKey", String.class).invoke(category, "lenovo_pen_haptic_patterns");
+            pref.getMethod("setTitle", CharSequence.class).invoke(category, "笔触感");
+            pref.getMethod("setOrder", Integer.TYPE).invoke(category, -999);
+            screen.getClass().getMethod("addPreference", pref).invoke(screen, category);
+            Class<?> markType = Class.forName("com.coui.appcompat.preference.COUIMarkPreference", false, loader);
+            Class<?> changeType = Class.forName("androidx.preference.Preference$OnPreferenceChangeListener", false, loader);
+            final String selected = Settings.Global.getString(context.getContentResolver(),
+                    "lenovo_pen_global_writing_haptic_pattern");
+            final String[] values = {"pencil", "fountain", "ballpoint", "marker", "gear"};
+            final String[] labels = {"铅笔", "钢笔", "圆珠笔", "马克笔", "齿轮"};
+            final String[] descriptions = {
+                    "连续、轻柔的原厂书写反馈",
+                    "起笔清晰，行笔节奏舒缓",
+                    "短促紧实，适合快速书写",
+                    "宽厚平稳，适合涂写与标记",
+                    "高频交替的颗粒感反馈"
+            };
+            for (int i = 0; i < values.length; i++) {
+                final String value = values[i];
+                Object row = markType.getConstructor(Context.class).newInstance(context);
+                pref.getMethod("setKey", String.class).invoke(row, "lenovo_pen_haptic_pattern_" + value);
+                pref.getMethod("setTitle", CharSequence.class).invoke(row, labels[i]);
+                pref.getMethod("setSummary", CharSequence.class).invoke(row, descriptions[i]);
+                pref.getMethod("setPersistent", Boolean.TYPE).invoke(row, false);
+                row.getClass().getMethod("setChecked", Boolean.TYPE).invoke(row,
+                        value.equals(selected == null ? "pencil" : selected));
+                // COUIMarkPreference is checkable by default.  Intercept its
+                // value change (rather than its click) and return false so a
+                // tap never leaves multiple marks checked; the page redraws
+                // from the one persisted pattern value.
+                pref.getMethod("setOnPreferenceChangeListener", changeType).invoke(row,
+                        Proxy.newProxyInstance(loader, new Class[]{changeType}, new InvocationHandler() {
+                            @Override public Object invoke(Object proxy, Method method, Object[] args) {
+                                if (!"onPreferenceChange".equals(method.getName())) return Boolean.FALSE;
+                                Settings.Global.putString(context.getContentResolver(),
+                                        "lenovo_pen_global_writing_haptic_pattern", value);
+                                context.sendBroadcast(new Intent(PenBridgeConstants.HAPTIC_COMMAND)
+                                        .putExtra("pattern", value));
+                                try {
+                                    Object activity = fragment.getClass().getMethod("getActivity", new Class[0])
+                                            .invoke(fragment, new Object[0]);
+                                    if (activity instanceof android.app.Activity) ((android.app.Activity) activity).recreate();
+                                } catch (Throwable ignored) { }
+                                return Boolean.FALSE;
+                            }
+                        }));
+                category.getClass().getMethod("addPreference", pref).invoke(category, row);
+                synchronized (writingHapticPatternRows) { writingHapticPatternRows.add(row); }
+            }
+            HookUtils.log("stock tactile-feedback page bridged with pen patterns");
+        } catch (Throwable th) { HookUtils.log("stock tactile-feedback bridge: " + th); }
+    }
+
+    /**
+     * IPe keeps the tactile-feedback settings in its own `local_config`
+     * provider store (`y1.b`), not in Settings.Global.  Read and write it
+     * through the OEM helper so the stock fragment, the OEM `s0` command
+     * path and this bridge always agree on one value.
+     */
+    private static Class<?> stockLocalConfig(ClassLoader loader) throws ClassNotFoundException {
+        return Class.forName("y1.b", false, loader == null ? ipeClassLoader : loader);
+    }
+
+    private static int stockGetInt(ClassLoader loader, Context context, String key, int fallback) {
+        try {
+            Method get = stockLocalConfig(loader).getDeclaredMethod("c", Context.class,
+                    Integer.TYPE, String.class);
+            get.setAccessible(true);
+            Object value = get.invoke(null, context, Integer.valueOf(fallback), key);
+            if (value instanceof Number) return ((Number) value).intValue();
+        } catch (Throwable th) {
+            HookUtils.log("OEM local_config read " + key + ": " + th);
+        }
+        return fallback;
+    }
+
+    private static void stockPutInt(ClassLoader loader, Context context, String key, int value) {
+        try {
+            Method put = stockLocalConfig(loader).getDeclaredMethod("g", Context.class,
+                    Integer.TYPE, String.class);
+            put.setAccessible(true);
+            put.invoke(null, context, Integer.valueOf(value), key);
+        } catch (Throwable th) {
+            HookUtils.log("OEM local_config write " + key + ": " + th);
+        }
+    }
+
+    private static void stockPutBoolean(ClassLoader loader, Context context, String key,
+            boolean value) {
+        try {
+            Method put = stockLocalConfig(loader).getDeclaredMethod("f", Context.class,
+                    String.class, Boolean.TYPE);
+            put.setAccessible(true);
+            put.invoke(null, context, key, Boolean.valueOf(value));
+        } catch (Throwable th) {
+            HookUtils.log("OEM local_config write " + key + ": " + th);
+        }
+    }
+
+    /**
+     * The one control on this page that reaches real hardware.  It is a stock
+     * COUISwitchPreference so it renders exactly like the OEM rows it
+     * replaces, and it drives the Lenovo writing transport directly rather
+     * than the dead ColorOS command path.
+     */
+    private static void addGlobalWritingHapticSwitch(ClassLoader loader, final Context context,
+            Object screen, boolean enabled) {
+        try {
+            Class<?> pref = Class.forName("androidx.preference.Preference", false, loader);
+            Class<?> switchType = Class.forName(
+                    "com.coui.appcompat.preference.COUISwitchPreference", false, loader);
+            Object row;
+            try {
+                row = switchType.getConstructor(Context.class).newInstance(context);
+            } catch (NoSuchMethodException unused) {
+                row = switchType.getConstructor(Context.class, android.util.AttributeSet.class)
+                        .newInstance(context, null);
+            }
+            pref.getMethod("setKey", String.class).invoke(row, "lenovo_pen_global_writing_haptic");
+            pref.getMethod("setTitle", CharSequence.class).invoke(row, "全局书写反馈");
+            pref.getMethod("setSummary", CharSequence.class)
+                    .invoke(row, "书写时启用手写笔连续触觉反馈");
+            pref.getMethod("setPersistent", Boolean.TYPE).invoke(row, false);
+            pref.getMethod("setOrder", Integer.TYPE).invoke(row, -1000);
+            row.getClass().getMethod("setChecked", Boolean.TYPE).invoke(row, enabled);
+            Class<?> changeType = Class.forName(
+                    "androidx.preference.Preference$OnPreferenceChangeListener", false, loader);
+            final ClassLoader ipeLoader = loader;
+            pref.getMethod("setOnPreferenceChangeListener", changeType).invoke(row,
+                    Proxy.newProxyInstance(loader, new Class[]{changeType}, new InvocationHandler() {
+                        @Override public Object invoke(Object proxy, Method method, Object[] args) {
+                            if (!"onPreferenceChange".equals(method.getName())
+                                    || args == null || args.length < 2
+                                    || !(args[1] instanceof Boolean)) {
+                                return Boolean.FALSE;
+                            }
+                            boolean on = ((Boolean) args[1]).booleanValue();
+                            Settings.Global.putInt(context.getContentResolver(),
+                                    "lenovo_pen_global_writing_haptic", on ? 1 : 0);
+                            // Keep IPe's own store aligned; other OEM code
+                            // reads it even though its command path is dead.
+                            stockPutBoolean(ipeLoader, context,
+                                    "sp_key_unic_written_feedback_state", on);
+                            context.sendBroadcast(new Intent(PenBridgeConstants.HAPTIC_COMMAND)
+                                    .putExtra("enabled", on));
+                            HookUtils.log("global writing haptic=" + on);
+                            return Boolean.TRUE;
+                        }
+                    }));
+            screen.getClass().getMethod("addPreference", pref).invoke(screen, row);
+            HookUtils.log("global writing haptic switch injected enabled=" + enabled);
+        } catch (Throwable th) {
+            HookUtils.log("global writing haptic switch: " + th);
+        }
+    }
+
+    private static Object stockTouchFeedbackFragment(Object callback, String field) {
+        try {
+            Field value = callback.getClass().getDeclaredField(field);
+            value.setAccessible(true);
+            return value.get(callback);
+        } catch (Throwable ignored) { return null; }
+    }
+
+    private static void mirrorStockTouchFeedbackSwitch(Object callback, Object[] args) {
+        if (args == null || args.length < 2 || !(args[1] instanceof Boolean)) return;
+        Object fragment = stockTouchFeedbackFragment(callback, "c"); // u0.this$0
+        if (!isOurStockTouchFeedbackPage(fragment)) return;
+        try {
+            String key = String.valueOf(HookUtils.call(args[0], "getKey"));
+            Context context = (Context) HookUtils.call(fragment, "getContext");
+            if (context == null) return;
+            boolean enabled = ((Boolean) args[1]).booleanValue();
+            if ("pencil_write_feedback".equals(key)) {
+                Settings.Global.putInt(context.getContentResolver(),
+                        "lenovo_pen_global_writing_haptic", enabled ? 1 : 0);
+                context.sendBroadcast(new Intent(PenBridgeConstants.HAPTIC_COMMAND)
+                        .putExtra("enabled", enabled));
+                HookUtils.log("stock writing-feedback bridged=" + enabled);
+            } else if ("pencil_function_feedback".equals(key)) {
+                // The OEM binder's setFunctionFeedbackEnable only logs; the
+                // real stock state is `ipe_function_feedback_state`, which the
+                // OEM callback has already written.  The pen-side action is
+                // driven straight from that key, so nothing is mirrored here.
+                HookUtils.log("stock function-feedback bridged=" + enabled + " key=" + key);
+            }
+        } catch (Throwable th) { HookUtils.log("stock feedback switch bridge: " + th); }
+    }
+
+    private static void mirrorStockTouchFeedbackLevel(Object callback, Object[] args) {
+        if (args == null || args.length < 2 || !(args[1] instanceof Integer)) return;
+        Object fragment = stockTouchFeedbackFragment(callback, "a"); // z0.this$0
+        if (!isOurStockTouchFeedbackPage(fragment)) return;
+        try {
+            Context context = (Context) HookUtils.call(fragment, "getContext");
+            if (context == null) return;
+            int level = ((Integer) args[1]).intValue();
+            if (level < 0) level = 0;
+            if (level > 4) level = 4;
+            Settings.Global.putInt(context.getContentResolver(),
+                    "lenovo_pen_writing_haptic_level", level);
+            // s0.N persists this too, but only once the :ble binder is bound.
+            // Writing the OEM store here keeps the slider position correct
+            // even when the stock callback never reached the service.
+            stockPutInt(ipeClassLoader, context, "sp_key_unic_written_feedback_level", level);
+            HookUtils.log("stock writing-feedback level bridged=" + level);
+        } catch (Throwable th) { HookUtils.log("stock feedback level bridge: " + th); }
+    }
+
+    private static void handleWritingHapticPatternClick(XC_MethodHook.MethodHookParam hook) {
+        try {
+            Object row = hook.thisObject;
+            String key = String.valueOf(HookUtils.call(row, "getKey"));
+            final String prefix = "lenovo_pen_haptic_pattern_";
+            if (!key.startsWith(prefix)) return;
+            String value = key.substring(prefix.length());
+            Context context = HookUtils.context(row);
+            if (context == null) return;
+            Settings.Global.putString(context.getContentResolver(),
+                    "lenovo_pen_global_writing_haptic_pattern", value);
+            context.sendBroadcast(new Intent(PenBridgeConstants.HAPTIC_COMMAND)
+                    .putExtra("pattern", value));
+            synchronized (writingHapticPatternRows) {
+                for (Object candidate : writingHapticPatternRows) {
+                    boolean checked = candidate == row;
+                    HookUtils.call(candidate, "setChecked", Boolean.valueOf(checked));
+                    HookUtils.call(candidate, "notifyChanged");
+                }
+            }
+            // A MarkPreference is a check box underneath.  Consume its normal
+            // performClick so it cannot add a second checked item after our
+            // single-choice update above.
+            hook.setResult(null);
+            HookUtils.log("writing haptic pattern=" + value);
+        } catch (Throwable th) { HookUtils.log("writing haptic pattern click: " + th); }
+    }
     private static void refreshWritingHapticPreference() {
         Object obj = settingsFragment;
         ClassLoader classLoader = ipeClassLoader;
@@ -1663,73 +1998,82 @@ final class IpeManagerHooks {
     }
 
     private static void configureWritingHapticPreference(ClassLoader classLoader, Object obj) {
-        Object objInvoke;
         try {
-            final Context context = HookUtils.context(obj);
-            if (context != null && (objInvoke = obj.getClass().getMethod("getPreferenceScreen", new Class[0]).invoke(obj, new Object[0])) != null) {
-                Class<?> cls = Class.forName("androidx.preference.Preference", false, classLoader);
-                Method method = objInvoke.getClass().getMethod("findPreference", CharSequence.class);
-                Object objInvoke2 = method.invoke(objInvoke, "global_operation");
-                if (objInvoke2 == null) {
-                    return;
+            Context context = HookUtils.context(obj);
+            boolean connected = stockPenConnected(obj, context);
+            Class<?> preference = Class.forName("androidx.preference.Preference", false, classLoader);
+            // `touch_feedback` is already inflated from IPe's XML.  Its
+            // fragment field is assigned after the OEM capability gate, and
+            // is more reliable than looking it up while that gate rebuilds
+            // the preference hierarchy.
+            Object stock = null;
+            try {
+                Field stockField = obj.getClass().getDeclaredField("H");
+                stockField.setAccessible(true);
+                stock = stockField.get(obj);
+            } catch (Throwable ignored) { }
+            Object screen = null;
+            if (stock == null) {
+                screen = obj.getClass().getMethod("getPreferenceScreen", new Class[0])
+                        .invoke(obj, new Object[0]);
+                if (screen == null) return;
+                // This is the exact XML-defined COUIJumpPreference already
+                // owned by IPe.  Do not alter its title, assignment, layout,
+                // widget or listener: merely expose the OEM tactile-feedback
+                // entrance.
+                stock = screen.getClass().getMethod("findPreference", CharSequence.class)
+                        .invoke(screen, "touch_feedback");
+            }
+            if (stock != null) {
+                preference.getMethod("setVisible", Boolean.TYPE).invoke(stock, true);
+                preference.getMethod("setSelectable", Boolean.TYPE).invoke(stock, true);
+                // Every other row on this page is greyed out while the pen is
+                // away.  The tactile-feedback entrance only configures the
+                // connected pen, so it follows the same OEM rule.
+                preference.getMethod("setEnabled", Boolean.TYPE).invoke(stock, connected);
+                // The resource places this row in a capability-gated
+                // category.  A visible child cannot draw while that
+                // existing parent is hidden, so reveal ancestors only;
+                // they remain the original XML objects and order.
+                Object parent = preference.getMethod("getParent", new Class[0]).invoke(stock, new Object[0]);
+                for (int depth = 0; parent != null && depth < 4; depth++) {
+                    preference.getMethod("setVisible", Boolean.TYPE).invoke(parent, true);
+                    parent = preference.getMethod("getParent", new Class[0]).invoke(parent, new Object[0]);
                 }
-                Object objInvoke3 = method.invoke(objInvoke, "lenovo_pen_global_writing_haptic");
-                if (objInvoke3 == null) {
-                    objInvoke3 = method.invoke(objInvoke, "write_sound_effect_lite");
-                }
-                if (objInvoke3 == null) {
-                    objInvoke3 = method.invoke(objInvoke, "write_sound_effect");
-                }
-                if (objInvoke3 == null) {
-                    HookUtils.log("writing haptic preference: no reusable switch");
-                    return;
-                }
-                Object objInvoke4 = cls.getMethod("getParent", new Class[0]).invoke(objInvoke3, new Object[0]);
-                if (objInvoke4 != objInvoke2) {
-                    if (objInvoke4 != null) {
-                        objInvoke4.getClass().getMethod("removePreference", cls).invoke(objInvoke4, objInvoke3);
-                    }
-                    cls.getMethod("setKey", String.class).invoke(objInvoke3, "lenovo_pen_global_writing_haptic");
-                    objInvoke2.getClass().getMethod("addPreference", cls).invoke(objInvoke2, objInvoke3);
-                }
-                cls.getMethod("setTitle", CharSequence.class).invoke(objInvoke3, "全局书写震动");
-                cls.getMethod("setSummary", CharSequence.class).invoke(objInvoke3, "书写时启用手写笔连续触觉反馈");
-                cls.getMethod("setPersistent", Boolean.TYPE).invoke(objInvoke3, false);
-                PenState penStateState = HookUtils.state(context);
-                boolean z = penStateState.connected && !HookUtils.disconnectRequested(context);
-                cls.getMethod("setSelectable", Boolean.TYPE).invoke(objInvoke3, true);
-                cls.getMethod("setEnabled", Boolean.TYPE).invoke(objInvoke3, Boolean.valueOf(z));
-                cls.getMethod("setVisible", Boolean.TYPE).invoke(objInvoke3, true);
-                objInvoke3.getClass().getMethod("setIsSupportCardUse", Boolean.TYPE).invoke(objInvoke3, true);
-                objInvoke3.getClass().getMethod("setChecked", Boolean.TYPE).invoke(objInvoke3, Boolean.valueOf(Settings.Global.getInt(context.getContentResolver(), "lenovo_pen_global_writing_haptic", 1) != 0));
-                Class<?> cls2 = Class.forName("androidx.preference.Preference$OnPreferenceChangeListener", false, classLoader);
-                cls.getMethod("setOnPreferenceChangeListener", cls2).invoke(objInvoke3, Proxy.newProxyInstance(classLoader, new Class[]{cls2}, new InvocationHandler() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks$$ExternalSyntheticLambda0
-                    @Override // java.lang.reflect.InvocationHandler
-                    public final Object invoke(Object obj2, Method method2, Object[] objArr) throws Throwable {
-                        return IpeManagerHooks.lambda$configureWritingHapticPreference$0(context, obj2, method2, objArr);
-                    }
-                }));
-                HookUtils.log("global writing haptic switch configured enabled=" + z + " connected=" + penStateState.connected);
+                HookUtils.log("OEM touch_feedback exposed connected=" + connected);
+            }
+            if (screen == null) return;
+            // Remove only the formerly injected imitation row if it is still
+            // present in an already-created fragment.
+            Object injected = screen.getClass().getMethod("findPreference", CharSequence.class)
+                    .invoke(screen, "lenovo_pen_global_writing_haptic_page");
+            if (injected != null) {
+                Object parent = preference.getMethod("getParent", new Class[0]).invoke(injected, new Object[0]);
+                if (parent != null) parent.getClass().getMethod("removePreference", preference)
+                        .invoke(parent, injected);
             }
         } catch (Throwable th) {
             HookUtils.log("writing haptic preference: " + th);
         }
     }
 
-    static /* synthetic */ Object lambda$configureWritingHapticPreference$0(Context context, Object obj, Method method, Object[] objArr) throws Throwable {
-        if ("onPreferenceChange".equals(method.getName()) && objArr != null && objArr.length > 1) {
-            if (!HookUtils.state(context).connected || HookUtils.disconnectRequested(context)) {
-                HookUtils.log("global writing haptic change ignored while pen disconnected");
-            } else {
-                boolean zEquals = Boolean.TRUE.equals(objArr[1]);
-                Settings.Global.putInt(context.getContentResolver(), "lenovo_pen_global_writing_haptic", zEquals ? 1 : 0);
-                context.sendBroadcast(new Intent("com.aclaniakea.lenovopenbridge.haptic.COMMAND").putExtra("enabled", zEquals));
-                HookUtils.log("global writing haptic=" + zEquals);
-                return true;
-            }
-        }
-        return false;
+    /**
+     * IPe greys its pen rows out from one field: `t0.I`, the connect state it
+     * receives from the pencil service, where 2 means connected.  Follow that
+     * same value so the tactile-feedback row cannot disagree with the rows
+     * around it; fall back to the bridge's own link state only if the OEM
+     * field is not readable.
+     */
+    private static boolean stockPenConnected(Object fragment, Context context) {
+        try {
+            Field state = fragment.getClass().getDeclaredField("I");
+            state.setAccessible(true);
+            if (state.getType() == Integer.TYPE) return state.getInt(fragment) == 2;
+        } catch (Throwable ignored) { }
+        if (context == null) return false;
+        return HookUtils.state(context).connected && !HookUtils.disconnectRequested(context);
     }
+
 
     private static void installMyDevicesStateBridge(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         HookUtils.hookAll(loadPackageParam.classLoader, "com.oplus.ipemanager.btadsorb.mydevices.c", "notifyConnectState", new XC_MethodHook() { // from class: com.aclaniakea.colorosporttuning.IpeManagerHooks.23

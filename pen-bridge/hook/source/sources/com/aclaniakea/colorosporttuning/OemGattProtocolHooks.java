@@ -235,6 +235,22 @@ final class OemGattProtocolHooks {
                         enqueueWrite(sessionSessionFor, requestChar, new byte[]{1});
                         HookUtils.log("IPe OEM haptic request re-applied after s0 ready");
                     }
+                    // A pen stroke can begin while the GATT connection is
+                    // still rebuilding after boot.  Restore that live stroke
+                    // once the Lenovo haptic service is actually ready.
+                    if (Settings.Global.getInt(context.getContentResolver(),
+                            "lenovo_pen_haptic_stroke_active", 0) != 0) {
+                        int tool = Settings.Global.getInt(context.getContentResolver(),
+                                "lenovo_pen_haptic_stroke_tool", 2);
+                        BluetoothGattCharacteristic continuous = findCharacteristic(
+                                sessionSessionFor, LENOVO_HAPTIC_CONTINUOUS);
+                        if (continuous != null) {
+                            byte mode = (byte) (tool == 4 ? 0 : 1);
+                            enqueueWrite(sessionSessionFor, continuous,
+                                    new byte[]{32, 5, 1, mode});
+                            HookUtils.log("IPe OEM active writing haptic replayed after s0 ready");
+                        }
+                    }
                     flushPendingControls(sessionSessionFor);
                 }
                 return;
@@ -559,10 +575,35 @@ final class OemGattProtocolHooks {
                 || expected.equals(normalizeAddress(sessionAddress(session.gatt)));
     }
 
+    /**
+     * Completions are looked up by OEM manager (MANAGER_SESSIONS), so only a
+     * session still bound to a live manager can ever clear its own queue.  A
+     * session left in SESSIONS by an earlier BluetoothGatt carries the same
+     * pen address, so matching on address alone could hand commands to that
+     * orphan: its writes complete on the wire, no completion claims them, and
+     * 1.8s later the watchdog declares the whole transport dead.  Prefer the
+     * bound sessions and only then fall back to the raw gatt map.
+     */
     private static Session findSession(String str) {
         String strNormalizeAddress = normalizeAddress(str);
         Map<BluetoothGatt, Session> map = SESSIONS;
         synchronized (map) {
+            Session bound = null;
+            for (Session session : MANAGER_SESSIONS.values()) {
+                if (session == null) {
+                    continue;
+                }
+                if (strNormalizeAddress.length() > 0
+                        && strNormalizeAddress.equals(normalizeAddress(sessionAddress(session.gatt)))) {
+                    return session;
+                }
+                if (bound == null) {
+                    bound = session;
+                }
+            }
+            if (bound != null) {
+                return bound;
+            }
             if (strNormalizeAddress.length() > 0) {
                 for (Session session : map.values()) {
                     if (session != null && strNormalizeAddress.equals(normalizeAddress(sessionAddress(session.gatt)))) {
@@ -829,7 +870,12 @@ final class OemGattProtocolHooks {
         if (completeOperation(obj, 2, bluetoothGattCharacteristic, str) || !acceptManager(HookUtils.context(obj), obj)) {
             return;
         }
-        HookUtils.log("Lenovo OEM GATT write callback status=" + str + (bluetoothGattCharacteristic == null ? "" : " uuid=" + uuid(bluetoothGattCharacteristic.getUuid())));
+        // Reaching here means no queued operation claimed this callback.  Say
+        // so explicitly: silently logging it as a plain callback hid the fact
+        // that the matching operation was left active until its watchdog.
+        HookUtils.log("Lenovo OEM GATT unclaimed write callback status=" + str
+                + (bluetoothGattCharacteristic == null ? "" : " uuid=" + uuid(bluetoothGattCharacteristic.getUuid()))
+                + " sessions=" + sessionCounts());
     }
 
     /* JADX INFO: Access modifiers changed from: private */
@@ -874,6 +920,12 @@ final class OemGattProtocolHooks {
                 return true;
             }
             return false;
+        }
+    }
+
+    private static String sessionCounts() {
+        synchronized (SESSIONS) {
+            return SESSIONS.size() + "/" + MANAGER_SESSIONS.size();
         }
     }
 

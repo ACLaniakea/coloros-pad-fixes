@@ -334,13 +334,12 @@ final class SystemStylusHooks {
     }
 
     private static void haptic(Context context) {
-        try {
-            Vibrator vibrator = (Vibrator) context.getSystemService("vibrator");
-            if (vibrator != null) {
-                vibrator.vibrate(VibrationEffect.createOneShot(12L, -1));
-            }
-        } catch (Throwable unused) {
-        }
+        // The stock "功能反馈" switch is hidden: its OEM binder call is an
+        // empty method, so the row could never govern anything.  With no
+        // control on screen there must be no hidden gate either, or a value
+        // left over from that switch would silently kill button feedback.
+        // "功能反馈" explicitly describes vibration in the pen body.  Do
+        // not substitute a tablet/phone vibrator for that pen-side action.
         dispatchHaptic(context, "pulse", HookUtils.state(context).address, 0, true);
     }
 
@@ -1428,6 +1427,11 @@ final class SystemStylusHooks {
                         dispatchHaptic(context, "start", HookUtils.state(context).address,
                                 motionEvent.getToolType(0), true);
                         HookUtils.log("start writing haptic pressure=" + motionEvent.getPressure());
+                    } else if (actionMasked == 2) {
+                        // Pattern feedback is rate-limited inside the IPe
+                        // transport; this has no polling or resident worker.
+                        dispatchHaptic(context, "motion", HookUtils.state(context).address,
+                                motionEvent.getToolType(0), true);
                     }
                 } else if (actionMasked == 1 || actionMasked == 3 || writing) {
                     scheduleStopWriting();
@@ -1563,16 +1567,24 @@ final class SystemStylusHooks {
                 // behavior that actually vibrated the pen.
                 try {
                     if ("start".equals(operation)) {
+                        Settings.Global.putInt(appContext.getContentResolver(),
+                                "lenovo_pen_haptic_stroke_active", 1);
+                        Settings.Global.putInt(appContext.getContentResolver(),
+                                "lenovo_pen_haptic_stroke_tool", toolType);
                         // Keep the stock touch-node path, then bridge the
                         // missing port-specific node->BLE leg through IPe's
                         // already-open OEM GATT session.
                         setOemWritingFeedback(true);
                         PenHapticGatt.startWriting(appContext, penAddress, toolType);
                     } else if ("stop".equals(operation)) {
+                        Settings.Global.putInt(appContext.getContentResolver(),
+                                "lenovo_pen_haptic_stroke_active", 0);
                         setOemWritingFeedback(false);
                         PenHapticGatt.stopWriting();
                     } else if ("pulse".equals(operation)) {
                         PenHapticGatt.pulse(appContext, penAddress);
+                    } else if ("motion".equals(operation)) {
+                        PenHapticGatt.onWritingMotion(appContext, penAddress);
                     } else if ("enable".equals(operation)) {
                         PenHapticGatt.setWritingEnabled(appContext, penAddress, enabled);
                     } else if ("disconnect".equals(operation)) {

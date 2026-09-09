@@ -27,6 +27,9 @@ final class PenHapticGatt {
     private static BluetoothGatt gatt;
     private static BluetoothGattCharacteristic impact;
     private static long lastPulse;
+    private static long lastPatternPulse;
+    private static int activeWritingLevel = 4;
+    private static int writingToolType;
     private static BluetoothGattCharacteristic notify;
     private static byte[] pendingImpact;
     private static boolean ready;
@@ -102,8 +105,31 @@ final class PenHapticGatt {
 
     static synchronized void startWriting(Context context, String str, int i) {
         continuous = true;
-        continuousPayload = new byte[]{32, 5, 1, (byte) (i == 4 ? 0 : 1)};
+        String pattern = writingPattern(context);
+        activeWritingLevel = writingLevel(context);
+        writingToolType = i;
+        byte mode = (byte) (i == 4 ? 0 : 1);
+        if ("ballpoint".equals(pattern)) mode = 0;
         handler.removeCallbacks(IDLE_CLOSE);
+        // This Lenovo pen does not expose the OPPO configuration interface
+        // that carries the OEM written-feedback level, so the slider is
+        // realised on its confirmed haptic commands instead: level 4 is the
+        // stock continuous effect; levels 0..3 use successively denser impact
+        // pulses, producing a genuine lower average pen-side intensity.
+        if (activeWritingLevel < 4) {
+            // Leave no continuous payload behind: a reconnect mid-stroke
+            // replays it, which would restore full intensity at a low level.
+            continuousPayload = null;
+            if ("marker".equals(pattern)) brush(context, str); else pulse(context, str);
+            return;
+        }
+        continuousPayload = new byte[]{32, 5, 1, mode};
+        if ("ballpoint".equals(pattern) || "fountain".equals(pattern)
+                || "gear".equals(pattern)) {
+            pulse(context, str);
+        } else if ("marker".equals(pattern)) {
+            brush(context, str);
+        }
         if (sendOemControl(context, str, "continuous", continuousPayload)) {
             return;
         }
@@ -114,6 +140,88 @@ final class PenHapticGatt {
         }
     }
 
+    /** Called from the global stylus path while a real stroke is active.
+     * Rate limiting avoids competing with the stock touch-node feedback. */
+    static synchronized void onWritingMotion(Context context, String str) {
+        if (!continuous) return;
+        String pattern = writingPattern(context);
+        long now = SystemClock.uptimeMillis();
+        int level = writingLevel(context);
+        if (level != activeWritingLevel) {
+            applyWritingLevel(context, str, level, pattern);
+        }
+        if (level < 4) {
+            long[] intervals = {260L, 180L, 120L, 75L};
+            long interval = intervals[level];
+            if (now - lastPatternPulse < interval) return;
+            lastPatternPulse = now;
+            if ("marker".equals(pattern)) brush(context, str); else pulse(context, str);
+            return;
+        }
+        long interval;
+        boolean brushPulse = false;
+        if ("ballpoint".equals(pattern)) {
+            interval = 105L;
+        } else if ("fountain".equals(pattern)) {
+            interval = 165L;
+        } else if ("marker".equals(pattern)) {
+            interval = 230L; brushPulse = true;
+        } else if ("gear".equals(pattern)) {
+            interval = 80L; brushPulse = ((now / interval) & 1L) != 0;
+        } else {
+            return; // Pencil remains the pure stock continuous feedback.
+        }
+        if (now - lastPatternPulse < interval) return;
+        lastPatternPulse = now;
+        if (brushPulse) brush(context, str); else pulse(context, str);
+    }
+
+    /**
+     * The slider can move while a stroke is in flight.  Crossing the boundary
+     * between the continuous effect (level 4) and the pulse train (0..3) has
+     * to change what the pen is actually running, otherwise both keep playing
+     * at once or the pen goes silent for the rest of the stroke.
+     */
+    private static void applyWritingLevel(Context context, String address, int level,
+            String pattern) {
+        int previous = activeWritingLevel;
+        activeWritingLevel = level;
+        if (level >= 4) {
+            byte mode = (byte) (writingToolType == 4 ? 0 : 1);
+            if ("ballpoint".equals(pattern)) mode = 0;
+            continuousPayload = new byte[]{32, 5, 1, mode};
+            if (!sendOemControl(context, address, "continuous", continuousPayload)) {
+                ensure(context, address);
+                if (con != null) enqueue(con, continuousPayload);
+            }
+        } else if (previous >= 4) {
+            continuousPayload = null;
+            byte[] stop = {0, 0, 0, 0};
+            if (!sendOemControl(context, address, "stop", stop) && con != null) {
+                enqueue(con, stop);
+            }
+        }
+        lastPatternPulse = 0L;
+        log("writing haptic level " + previous + "->" + level, null);
+    }
+
+    private static String writingPattern(Context context) {
+        try {
+            String value = Settings.Global.getString(context.getContentResolver(),
+                    "lenovo_pen_global_writing_haptic_pattern");
+            if ("fountain".equals(value) || "ballpoint".equals(value)
+                    || "marker".equals(value) || "gear".equals(value)) return value;
+        } catch (Throwable ignored) { }
+        return "pencil";
+    }
+
+    private static int writingLevel(Context context) {
+        int value = Settings.Global.getInt(context.getContentResolver(),
+                "lenovo_pen_writing_haptic_level", 4);
+        return value < 0 ? 0 : Math.min(value, 4);
+    }
+
+
     static boolean stockWritingFeedback(Context context, String address, boolean start) {
         return sendOemControl(context, address,
                 start ? "feedback_start" : "feedback_stop", null);
@@ -122,6 +230,8 @@ final class PenHapticGatt {
     static synchronized void stopWriting() {
         continuous = false;
         continuousPayload = null;
+        activeWritingLevel = 4;
+        lastPatternPulse = 0L;
         byte[] bArr = {0, 0, 0, 0};
         if (sendOemControl(app, address, "stop", bArr)) {
             return;
@@ -150,6 +260,8 @@ final class PenHapticGatt {
         } else {
             continuous = false;
             continuousPayload = null;
+            activeWritingLevel = 4;
+            lastPatternPulse = 0L;
             byte[] bArr = {0, 0, 0, 0};
             if (sendOemControl(context, str, "stop", bArr)) {
                 return;
@@ -166,6 +278,7 @@ final class PenHapticGatt {
         handler.removeCallbacks(IDLE_CLOSE);
         continuous = false;
         continuousPayload = null;
+        activeWritingLevel = 4;
         pendingImpact = null;
         resetTransport();
     }
