@@ -1429,6 +1429,70 @@ harden_lwky_charge_nodes() {
 
 harden_lwky_charge_nodes
 
+# ============================================================================
+# top-app 避开唯一的小核，并标为延迟敏感（2026-09-09，实测驱动）
+#
+# 症状：Launcher 掉帧 12.49%（手机同代 ColorOS 是 1.22%），帧时间 p95 44ms /
+# p99 150ms。逐阶段拆解（gfxinfo framestats，240 帧）定位到两处，GPU 中位
+# 只有 1.29ms，内存 PSI some avg60 只有 0.10，都不是瓶颈：
+#     Vsync→HandleInput（纯调度延迟，中间无应用代码）  p90 4.21  p99 6.92 ms
+#     Traversals→DrawStart（measure/layout，应用自身）  p90 7.20  最大 23.11 ms
+# 144Hz 的帧预算是 6.95ms，光调度延迟 p99 就吃满整帧。
+#
+# 根子在拓扑：本机是六核 1+4+1，cpu0 是**唯一**的 A520，实测 65.1% 忙，还承接
+# 153/s 的 NET_RX softirq（对照手机 14/s——本机没有本地调制解调器，双卡 5G 是
+# 通讯共享镜像来的，网络收包全走 WiFi 落在 cpu0）。而 top-app 的 cpuset 是 0-5，
+# UI 线程一旦被放到 cpu0 就得在那里排队。
+#
+# 依据不是"照抄原厂"——cpuctl 权重（top-app 5120 / foreground 4096 /
+# background 1024 / latency_sensitive 全 0）与对照机**逐项相同**，不存在移植走形。
+# 依据是**本机原厂自己的先例**：sf 分组（SurfaceFlinger）的 cpuset 本来就是 1-5，
+# 原厂已经认定延迟关键的合成工作不该放到那颗 A520 上。这里把同一判断延伸到
+# top-app，并打开 latency_sensitive 让 CFS 唤醒时优先找空闲核而非往忙核上塞。
+#
+# 实测（清零帧计数器后 7091 帧，比基线样本更大）：
+#     掉帧率  12.49% → 6.23%      p90 25→15ms   p95 44→19ms   p99 150→48ms
+#     按帧数归一：Missed Vsync −53%  Slow UI thread −48%
+#                 Slow issue draw commands −59%  Slow bitmap uploads −77%
+# 抢占比例只小幅改善（RenderThread 增量占比 47.3%→43.8%），迁移次数没降——
+# 收益来自"不落到拥堵的弱核"和"唤醒更快拿到 CPU"，不是"被抢占得更少"。
+#
+# 代价：top-app 可用核从 6 降到 5，损失约 14% 原始算力，换掉的是最弱且最忙的
+# 那颗。只动 top-app，不动 foreground（可见但无焦点的应用），因为只验证了前者。
+#
+# 核集合不硬编码，直接沿用 sf 的值：拓扑或原厂档位变了会自动跟随，sf 若不再
+# 排除 cpu0 就整段跳过——那说明原厂改了判断，不该由我们替它决定。
+# ============================================================================
+tune_topapp_affinity() {
+    _sf=/dev/cpuset/sf/cpus
+    _ta=/dev/cpuset/top-app/cpus
+    _ls=/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive
+    [ -r "$_sf" ] && [ -w "$_ta" ] || {
+        log_msg "top-app affinity: cpuset 节点不可用，跳过"
+        return 0
+    }
+    _want=$(tr -d ' \n' <"$_sf" 2>/dev/null)
+    _have=$(tr -d ' \n' <"$_ta" 2>/dev/null)
+    # 只在原厂确实把 cpu0 从 sf 排除、而 top-app 仍然含 cpu0 时才动手。
+    case "$_want" in
+        ''|0|0-*|0,*)
+            log_msg "top-app affinity: sf=[$_want] 未排除 cpu0，保持原厂 top-app=[$_have]"
+            return 0 ;;
+    esac
+    case "$_have" in
+        0|0-*|0,*) ;;
+        *) log_msg "top-app affinity: top-app=[$_have] 已不含 cpu0，无需改动"; return 0 ;;
+    esac
+    echo "$_want" >"$_ta" 2>/dev/null
+    _now=$(tr -d ' \n' <"$_ta" 2>/dev/null)
+    if [ -w "$_ls" ] && [ "$(cat "$_ls" 2>/dev/null)" != 1 ]; then
+        echo 1 >"$_ls" 2>/dev/null
+    fi
+    log_msg "top-app affinity: cpus [$_have] -> [$_now] (沿用 sf), latency_sensitive=$(cat "$_ls" 2>/dev/null)"
+}
+
+tune_topapp_affinity
+
 # ===== frontled: 前摄指示灯（事件驱动，2026-09-04） =====
 # CameraServiceProxy 的 LSPosed bridge 直接消费相机所有权事件并写 RGB 节点。
 # 旧版 shell 每秒 dumpsys media.camera 会在 system_server 侧制造持续 binder
