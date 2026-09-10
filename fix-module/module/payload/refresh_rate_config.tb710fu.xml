@@ -858,6 +858,20 @@
   <item package="com.coloros.colordirectservice" rateId="4-2-2-4" />  
   <item package="com.coloros.shortcuts" rateId="4-2-2-4" />  
   <item package="com.coloros.sceneservice" rateId="4-2-2-4" />  
+  <!-- 不要把这一条改成 3(120Hz)：试过，无效。
+       锁屏动态壁纸 com.heytap.colorfulengine 恒定 60fps，而 144/60=2.4 不整除，
+       每帧只能落在第 2 或第 3 个 vsync 上，形成固定的 3-2-3-2-2 节拍，
+       这就是锁屏顿挫的全部成因（实测 SurfaceFlinger 图层呈现间隔：
+       144Hz 节拍 {2:72, 3:48} 抖动 3.95ms；强制 120Hz 时前 21 个间隔全是 2）。
+       与性能无关——GPU 下限 231→578MHz 四轮对照零差异。
+       但改这一条解决不了：ColorOS 的 OplusRefreshRatePolicyImpl 按「置顶
+       Activity 的包名」查表，锁屏是 SystemUI 的窗口而非 Activity，背后 resumed
+       的仍是桌面（com.android.launcher，同样 4-2-2-4）。实测把本条改成 3-2-2-3
+       并重装重启后，锁屏期间 renderFrameRate 全程仍是 144.00002，壁纸节拍不变。
+       反而会让 SystemUI 真正置顶时（通知栏等）白白降到 120Hz。
+       要消除打拍只能改 com.android.launcher，那会把主屏一起降到 120——
+       代价大于收益，故维持 4。参考：手机 PKX110 面板本身就是 120Hz，
+       120/60=2 天然整除，所以原厂从未遇到这个组合，没有可照搬的答案。 -->
   <item package="com.android.systemui" rateId="4-2-2-4" />  
   <item package="com.oplus.exserviceui" rateId="4-2-2-4" />  
   <item package="com.coloros.scenemode" rateId="4-2-2-4" />  
