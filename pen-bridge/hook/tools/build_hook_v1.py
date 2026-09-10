@@ -126,7 +126,11 @@ def main() -> None:
                          compress_type=zipfile.ZIP_DEFLATED)
         aligned = tmp / "aligned.apk"
         run([ZIPALIGN, "-f", "-p", "4", unsigned, aligned])
-        run([APKSIGNER, "sign", "--ks", KEYSTORE, "--ks-key-alias", ALIAS,
+        # apksigner 默认会额外产出 .idsig（APK Signature Scheme v4）。它只服务于
+        # `adb install --incremental`，普通分发用不到，却会跟着产物目录被误传到 Release
+        # （4.0.2 就误传过一个）。内容是哈希/证书/公钥/签名值，不含私钥，但没有用处
+        # 就不该出现在发布页上，故显式关闭。
+        run([APKSIGNER, "sign", "--ks", KEYSTORE, "--ks-key-alias", ALIAS, "--v4-signing-enabled", "false",
              "--ks-pass", f"pass:{KS_PASS}", "--key-pass", f"pass:{KS_PASS}",
              "--out", OUT_APK, aligned])
     print(OUT_APK)

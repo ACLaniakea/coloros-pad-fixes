@@ -45,6 +45,10 @@ with tempfile.TemporaryDirectory(prefix="zui-hook-") as tmp_name:
     aligned = tmp / "aligned.apk"
     run(BT / "zipalign", "-f", "-p", "4", unsigned, aligned)
     OUT.parent.mkdir(exist_ok=True)
-    run(BT / "apksigner", "sign", "--ks", KEYSTORE, "--ks-key-alias", "aclaniakea",
+    # apksigner 默认会额外产出 .idsig（APK Signature Scheme v4）。它只服务于
+    # `adb install --incremental`，普通分发用不到，却会跟着产物目录被误传到 Release
+    # （4.0.2 就误传过一个）。内容是哈希/证书/公钥/签名值，不含私钥，但没有用处
+    # 就不该出现在发布页上，故显式关闭。
+    run(BT / "apksigner", "sign", "--ks", KEYSTORE, "--ks-key-alias", "aclaniakea", "--v4-signing-enabled", "false",
         "--ks-pass", "pass:changeit", "--key-pass", "pass:changeit", "--out", OUT, aligned)
 print(OUT)
