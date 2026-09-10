@@ -61,6 +61,13 @@ log() {
 # 原来是 `echo ... 2>/dev/null` 写完就走：节点不存在、内核拒绝写（比如档位里
 # 那些具体频点不在这块内核的 OPP 表里）全都悄无声息，而 status 照样报告档位
 # 已生效。回读一次就能把"以为写进去了"和"真的写进去了"分开，失败留一行日志。
+# 多值 sysfs 节点（sched_upmigrate、input_boost_freq 等）读回时是 Tab 分隔，
+# 而我们写进去的是空格分隔。逐字符比较会把每一次成功写入都误报成 "write
+# rejected"，真正的失败反而淹没在噪声里。归一化空白后再比。
+norm_ws() {
+    printf '%s' "$1" | tr '\t' ' ' | tr -s ' ' | sed -e 's/^ //' -e 's/ $//'
+}
+
 write_node() {
     value=$1
     node=$2
@@ -69,10 +76,10 @@ write_node() {
         return 0
     fi
     current=$(cat "$node" 2>/dev/null)
-    [ "$current" = "$value" ] && return 0
+    [ "$(norm_ws "$current")" = "$(norm_ws "$value")" ] && return 0
     ( echo "$value" >"$node" ) 2>/dev/null
     readback=$(cat "$node" 2>/dev/null)
-    [ "$readback" = "$value" ] || \
+    [ "$(norm_ws "$readback")" = "$(norm_ws "$value")" ] || \
         log "write rejected $node: 想写 $value，读回 $readback（原值 $current）"
 }
 
@@ -311,13 +318,27 @@ case "$action" in
 esac
 
 mkdir -p "$STATE_DIR"
+# 锁是「目录 + 内含持有者 pid」。只用 mkdir 做互斥、只靠 EXIT trap 释放是不够的：
+# 进程若被杀或设备在 apply 中途重启，trap 不会执行，锁就永久留下。实机上这确实
+# 发生过——2026-08-25 23:02 那次 apply 之后锁一直在，此后每一次调用都空转 20 次
+# 然后 exit 4，而且不写日志，于是整个增强调度静默停摆了两周，迁移门槛漂移也无人
+# 纠正。现在持有者进程不在就按陈旧锁清掉，并且放弃时必须留痕。
 attempt=0
 while ! mkdir "$LOCK" 2>/dev/null; do
     attempt=$((attempt + 1))
-    [ "$attempt" -lt 20 ] || exit 4
+    if [ "$attempt" -ge 20 ]; then
+        log "abort action=$action: apply lock held by pid=$(cat "$LOCK/pid" 2>/dev/null)"
+        exit 4
+    fi
+    owner=$(cat "$LOCK/pid" 2>/dev/null)
+    if [ -z "$owner" ] || [ ! -d "/proc/$owner" ]; then
+        rm -rf "$LOCK" 2>/dev/null
+        continue
+    fi
     sleep 0.05
 done
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+echo $$ >"$LOCK/pid" 2>/dev/null
+trap 'rm -rf "$LOCK" 2>/dev/null' EXIT INT TERM HUP
 
 # IRQ 拓扑已移交 fix 模块的 apply_sched_baseline；这里只保留 wlan RPS 的补写，
 # 因为 wlan0/p2p0 会在关开 Wi-Fi、投屏建组时被重建并清零 rps_cpus。
