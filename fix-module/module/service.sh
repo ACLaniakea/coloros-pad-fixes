@@ -441,7 +441,17 @@ apply_sched_baseline() {
     sched_write 120 /proc/sys/walt/input_boost/input_boost_ms
     sched_write '1248000 1497600 1497600 1497600 1497600 1478400 0 0' /proc/sys/walt/input_boost/input_boost_freq
 
-    log_msg "sched baseline applied: irq_default=$(cat /proc/irq/default_smp_affinity 2>/dev/null) upmigrate=$(cat /proc/sys/walt/sched_upmigrate 2>/dev/null | tr '\t' ' ') downmigrate=$(cat /proc/sys/walt/sched_downmigrate 2>/dev/null | tr '\t' ' ') fmax_cap=$(cat /proc/sys/walt/sched_fmax_cap 2>/dev/null | tr '\t' ' ') boost=$(cat /proc/sys/walt/input_boost/sched_boost_on_input 2>/dev/null) bg_cpus=$(cat /dev/cpuset/background/cpus 2>/dev/null) sf_cpus=$(cat /dev/cpuset/sf/cpus 2>/dev/null) rps_queues=$_rps writes=${_sched_ok}写/${_sched_same}已是/${_sched_skip}跳过"
+    # 这行读回的是**写入那一瞬间**的快照。SM8650Q-Scene-Scheduler 装着时，它的
+    # service.sh 会在 boot_completed 之后再睡 15 秒才落档位，届时 sched_upmigrate /
+    # sched_downmigrate / sched_fmax_cap / input_boost 这几项都会被它按当前模式重写。
+    # 增强层覆盖基线层是设计如此，但日志会因此与几秒后的实际值不符——曾经据此
+    # 误判过一次「fmax_cap 已是硬件上限」，所以在这里点明。
+    _sched_note=""
+    if [ -d /data/adb/modules/sm8650q_scene_scheduler ] &&
+            [ ! -f /data/adb/modules/sm8650q_scene_scheduler/disable ]; then
+        _sched_note=" 注意:Scene调度模块随后会按档位覆盖walt/*与input_boost/*,以它为准"
+    fi
+    log_msg "sched baseline applied: irq_default=$(cat /proc/irq/default_smp_affinity 2>/dev/null) upmigrate=$(cat /proc/sys/walt/sched_upmigrate 2>/dev/null | tr '\t' ' ') downmigrate=$(cat /proc/sys/walt/sched_downmigrate 2>/dev/null | tr '\t' ' ') fmax_cap=$(cat /proc/sys/walt/sched_fmax_cap 2>/dev/null | tr '\t' ' ') boost=$(cat /proc/sys/walt/input_boost/sched_boost_on_input 2>/dev/null) bg_cpus=$(cat /dev/cpuset/background/cpus 2>/dev/null) sf_cpus=$(cat /dev/cpuset/sf/cpus 2>/dev/null) rps_queues=$_rps writes=${_sched_ok}写/${_sched_same}已是/${_sched_skip}跳过$_sched_note"
 }
 
 # ============================================================================

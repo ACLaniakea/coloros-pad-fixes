@@ -113,10 +113,48 @@ trim_log_if_large() {
 exec >>"$LOGFILE" 2>&1
 echo "[$(date '+%F %T')] service start"
 
-# Use the root runtime's BusyBox first.  On this ROM /system/bin/toybox can
-# appear executable while its mount namespace is still settling; invoking it
-# then fails and a polling loop can spin at 100% CPU.
+# 不 fork 的等待。
+#
+# 每次调用外部 sleep 都是一次 fork+exec，而本服务有 6 处 1 秒轮询、3 处 2 秒
+# 轮询，外加若干子 shell。实测代价：笔桥接运行时全系统 26 forks/s，停掉它只剩
+# 8 forks/s——**它一个模块占了全系统进程创建的 69%**，而且笔没在使用时照跑不误
+# （10 个常驻 shell、合计 RSS 7.7 MB、持续约 1% CPU）。
+#
+# read 是 shell 内建命令。把一个只读不写的 fifo 以读写方式常开在 fd 8 上，
+# `read -t N -u 8` 就会阻塞到超时再返回，全程不创建进程。fifo 必须用 <> 打开，
+# 否则没有写端时 read 会立刻拿到 EOF 而不是等待。
+#
+# fd 用 8：9 已被上面的 SERVICE_LOCK 占用。
+# 自检失败（shell 不支持 read -t、fifo 建不出来、或立刻返回而不是等待）时
+# 原样回退到外部 sleep，行为与改动前完全一致。
+NAP_FIFO="$MODDIR/.nap.fifo"
+NAP_READY=0
+
+nap_init() {
+    [ -p "$NAP_FIFO" ] || {
+        rm -f "$NAP_FIFO" 2>/dev/null
+        mknod "$NAP_FIFO" p 2>/dev/null || mkfifo "$NAP_FIFO" 2>/dev/null
+    }
+    [ -p "$NAP_FIFO" ] || return 1
+    exec 8<>"$NAP_FIFO" 2>/dev/null || return 1
+    # 自检：请求等 0.3 秒，必须真的耗掉 >=200ms。若 shell 不支持 -t 或直接
+    # 拿到 EOF 就会立刻返回，那种情况下用它会把轮询变成忙等，必须回退。
+    _nap_t0=$(date +%s%N 2>/dev/null) || return 1
+    read -t 0.3 -u 8 _nap_discard 2>/dev/null
+    _nap_t1=$(date +%s%N 2>/dev/null) || return 1
+    [ $(( (_nap_t1 - _nap_t0) / 1000000 )) -ge 200 ] || return 1
+    NAP_READY=1
+    return 0
+}
+
 sleep_sec() {
+    if [ "$NAP_READY" = 1 ]; then
+        read -t "$1" -u 8 _nap_discard 2>/dev/null
+        return 0
+    fi
+    # Use the root runtime's BusyBox first.  On this ROM /system/bin/toybox can
+    # appear executable while its mount namespace is still settling; invoking it
+    # then fails and a polling loop can spin at 100% CPU.
     for sleep_backend in \
             /data/adb/ksu/bin/busybox \
             /data/adb/magisk/busybox \
@@ -129,6 +167,12 @@ sleep_sec() {
     echo "[$(date '+%F %T')] no working sleep backend; stopping service to avoid a busy loop"
     exit 0
 }
+
+if nap_init; then
+    echo "[$(date '+%F %T')] nap: 使用内建 read -t（不 fork）"
+else
+    echo "[$(date '+%F %T')] nap: 自检未通过，回退外部 sleep"
+fi
 
 count=0
 while { [ ! -e "$MODE" ] || [ ! -e "$SWITCH" ]; } && [ "$count" -lt 60 ]; do
