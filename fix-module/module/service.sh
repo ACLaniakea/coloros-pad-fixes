@@ -871,6 +871,43 @@ exempt_persistent_memcg() {
 
 exempt_persistent_memcg
 
+# ============================================================================
+# 清掉把缓存进程预算压死的遗留调试属性（原厂策略优先）
+#
+# 实机上发现三个属性把 AMS 的缓存进程上限锁在 24：
+#   persist.sys.aclaniakea.max_cached / persist.sys.max_cached_test
+#   persist.sys.oplus.max_cached_test
+# 它们只存在于本机，参考机 PKX110 一个都没有，本仓库源码里也搜不到——
+# 是早前手工调试留下的，并且已经写进 /data/property/persistent_properties，
+# 每次开机由 init 恢复。
+#
+# 代价是可量化的：24 比 AOSP 默认的 32 还低，是原厂 ColorOS 的 1/5
+# （PKX110 为 128）。缓存预算腰斩后，任何掉到 cached 的进程都会被迅速清掉——
+# 实测全局搜索 com.heytap.quicksearchbox 只活了 116~258 秒，而同一次开机里
+# 桌面活了 41670 秒，"搜索呼不出来"就是它在冷启动。
+#
+# 删除后原厂自己按内存算：CUR_MAX_CACHED_PROCESSES 24 -> 48、
+# CUR_MAX_EMPTY_PROCESSES 12 -> 24、CUR_TRIM_CACHED_PROCESSES 4 -> 8。
+#
+# 这里不设任何值，只把覆盖拿掉，让原厂策略生效。resetprop -p 会同时清运行时
+# 与持久化存储；属性不存在时它返回 not found，属正常情况，不记噪声日志。
+# ============================================================================
+drop_stale_cached_process_overrides() {
+    _dropped=""
+    for _k in persist.sys.aclaniakea.max_cached \
+              persist.sys.max_cached_test \
+              persist.sys.oplus.max_cached_test; do
+        [ -n "$(getprop "$_k" 2>/dev/null)" ] || continue
+        resetprop -p --delete "$_k" >/dev/null 2>&1
+        [ -z "$(getprop "$_k" 2>/dev/null)" ] && _dropped="$_dropped $_k"
+    done
+    if [ -n "$_dropped" ]; then
+        log_msg "cached-process override dropped（交还原厂按内存分档）——$_dropped"
+    fi
+}
+
+drop_stale_cached_process_overrides
+
 # The port's tango translator repeatedly aborts on this tablet's 32-bit
 # runtime. Keep the native secondary zygote stopped instead of respawning it.
 stop zygote_tango
