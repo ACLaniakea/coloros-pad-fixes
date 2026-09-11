@@ -1,0 +1,6 @@
+# SM8650Q experimental only: keep this fragment out of the production config.
+# DAMON_RECLAIM performs pressure-driven reclaim in kernel context.  Runtime
+# policy remains disabled until boot, ABI and frame-time comparisons pass.
+CONFIG_DAMON_PADDR=y
+CONFIG_DAMON_SYSFS=y
+CONFIG_DAMON_RECLAIM=y
