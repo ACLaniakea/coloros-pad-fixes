@@ -138,7 +138,6 @@ kp_freeze_detect
 oplus_bsp_lz4k
 cpufreq_effiency
 oplus_resctrl
-oplus_synchronize
 oplus_lb_bridge
 "
 
@@ -178,40 +177,44 @@ oplus_lb_bridge
 #   alloc_new_buf_locked、do_send_sig_info），init 失败会自己回滚，
 #   没有 rvh，可 rmmod。无依赖，位置随意。
 #
-# ---- 2026-09-11：oplus_synchronize（锁的 UX 优先级继承）----
-# 就是对照机上那个 oplus_locking_strategy：给 mutex / rwsem / futex / rtmutex
-# 加 UX 优先级继承——UI 线程阻塞在某把锁上时把持锁者临时提到 UX 优先级，
-# 免得前台被后台线程按住。对照机 kallsyms 里有 747 个相关符号，本机原本是 0。
+# ---- oplus_synchronize（锁的 UX 优先级继承）：试过两次，两次都 panic，别再试 ----
 #
-# ★ 这个模块以前是被明令排除的，排除理由现已失效 ★
+# 它就是对照机上那个 oplus_locking_strategy：给 mutex / rwsem / futex / rtmutex
+# 加 UX 优先级继承。对照机 kallsyms 里有 747 个相关符号，本机是 0，所以一直很
+# 想把它补上。源码（含下述两轮修复）留在 kernel-compat/oplus_synchronize/，
+# 只作存档，**不要加回本清单**。
 #
-# 当年的现象是装上后一交互就 panic，原注释归因为"mutex_list_add 谎报入链"，
-# 那只是表象。真正的根因见 kernel-compat/oplus_synchronize/mutex.c 里标着
-# 「★真正的根因★」的那段：
+# 第一轮（更早）：装上一交互就 panic。归因写作"mutex_list_add 谎报入链"。
 #
-#   __mutex_add_waiter() 的第三个参数语义是"插到这个节点之前"，不一定是链表头。
+# 第二轮（2026-09-11）：找到第一轮的真正根因并修好——
+#   __mutex_add_waiter() 第三个参数的语义是"插到这个节点之前"，不一定是链表头。
 #   ww_mutex 路径（ww_mutex.h 的 __ww_waiter_add）传进来的是链表中间的 waiter。
-#   OPlus 的 mutex_list_add_ux() 把它当链表头做 list_for_each_safe 绕圈遍历，
-#   途中会走到 &lock->wait_list 本身并把它 list_entry 成 mutex_waiter，
-#   于是 waiter->task 读到的其实是 struct mutex 的 android_oem_data1[0]。
-#   实测 panic 现场：wake_q_add 拿到用户态指针 0x7c973bf000 直接翻译错误。
-#   ww_mutex 被 DRM/dma-resv 大量使用，所以表现为"一交互就崩"。
+#   mutex_list_add_ux() 把它当链表头绕圈遍历，途中走到 &lock->wait_list 本身
+#   并 list_entry 成 mutex_waiter，于是 waiter->task 读到的其实是 struct mutex
+#   的 android_oem_data1[0]。ww_mutex 被 DRM/dma-resv 大量使用，故"一交互就崩"。
+#   修法：head 不是真链表头就放弃插队、据实返回是否入链、waiter->task 空指针
+#   防御，另加 mutex_ux_insert 开关且默认关闭。
 #
-# 修复三处：head 不是真链表头时直接放弃插队、据实返回是否入链、waiter->task
-# 空指针防御。另加 mutex_ux_insert 运行时开关且**默认关闭**——即 mutex 的插队
-# 优化不启用，只保留 futex / rwsem / rtmutex 的继承与统计。
+#   短期实测全绿：手动 insmod 后 20 秒滑动压力，futex_ux_set_cnt 8478 -> 11743
+#   （约 165 次/秒）、unset 对称配平、零告警；重启后开机自动加载也正常，
+#   34 loaded / 0 failed、boot_completed 33 秒、futex_set_blocked_ux_cnt 0 -> 70。
 #
-# 2026-09-11 实测（insmod 后 20 秒滑动压力 + 两轮负载）：
-#   futex_ux_set_cnt 8478 -> 11743（约 165 次/秒），unset 对称配平无泄漏；
-#   零 panic、零内核告警、system_server 与 SurfaceFlinger 存活。
+#   ★ 然后在真实使用中暴露：**只要解锁就 panic 重启**。现场：
+#       sys.boot.reason = kernel_panic,null
+#       NULL pointer dereference at 0x928     ← task_struct.wake_q 的偏移
+#       故障指令 c8ab7d42 = casal x11, x2, [x10]，正是 wake_q_add 里的 CAS
 #
-# 仍需长时间观察——它是本清单里唯一有过 panic 前科的模块。撤销顺序：
-#   1. echo 0 > /sys/module/oplus_synchronize/parameters/locking_enable（免重启）
-#   2. 从本清单删掉 oplus_synchronize 这一行，重启
-# 注意 unregister_rtmutex_vendor_hooks() 是空函数体，rmmod 卸不掉，只能靠这两条。
+#   即模块把 NULL task 传给了 wake_q_add。由于 mutex_ux_insert 当时是关着的，
+#   出问题的不是 mutex 那条路，而是 futex 或 rwsem 的唤醒路径——第二轮的修复
+#   只堵住了 mutex 一侧，同类的"拿着不该当 task 的东西去唤醒"在另一侧仍在。
 #
-# 必须排在 oplus_cpu_sched_sched_assist 之后：它用后者导出的
-# test_task_ux / set_inherit_ux / unset_inherit_ux 等符号。
+# 教训：这个模块的多条路径都假设了一加内核的链表/结构语义，逐条堵成本很高，
+# 而失败模式是内核 panic。要再碰它，先把 futex.c / rwsem.c 里所有喂给
+# wake_q_add 的 task 来源逐个审一遍，并且只在有完整串口/ramoops 取栈能力时做。
+#
+# 顺带纠正一个当时的判断：BSP 模块的 .boot_pending 熔断在这里**没能兜住**——
+# 它只在"开机没走到 boot_completed"时触发，而这次是开机正常、解锁才崩，
+# 熔断条件根本不成立。对"起得来但用不了"这类故障，熔断是无效的。
 # ---------------------------------------------------------------------------
 
 # ---- 2026-09-11：oplus_lb_bridge（本项目自编，非 OPlus 原件）----
