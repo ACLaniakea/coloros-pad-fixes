@@ -138,6 +138,7 @@ kp_freeze_detect
 oplus_bsp_lz4k
 cpufreq_effiency
 oplus_resctrl
+oplus_lb_bridge
 "
 
 # 原机同构的内存策略层：二者只挂 Android GKI 已有的 reclaim hooks，
@@ -176,6 +177,30 @@ oplus_resctrl
 #   alloc_new_buf_locked、do_send_sig_info），init 失败会自己回滚，
 #   没有 rvh，可 rmmod。无依赖，位置随意。
 #
+# ---- 2026-09-11：oplus_lb_bridge（本项目自编，非 OPlus 原件）----
+# 唯一一个不是从 OPlus 源码树编出来的成员，用途是把 sched_assist 的 tick
+# 负载均衡入口接回调度器。必须排在 oplus_cpu_sched_sched_assist 之后
+# （它链接该模块导出的 __oplus_tick_balance），故放在清单末尾。
+#
+# 为什么需要它：平板的 lb_stat 全部计数长期为 0，而对照手机 26 小时是
+# tick_hit 2480 万、newidle_hit 1.05 亿。原因是 __oplus_tick_balance 与
+# __oplus_newidle_balance 只是导出入口、模块内部无调用者，真正调用它们的是
+# OPlus 打过补丁的 WALT，而本机内核带的是高通原版 WALT（手机 sched_walt 在
+# sched_assist 的 holders 列表里，平板的不在；walt 符号数 4164 vs 3177）。
+#
+# 只接 tick 那一半：newidle 走的 android_rvh_sched_newidle_balance 是受限
+# hook，只允许一个探针，已被高通 WALT 占用。
+#
+# ★ 实测记录（2026-09-11）：
+#   第一版把 __oplus_tick_balance 直接注册成探针 → insmod 立刻 kCFI panic
+#   （它在 OPlus 源码里只被直接调用，没有 kCFI 类型前缀）。加一层本模块内的
+#   转接函数后正常：15 秒内 tick_hit 0 → 8277、tick_pull_runnable_ux 130，
+#   内核告警 0 条。细节见 kernel-compat/oplus_lb_bridge/oplus_lb_bridge.c。
+#
+# 撤销：echo 0 > /proc/oplus_scheduler/sched_assist/lb_enable（免重启）、
+#       rmmod oplus_lb_bridge、或从本清单删掉这一行。
+# ---------------------------------------------------------------------------
+
 # ---- 2026-08-28 第二批：从 53 个自编 ko 里筛出来的 5 个 ----
 # 筛选过程见 task #49。全部单独 insmod 实测通过、且 rmmod 得掉（可回退）。
 # 各自 20~32 KB，都不建顶层 /proc 节点，无依赖，顺序随意。
