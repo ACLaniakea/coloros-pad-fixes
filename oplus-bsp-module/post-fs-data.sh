@@ -177,7 +177,35 @@ oplus_lb_bridge
 #   alloc_new_buf_locked、do_send_sig_info），init 失败会自己回滚，
 #   没有 rvh，可 rmmod。无依赖，位置随意。
 #
-# ---- oplus_synchronize（锁的 UX 优先级继承）：试过两次，两次都 panic，别再试 ----
+# ---- oplus_synchronize（锁的 UX 优先级继承）：试过四次，四次都 panic，别再试 ----
+#
+# 2026-09-11 的四轮尝试定位并修掉了三处真实根因，源码修复都留在
+# kernel-compat/oplus_synchronize/ 里（每处都有 ACLaniakea 标注的注释），
+# 但每修完一处就冒出下一处，第四轮仍然 kernel_panic,null。
+#
+#   轮次 | 根因                                           | 触发场景
+#   -----|------------------------------------------------|------------------
+#    1   | mutex_list_add_ux 把链表中间节点当链表头        | 一交互就崩
+#    2   | rwsem_list_add_ux 同类问题，且无条件返回 true   | 解锁必崩
+#    3   | owner 可为 NULL 却直接喂给 set_inherit_ux       | 熄屏/亮屏循环
+#    4   | 未定位（ramoops ECC 已损，取不到调用栈）        | 熄屏/亮屏循环
+#
+# 第三轮那处值得单独记：原代码是
+#     if ((is_ux || is_rt) && !test_inherit_ux(owner, ...)) set_inherit_ux(owner, ...);
+# 那个 ! 是陷阱——test_inherit_ux(NULL) 返回 false，取反后条件反而成立，
+# 于是径直把 NULL 交给 set_inherit_ux() 解引用。mutex 与 rwsem 两处都这样。
+# 已补显式 NULL 判断，并把 23 个 set_inherit_ux 调用点穷举过一遍
+# （其余都自带守卫），但第四轮仍崩，说明还有别的机制里有同类假设。
+#
+# ★ 要再碰它的前提（缺一不可）★
+#   1. 能取到真实调用栈。本机 /sys/fs/pstore/console-ramoops-0 的 ECC 已损，
+#      只能靠"崩在哪个压力测试"倒推，那是盲修，第 4~N 轮都会是同样的循环。
+#      需要串口，或先修好 ramoops。
+#   2. 别再用"开机成功 + 短时压力测试通过"当安全信号——第二轮就是这么放行的，
+#      结果用户一解锁就连环重启。
+#
+# 下面是前两轮的细节，保留备查。
+# ------------------------------------------------------------------------
 #
 # 它就是对照机上那个 oplus_locking_strategy：给 mutex / rwsem / futex / rtmutex
 # 加 UX 优先级继承。对照机 kallsyms 里有 747 个相关符号，本机是 0，所以一直很

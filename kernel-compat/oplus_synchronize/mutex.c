@@ -132,6 +132,19 @@ static void mutex_set_inherit_ux(struct mutex *lock, struct task_struct *task)
 
 	owner = __mutex_owner(lock);
 
+	/*
+	 * ACLaniakea: ★第三处根因★（2026-09-11 第三次 panic）
+	 * __mutex_owner() 在互斥量此刻空闲时返回 NULL——持锁者在"等待者决定阻塞"
+	 * 与"等待者真正入队"之间把锁放掉就是这个状态，熄屏/亮屏这种锁竞争剧烈的
+	 * 时刻概率最高。原实现把它直接喂给 set_inherit_ux()，那边会解引用，
+	 * 于是 sys.boot.reason = kernel_panic,null。
+	 *
+	 * 注意 test_inherit_ux(NULL, ...) 返回 false，所以它挡不住——条件反而成立、
+	 * 直接走进去。必须显式判 NULL。
+	 */
+	if (!owner)
+		return;
+
 	if ((is_ux || is_rt) && !test_inherit_ux(owner, INHERIT_UX_MUTEX)) {
 		if(oplus_get_ux_state(task) == SCHED_UX_STATE_DEBUG_MAGIC)
 			return;

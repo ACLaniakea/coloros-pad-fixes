@@ -29,17 +29,56 @@
 
 unsigned long long notrace sched_clock(void);
 
-static bool rwsem_list_add_ux(struct list_head *entry, struct list_head *head)
+/*
+ * ACLaniakea: 二分用运行时开关，默认关闭 rwsem 的 ux 插队。
+ * 关掉后本模块完全不碰 rwsem 的 wait_list，只保留 rwsem_set_inherit_ux()
+ * 那条"把持锁者提到 UX 优先级"的继承路径——那条不动链表，是安全的。
+ */
+static bool rwsem_ux_insert = false;
+module_param(rwsem_ux_insert, bool, 0660);
+
+/*
+ * ACLaniakea: ★第二处同类根因★（2026-09-11，与 mutex.c 里那处是孪生 bug）
+ *
+ * 原型是 rwsem_list_add_ux(entry, head)，而调用方在 handoff_set 为真时传的是
+ * sem->wait_list.next —— 那是链表的**第一个元素**，不是链表头。
+ * list_for_each_safe(pos, n, head) 从 head->next 走到 pos == head 为止，
+ * 以元素为"头"绕圈时必然经过真正的链表头 &sem->wait_list，并把它
+ * list_entry 成 struct rwsem_waiter：读到的 waiter->task 其实是链表头
+ * 之后 0x10 字节处的任意内存。
+ *
+ * 后果有两层，第二层才是致命的：
+ *   1. 拿着这个伪 waiter 去 list_add(entry, waiter->list.prev)，把节点接到
+ *      错误位置，wait_list 结构损坏；
+ *   2. 原实现两条返回路径**都无条件返回 true**，于是处理函数把
+ *      *already_on_list 置真，内核因此跳过自己的 list_add_tail。
+ *      等到 rwsem_mark_wake() 遍历 wait_list 时走到坏条目，
+ *      wake_q_add(wake_q, waiter->task) 拿到 NULL。
+ *
+ * 2026-09-11 实测 panic 现场与此完全吻合：
+ *   sys.boot.reason = kernel_panic,null
+ *   NULL pointer dereference at 0x928   （= task_struct.wake_q 的偏移）
+ *   故障指令 c8ab7d42 = casal x11, x2, [x10]，正是 wake_q_add 里的那条 CAS
+ *
+ * 改法：函数直接收 sem，head 一律取 &sem->wait_list，调用方不再有机会传错；
+ * 并加运行时开关，默认不插队。
+ */
+static bool rwsem_list_add_ux(struct list_head *entry, struct rw_semaphore *sem)
 {
+	struct list_head *head;
 	struct list_head *pos = NULL;
 	struct list_head *n = NULL;
 	struct rwsem_waiter *waiter = NULL;
 	struct rwsem_waiter *ux_waiter = NULL;
 	struct task_struct *task;
 
-	if (!entry || !head)
+	if (!entry || !sem)
 		return false;
 
+	if (!rwsem_ux_insert)
+		return false;
+
+	head = &sem->wait_list;
 	ux_waiter = (struct rwsem_waiter *)list_entry(entry, struct rwsem_waiter, list);
 
 	list_for_each_safe(pos, n, head) {
@@ -49,7 +88,7 @@ static bool rwsem_list_add_ux(struct list_head *entry, struct list_head *head)
 		if (!task)
 			continue;
 
-		if (waiter->task->prio > MAX_RT_PRIO && !test_task_ux(waiter->task)) {
+		if (task->prio > MAX_RT_PRIO && !test_task_ux(task)) {
 			list_add(entry, waiter->list.prev);
 			ux_waiter->timeout = waiter->timeout;
 			return true;
@@ -71,6 +110,15 @@ static void rwsem_set_inherit_ux(struct rw_semaphore *sem)
 	if (is_rwsem_reader_owned(sem))
 		return;
 	owner = rwsem_owner_flags(sem, &flags);
+
+	/*
+	 * ACLaniakea: 与 mutex.c 里「★第三处根因★」同一个问题。
+	 * rwsem_owner_flags() 在信号量此刻无写者时返回 NULL，原实现直接把它交给
+	 * set_inherit_ux() 解引用。test_inherit_ux(NULL, ...) 返回 false，
+	 * 反而让条件成立、径直走进去，所以必须显式判 NULL。
+	 */
+	if (!owner)
+		return;
 
 	/* set writer as ux task */
 	if ((is_ux || is_rt) && !test_inherit_ux(owner, INHERIT_UX_RWSEM)) {
@@ -253,11 +301,24 @@ static void __android_vh_alter_rwsem_list_add_handler(struct rwsem_waiter *waite
 		handoff_set = first_waiter->handoff_set;
 	}
 
-	if (handoff_set) {
-		ret = rwsem_list_add_ux(&waiter->list, sem->wait_list.next);
-	} else {
-		ret = rwsem_list_add_ux(&waiter->list, &sem->wait_list);
-	}
+	/*
+	 * ACLaniakea: 原来这里是
+	 *     if (handoff_set)
+	 *         ret = rwsem_list_add_ux(&waiter->list, sem->wait_list.next);
+	 *     else
+	 *         ret = rwsem_list_add_ux(&waiter->list, &sem->wait_list);
+	 * 前一支传的是链表第一个元素而不是链表头，详见 rwsem_list_add_ux() 上方的
+	 * 「★第二处同类根因★」。
+	 *
+	 * handoff 置位意味着首位等待者已被内核许诺下一个拿锁，此时插队本来就不该
+	 * 越过它；与其再写一套"从第二个元素起找位置"的遍历（又一处容易写错的边界），
+	 * 不如直接不插队、交还内核自己 list_add_tail。代价只是 handoff 期间
+	 * （很短的一个瞬态）少一次 UX 插队，换来彻底消除这条损坏路径。
+	 */
+	if (handoff_set)
+		return;
+
+	ret = rwsem_list_add_ux(&waiter->list, sem);
 
 #ifdef RWSEM_DEBUG
 	post_dump_waitlist(waiter, sem);
