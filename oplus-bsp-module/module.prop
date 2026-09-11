@@ -3,4 +3,4 @@ name=联想平板 Pro GT - OPlus BSP 内核模块
 version=4.0.3
 versionCode=400003
 author=ACLaniakea
-description=提供一加 BSP 的调度、压缩内存与后台冻结能力：原厂模块优先，软件桥只补系统与高通底层之间缺失的语义。tick 负载均衡桥默认启用；UX 到 WALT MVP 的实验桥保持显式 opt-in。
+description=提供一加 BSP 的调度、压缩内存与后台冻结能力：原厂模块优先，自编桥只补 ColorOS 与高通底层之间缺失的语义。两个桥均随开机启用——一个把 sched_assist 的负载均衡入口接回调度 tick，一个把 UX 标记翻译成 WALT 认识的任务 boost；开机后再补回帧组对 SurfaceFlinger 的提频与迁移加成。
