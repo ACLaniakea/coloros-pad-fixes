@@ -47,6 +47,49 @@ if [ -w "$MEM_POLICY" ]; then
     log_msg "zram_opt policy aligned to reference: vm=125 direct=60 swapd=125 dynamic=125/0/125/0"
 fi
 
+# ============================================================================
+# 帧组的 SurfaceFlinger 提频/迁移加成：补回本机缺的两项（2026-09-12）
+#
+# /proc/oplus_frame_boost/stune_boost 是 frame_boost 的每帧组 boost 表。
+# 实机对照（本机 vs PKX110，同一时刻各读一次）：
+#
+#   grp 1~4   两台完全相同
+#   grp 5~9   本机  9 项：fps / min_threshold / min_obtain_view / min_timeout
+#                        / ed_min_duration / ed_min_util / ed_max_duration
+#                        / ed_max_util / ed_timeout
+#             对照 11~12 项：以上 + sf_migr_gpu:30 + sf_freq_gpu:30
+#                        （部分组还有 sf_freq_nongpu:30，两台对照机自己也不一致，
+#                          属运行态而非配置，故不跟）
+#
+# 也就是说：本机的帧组能正确识别（/proc/oplus_frame_boost/info 里
+# RenderThread + 应用主线程、SF COMPOSITION GROUP 都在），但应用帧组活跃时
+# **不给 SurfaceFlinger 任何提频与迁移加成**。合成跟不上就直接表现为掉帧。
+#
+# 这两个值由 ColorOS 框架在运行时决定，两台设备的 /system /vendor /product
+# 里都搜不到对应配置文件，所以只能在框架写完之后补写。本脚本在
+# boot_completed 之后执行，晚于框架的初始化。
+#
+# 写入格式是从 ua_cpu_ioctl.ko 的 proc_stune_boost_write 实测出来的：
+#     echo "<grp_id> <boost_type索引> <值>" > stune_boost
+# 索引即读出来那一行的字段序号（0=migr 1=freq 2=fps … 9=sf_migr_gpu
+# 10=sf_freq_gpu …）。写错会被直接拒绝，不会写坏别的项。
+#
+# 实测：五组全部写入成功，且经 20 秒滑动 + 一次应用切换后没有被框架改回 0。
+# 撤销：写回 0（`echo "$g 9 0"`），或删掉本段。
+# ============================================================================
+FBG_STUNE=/proc/oplus_frame_boost/stune_boost
+if [ -w "$FBG_STUNE" ]; then
+    _n=0
+    for _g in 5 6 7 8 9; do
+        echo "$_g 9 30"  >"$FBG_STUNE" 2>/dev/null
+        echo "$_g 10 30" >"$FBG_STUNE" 2>/dev/null
+        _n=$((_n + 1))
+    done
+    log_msg "fbg stune: 已对 grp5-9 写入 sf_migr_gpu=30 sf_freq_gpu=30（$_n 组），对齐对照机"
+else
+    log_msg "fbg stune: $FBG_STUNE 不可写，跳过"
+fi
+
 Z=/sys/block/zram0
 log_msg "--- post-boot state ---"
 log_msg "modules: $(grep -c . /proc/modules) loaded; oplus_* = $(grep -c '^oplus_' /proc/modules)"

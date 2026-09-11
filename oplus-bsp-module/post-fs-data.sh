@@ -141,6 +141,14 @@ oplus_resctrl
 oplus_lb_bridge
 "
 
+# UX -> WALT MVP 桥：2026-09-12 起随开机加载并启用（见下方"为什么改成默认开"）。
+# 放 $MODDIR/disable-walt-bridge 可整段跳过，无需改脚本。
+if [ -f "$MODDIR/disable-walt-bridge" ]; then
+    log_msg "walt-bridge: disable-walt-bridge 存在，跳过"
+else
+    MODULES="$MODULES oplus_walt_bridge"
+fi
+
 # 原机同构的内存策略层：二者只挂 Android GKI 已有的 reclaim hooks，
 # 不替换已工作的 zram/HybridSwap 驱动。二者位于 MODULES 里的
 # HybridSwap 之前，使 init.oplus.nandswap.sh 能写入其动态参数。
@@ -245,8 +253,15 @@ oplus_lb_bridge
 # 熔断条件根本不成立。对"起得来但用不了"这类故障，熔断是无效的。
 # ---------------------------------------------------------------------------
 
-# ---- 2026-09-11：oplus_lb_bridge（本项目自编，非 OPlus 原件）----
-# 唯一一个不是从 OPlus 源码树编出来的成员，用途是把 sched_assist 的 tick
+# ---- 2026-09-11：OPlus/WALT 软件桥（本项目自编，非 OPlus 原件）----
+# 实机已证明高通 sched_walt 占用并实现了 pick-next restricted hook，因此本桥
+# 不再争抢最终决策点。它在普通 scheduler-tick VH 上检查 current 的 OPlus UX
+# 状态，并调用 WALT 原生 set_task_boost() 赋予短期 MVP 状态；pick/preempt 仍
+# 全部由 WALT 决定。普通 VH 可多订阅且可注销，可与 oplus_lb_bridge 共存。
+# 运行计数见 /proc/oplus_walt_bridge；enable 参数可即时旁路，rmmod 可完整回滚。
+# 当前为 staged opt-in：模块目录存在 enable-walt-bridge 文件时才随开机加载。
+#
+# oplus_lb_bridge 用途是把 sched_assist 的 tick
 # 负载均衡入口接回调度器。必须排在 oplus_cpu_sched_sched_assist 之后
 # （它链接该模块导出的 __oplus_tick_balance），故放在清单末尾。
 #
@@ -358,6 +373,65 @@ for m in $MODULES; do
 done
 
 log_msg "=== oplus_bsp: $loaded loaded, $failed failed ==="
+
+# ---------------------------------------------------------------------------
+# 打开 UX -> WALT 桥（2026-09-12）
+#
+# 模块本身 enable 默认 0——"只装不开"等于没装，必须在这里显式打开。
+#
+# boost_type 选 1（TASK_BOOST_ON_MID）而不是模块默认的 3，理由是拓扑：
+#   本机 cpu0 capacity 379（唯一弱核）、cpu1-4 867、cpu5 1024。
+#   UI 线程一旦落到 cpu0 就只有中核 44% 的算力，这正是要治的病；
+#   type 1 把它抬到中簇就够，不需要 type 3 的 STRICT_MAX + MVP 强制。
+#   type 3 会给任务 12ms 的 MVP 执行上限，超限被 walt_cfs_deactivate_mvp_task
+#   降级——多轮 A/B 里"均值改善但尾部变差"的嫌疑就在这里。
+#
+# ★ 诚实记录：这个桥的收益没有被测量证实 ★
+#   本项目一共做过八轮 A/B（另一 AI 五轮 Perfetto FrameTimeline + 本轮三轮
+#   SurfaceFlinger timestats），八轮里没有一致方向。原因是基线漂移远大于效应：
+#   同为"关桥"的样本，P2P 尾部在两轮之间从 0.3% 摆到 8.7%，而且样本越靠后越差
+#   （热或后台累积），交错采样抵消不掉相关性。刷新率已排除（全程稳定 150Hz、
+#   主导间隔 6ms）。
+#
+#   所以这里启用它的依据不是"实测更快"，而是"它把一条确实断掉的原厂链路接了
+#   回去"：ColorOS 的 UX 标记原本走到 sched_assist 就断了，因为最终选任务的是
+#   高通 sched_walt，它不认 OPlus 的 UX 状态。桥把 UX 状态翻译成 WALT 认识的
+#   task boost，链路因此闭合。这是设备所有者在知情下做的取舍。
+#
+# 关掉的三种方式，由轻到重：
+#   1. echo 0 > /sys/module/oplus_walt_bridge/parameters/enable   （立即、免重启）
+#   2. touch $MODDIR/disable-walt-bridge 后重启                    （不再加载）
+#   3. rmmod oplus_walt_bridge                                     （普通 vh，可卸）
+#
+# 已知未验收项（沿用 TEST-2026-09-12.md）：PowerHAL 并发写同一 task boost 时
+# 会互相覆盖（WALT 没有 getter 可合并）、长时功耗与待机未测。
+# ---------------------------------------------------------------------------
+WB=/sys/module/oplus_walt_bridge/parameters
+if [ -d "$WB" ]; then
+    echo 1 >"$WB/boost_type" 2>/dev/null
+    echo 1 >"$WB/enable" 2>/dev/null
+    log_msg "walt-bridge: enable=$(cat "$WB/enable" 2>/dev/null) type=$(cat "$WB/boost_type" 2>/dev/null) period=$(cat "$WB/boost_period_ms" 2>/dev/null)"
+elif [ ! -f "$MODDIR/disable-walt-bridge" ]; then
+    log_msg "WARN: walt-bridge 模块未加载，无法启用"
+fi
+
+# ---------------------------------------------------------------------------
+# 就地抓取模块自报的 hook 注册结果（2026-09-12）
+#
+# sched_assist / frame_boost 等在 init 里对每个注册失败都会 pr_err：
+#     [sched_assist][...]failed to register_trace_android_rvh_xxx, ret=-16
+# -16 = EBUSY，意味着那个受限 hook 已被高通 WALT 或联想模块占走，
+# 对应的 UX 机制在本机是死的。
+#
+# 这些消息只在 post-fs-data 这一刻产生，而本机 dmesg 环形缓冲约 56 秒就滚一轮
+# （servicemanager 每秒两次找不到 subsys HAL 在刷屏），等 adb 起来再看必然已丢。
+# 所以在加载循环结束后立刻落盘一份，成本是几十行日志。
+# ---------------------------------------------------------------------------
+{
+    echo "--- hook 注册结果快照 ---"
+    dmesg 2>/dev/null | grep -aiE 'sched_assist|frame_boost|eas_opt|qos_sched|uxmem|failed to register|ret=-16' | tail -60
+    echo "--- 快照结束 ---"
+} >>"$LOGFILE" 2>/dev/null
 
 if [ -f /sys/block/zram0/hybridswap_core_enable ]; then
     log_msg "hybridswap sysfs present; init.oplus.nandswap.sh will take over at boot_completed"
