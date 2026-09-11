@@ -13,9 +13,9 @@
 # nandswap_tool 开 dio、mkswap/swapon、memcg 参数、写 hybridswap_loop_device
 # 与 hybridswap_enable。这正是"回归 ColorOS 原逻辑"该有的样子。
 #
-# 不含 oplus_synchronize：mutex_list_add 谎报入链导致延迟 panic，
-# 且 unregister_rtmutex_vendor_hooks() 是空函数体，装上就再也 rmmod 不掉。
-# 详见 kernel-compat/一加模块移植进度.md。
+# oplus_synchronize 曾因"mutex_list_add 谎报入链导致延迟 panic"被排除，
+# 2026-09-11 定位到真正根因（ww_mutex 传的不是链表头）并修好后重新纳入，
+# 详见清单下方专门的说明段。
 # ============================================================================
 MODDIR=${0%/*}
 LOGFILE=/data/adb/oplus_bsp.log
@@ -138,6 +138,7 @@ kp_freeze_detect
 oplus_bsp_lz4k
 cpufreq_effiency
 oplus_resctrl
+oplus_synchronize
 oplus_lb_bridge
 "
 
@@ -177,6 +178,42 @@ oplus_lb_bridge
 #   alloc_new_buf_locked、do_send_sig_info），init 失败会自己回滚，
 #   没有 rvh，可 rmmod。无依赖，位置随意。
 #
+# ---- 2026-09-11：oplus_synchronize（锁的 UX 优先级继承）----
+# 就是对照机上那个 oplus_locking_strategy：给 mutex / rwsem / futex / rtmutex
+# 加 UX 优先级继承——UI 线程阻塞在某把锁上时把持锁者临时提到 UX 优先级，
+# 免得前台被后台线程按住。对照机 kallsyms 里有 747 个相关符号，本机原本是 0。
+#
+# ★ 这个模块以前是被明令排除的，排除理由现已失效 ★
+#
+# 当年的现象是装上后一交互就 panic，原注释归因为"mutex_list_add 谎报入链"，
+# 那只是表象。真正的根因见 kernel-compat/oplus_synchronize/mutex.c 里标着
+# 「★真正的根因★」的那段：
+#
+#   __mutex_add_waiter() 的第三个参数语义是"插到这个节点之前"，不一定是链表头。
+#   ww_mutex 路径（ww_mutex.h 的 __ww_waiter_add）传进来的是链表中间的 waiter。
+#   OPlus 的 mutex_list_add_ux() 把它当链表头做 list_for_each_safe 绕圈遍历，
+#   途中会走到 &lock->wait_list 本身并把它 list_entry 成 mutex_waiter，
+#   于是 waiter->task 读到的其实是 struct mutex 的 android_oem_data1[0]。
+#   实测 panic 现场：wake_q_add 拿到用户态指针 0x7c973bf000 直接翻译错误。
+#   ww_mutex 被 DRM/dma-resv 大量使用，所以表现为"一交互就崩"。
+#
+# 修复三处：head 不是真链表头时直接放弃插队、据实返回是否入链、waiter->task
+# 空指针防御。另加 mutex_ux_insert 运行时开关且**默认关闭**——即 mutex 的插队
+# 优化不启用，只保留 futex / rwsem / rtmutex 的继承与统计。
+#
+# 2026-09-11 实测（insmod 后 20 秒滑动压力 + 两轮负载）：
+#   futex_ux_set_cnt 8478 -> 11743（约 165 次/秒），unset 对称配平无泄漏；
+#   零 panic、零内核告警、system_server 与 SurfaceFlinger 存活。
+#
+# 仍需长时间观察——它是本清单里唯一有过 panic 前科的模块。撤销顺序：
+#   1. echo 0 > /sys/module/oplus_synchronize/parameters/locking_enable（免重启）
+#   2. 从本清单删掉 oplus_synchronize 这一行，重启
+# 注意 unregister_rtmutex_vendor_hooks() 是空函数体，rmmod 卸不掉，只能靠这两条。
+#
+# 必须排在 oplus_cpu_sched_sched_assist 之后：它用后者导出的
+# test_task_ux / set_inherit_ux / unset_inherit_ux 等符号。
+# ---------------------------------------------------------------------------
+
 # ---- 2026-09-11：oplus_lb_bridge（本项目自编，非 OPlus 原件）----
 # 唯一一个不是从 OPlus 源码树编出来的成员，用途是把 sched_assist 的 tick
 # 负载均衡入口接回调度器。必须排在 oplus_cpu_sched_sched_assist 之后
