@@ -108,21 +108,38 @@ done
 # 注意：MODULES 是靠 `for m in $MODULES` 按空白分词遍历的普通字符串，
 # 里面**不能写注释**——`#` 开头的词会被当成模块名去 insmod。说明一律写在外面。
 #
-# ★ per-CPU 模块预留已到上限（2026-09-12 查明）★
+# ★ per-CPU 模块预留是硬上限，已移除 oplus_resctrl 腾位（2026-09-12）★
 #
-# 清单末尾的模块会间歇性 insmod 失败：
+# 症状：清单末尾的模块会间歇性 insmod 失败
 #     oplus_resctrl: Could not allocate 3408 bytes percpu data   (rc=12 ENOMEM)
-# 这不是常规内存不足，而是内核给模块预留的 per-CPU 区（arm64 GKI 的
-# PERCPU_MODULE_RESERVE，编译期常量）被前面三十多个模块吃光。
-# percpu_modalloc() 只能从这个保留块里分配，不会退化到动态 chunk，所以是硬上限。
+# 这不是常规内存不足。percpu_modalloc() 只从 PERCPU_MODULE_RESERVE（arm64 GKI
+# 的编译期常量，约 8 KB）这个保留块分配，不会退化到动态 chunk，所以是硬上限，
+# 而且在我们之前已有四百多个高通/联想 vendor 模块先吃过一轮。
 #
-# 实测确认是容量而非顺序问题：把 oplus_resctrl 提到清单第二位之后它确实装上了，
-# 但失败转移到了 oplus_bsp_game_opt——换了个受害者而已。因此已改回原顺序，
-# 让代价落在 oplus_resctrl（缓存/带宽分区）而不是 oplus_bsp_game_opt：后者注册
-# 2 个 rvh 且不注销，装上就 rmmod 不掉，时装时不装比稳定不装更糟。
+# 逐个 .ko 量过 .data..percpu 段，本清单里只有 6 个模块占预留，合计 4208 B：
+#     oplus_resctrl                3408 B   ← 一个就占 81%
+#     oplus_bsp_game_opt            328 B
+#     oplus_cpu_sched_frame_boost   224 B
+#     oplus_mm_hybridswap_zram      144 B
+#     oplus_cpu_sched_sched_assist   60 B
+#     oplus_cpu_sched_sched_info     44 B
+# 其余 27 个一个字节都不占——所以"砍几个模块腾地方"对这条约束毫无用处，
+# 只有动这 6 个里的才有效。
 #
-# 要真正解决只有一条路：重编内核、调大 PERCPU_MODULE_RESERVE。在那之前，
-# **往本清单再加任何使用 per-CPU 数据的模块都会挤掉一个现有模块**。
+# 先试过把 oplus_resctrl 提到清单最前面，它确实装上了，但失败转移到
+# oplus_bsp_game_opt——证明是容量不是顺序。
+#
+# 最终移除 oplus_resctrl，依据三条：
+#   1. 对照机 PKX110 的 694 个已加载模块里没有任何 resctrl 字样，非原厂组件；
+#   2. 本清单里无任何模块依赖它；
+#   3. 它建的是 /proc/oplus_resctrl/{ioc_dist_read,ioc_dist_write,iocost_ppm}
+#      ——blk-iocost 的 IO 开销控制器，不是加载器旧注释写的"cache/带宽分区"
+#      （那句话是错的，一并更正）。本机没有任何东西配置这三个节点。
+# 让出 3408 B 之后，原厂确实有的 oplus_bsp_game_opt 就能稳定装上。
+# .ko 仍保留在 ko/ 里，需要时把名字加回本清单即可。
+#
+# 往本清单再加任何使用 per-CPU 数据的模块，仍会挤掉一个现有模块；
+# 要根治只能重编内核调大 PERCPU_MODULE_RESERVE。
 MODULES="
 oplus_cpu_sched_sched_assist
 oplus_ipc
@@ -155,7 +172,6 @@ oplus_freeze_process
 kp_freeze_detect
 oplus_bsp_lz4k
 cpufreq_effiency
-oplus_resctrl
 oplus_lb_bridge
 "
 
