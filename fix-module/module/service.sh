@@ -1661,6 +1661,176 @@ if [ -x "$MODDIR/bin/art-oat-repair.sh" ]; then
     ) &
 fi
 
+# ============================================================================
+# Soter Key 自愈（2026-09-11）
+#
+# 来源：对照手机上装着第三方模块"修复Key状态"（@芥末斯 v1.2，模块 id
+# jiemosi_auto_fix_rkp_soter_key），平板没装。它做两件事，这里**只重新实现
+# Soter 那一半**，RKP 那一半有意不移植，理由见本段末尾。
+#
+# 上游 Soter 流程（读 run_logic.sh 的 run_soter_fix 得到）：
+#     1. am start   com.oplus.engineermode/.security.RPMBStatusActivity
+#     2. am force-stop com.oplus.engineermode
+#     3. stop  <soter 服务>        等到 init.svc.* = stopped
+#     4. pm clear --user 0 com.tencent.soter.soterserver      ← 核心
+#     5. start <soter 服务>        等到 init.svc.* = running
+#     6. am start   ...RPMBStatusActivity                      （不关）
+#
+# 核心是第 4 步：把 Soter 服务端攒下的派生密钥状态清掉，让它对着当前 TEE
+# 重新注册。第 1/6 步的工程模式 RPMB 状态页是触发器——打开那一页会让框架去
+# 查一次 RPMB/Key 状态，从而促成重新置备。
+#
+# ---- 诚实的前提说明 ----
+# 本机**没有**任何证据表明 Soter 当前是坏的：logcat 全缓冲里 soter 相关
+# 0 条、更无 error，vendor.soter 一直 running。两台的
+# /data/data/com.tencent.soter.soterserver 目录结构也一模一样（都只有
+# cache/code_cache），手机那份只是时间戳新——正是它的模块每次开机 pm clear
+# 留下的。所以这是**能力移植**，不是已验证的故障修复。
+#
+# 与之相关但**修不了**的两处，别再去追：
+#   /mnt/vendor/persist/engineermode        平板缺
+#   persist.vendor.rpmb.enable.state        平板未设置
+# 平板的 persist 是联想布局（BACKCOLOR / chid / factflag / f0.txt …），
+# 手机是 OPlus 布局（engineermode / fingerprint / drm …）。这是分区由硬件
+# 预置的内容，不是脚本能补出来的。
+#
+# ---- 两处有意偏离上游 ----
+# (a) 服务名不硬编码。上游按 vendor.soter / soter-1-0 的候选表试，再用
+#     getprop 兜底；这里直接扫 init.svc.*soter*，本机是 vendor.soter。
+# (b) 收尾那次打开状态页之后**补一次 force-stop**。上游第 6 步开完就不管，
+#     等于每次开机在用户眼前留一个工程模式页面。触发效果在 Activity 起来时
+#     就已经产生，关掉它不影响结果，只少一个弹窗。
+#
+# ---- 开关 ----
+#   persist.sys.aclaniakea.soter_fix     = 0 整段跳过（默认开）
+#   persist.sys.aclaniakea.soter_fix_ui  = 0 跳过工程模式状态页的开/关，
+#                                          只做 stop / pm clear / start（默认开）
+#
+# ---- RKP 那一半为什么不移植 ----
+# 上游还提供"手动一键修复 RKP"：备份 persist 分区到 /data/adb/PersistBackup，
+# 再用 /data/local/tmp/KmInstallKeybox 往 TEE 里装 keybox。三条都不成立：
+# 要写 persist 分区（风险最高的一类操作）、需要我们手上没有的 KmInstallKeybox
+# 二进制、而本机的证明链本来就走 tricky_store 的 TEESimulator + keybox.xml。
+# ============================================================================
+soter_resolve_service() {
+    # 扫出第一个处于合法 init 状态的 *soter* 服务名
+    getprop 2>/dev/null | while IFS= read -r _line; do
+        case "$_line" in
+            \[init.svc.*soter*\]:*) ;;
+            *) continue ;;
+        esac
+        _svc=${_line%%]:*}
+        _svc=${_svc#\[init.svc.}
+        _st=${_line##*: }
+        _st=${_st#\[}
+        _st=${_st%\]}
+        case "$_st" in
+            running|stopped|restarting|stopping) echo "$_svc"; break ;;
+        esac
+    done
+}
+
+soter_user_unlocked() {
+    case "$(getprop sys.user.0.ce_available 2>/dev/null)" in
+        1|true) return 0 ;;
+        0|false) return 1 ;;
+    esac
+    case "$(cmd user is-user-unlocked 0 2>/dev/null)" in
+        *true*) return 0 ;;
+    esac
+    return 1
+}
+
+soter_wait_state() {
+    _want=$1
+    _svc=$2
+    _limit=$3
+    _n=0
+    while [ "$_n" -lt "$_limit" ]; do
+        [ "$(getprop "init.svc.$_svc" 2>/dev/null)" = "$_want" ] && return 0
+        sleep 1
+        _n=$((_n + 1))
+    done
+    return 1
+}
+
+soter_key_repair() {
+    [ "$(getprop persist.sys.aclaniakea.soter_fix)" = 0 ] && {
+        log_msg "soter: persist.sys.aclaniakea.soter_fix=0，跳过"
+        return 0
+    }
+
+    _pkg=com.tencent.soter.soterserver
+    pm path "$_pkg" >/dev/null 2>&1 || {
+        log_msg "soter: 本机没有 $_pkg，跳过"
+        return 0
+    }
+
+    _svc=$(soter_resolve_service)
+    [ -n "$_svc" ] || {
+        log_msg "soter: 未扫到任何 init.svc.*soter* 服务，跳过"
+        return 0
+    }
+
+    # 等用户数据解锁：pm clear 要写 CE 存储，锁屏期间做没有意义。
+    # 最多等 5 分钟；等不到就放弃本次开机，不做半套。
+    _n=0
+    while ! soter_user_unlocked; do
+        _n=$((_n + 1))
+        [ "$_n" -ge 60 ] && {
+            log_msg "soter: 5 分钟内未解锁，本次开机跳过"
+            return 0
+        }
+        sleep 5
+    done
+
+    _act=com.oplus.engineermode/.security.RPMBStatusActivity
+    _ui=1
+    [ "$(getprop persist.sys.aclaniakea.soter_fix_ui)" = 0 ] && _ui=0
+    cmd package resolve-activity --brief -n "$_act" >/dev/null 2>&1 || _ui=0
+
+    log_msg "soter: 开始修复，服务=$_svc 状态=$(getprop "init.svc.$_svc") 状态页=$_ui"
+
+    if [ "$_ui" = 1 ]; then
+        am start -n "$_act" >/dev/null 2>&1
+        sleep 1
+        am force-stop com.oplus.engineermode >/dev/null 2>&1
+    fi
+
+    stop "$_svc" >/dev/null 2>&1
+    sleep 3
+    soter_wait_state stopped "$_svc" 15 \
+        || log_msg "soter: 等待停止超时，当前=$(getprop "init.svc.$_svc")"
+
+    pm clear --user 0 "$_pkg" >/dev/null 2>&1
+    _clr=$?
+    [ "$_clr" -ne 0 ] && { pm clear "$_pkg" >/dev/null 2>&1; _clr=$?; }
+    log_msg "soter: pm clear $_pkg 返回码=$_clr"
+
+    start "$_svc" >/dev/null 2>&1
+    sleep 5
+    soter_wait_state running "$_svc" 20 \
+        || log_msg "soter: 等待启动超时，当前=$(getprop "init.svc.$_svc")"
+
+    if [ "$_ui" = 1 ]; then
+        am start -n "$_act" >/dev/null 2>&1
+        sleep 2
+        # 偏离上游 (b)：收尾不把工程模式页面留在屏幕上
+        am force-stop com.oplus.engineermode >/dev/null 2>&1
+    fi
+
+    _fin=$(getprop "init.svc.$_svc" 2>/dev/null)
+    if [ "$_clr" -eq 0 ] && [ "$_fin" = running ]; then
+        log_msg "soter: 修复完成，服务=$_svc 状态=$_fin"
+    else
+        log_msg "soter: 修复未完全成功，clear=$_clr 状态=${_fin:-空}"
+    fi
+}
+
+# 放后台：整段最坏要等 5 分钟解锁，绝不能挡住 service.sh 的其余修复。
+# 与 art-oat-repair 一样排在末尾，且两者不争资源（这段几乎不耗 CPU）。
+( soter_key_repair ) &
+
 # ===== frontled: 前摄指示灯（事件驱动，2026-09-04） =====
 # CameraServiceProxy 的 LSPosed bridge 直接消费相机所有权事件并写 RGB 节点。
 # 旧版 shell 每秒 dumpsys media.camera 会在 system_server 侧制造持续 binder

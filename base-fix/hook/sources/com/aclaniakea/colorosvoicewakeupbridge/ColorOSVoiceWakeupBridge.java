@@ -8,6 +8,7 @@ import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.UserManager;
 import android.provider.Settings;
 import com.aclaniakea.devicegate.DeviceGate;
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -116,6 +117,7 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
     private static final AtomicInteger DSP_ENUM_BLOCKS = new AtomicInteger(0);
     private static volatile Boolean FORCE_BWV;
     private static volatile Boolean STREAM_MODE;
+    private static final AtomicInteger LOCKED_SP_REDIRECTS = new AtomicInteger(0);
 
     @Override public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
         if (!DeviceGate.isSupported() || p.processName == null) return;
@@ -138,6 +140,56 @@ public final class ColorOSVoiceWakeupBridge implements IXposedHookLoadPackage {
                 }
             });
             XposedBridge.log("ColorOSVoiceWakeupBridge: gesture storage context pinned to DE storage");
+        } catch (Throwable t) { XposedBridge.log(t); }
+        hookLockedSharedPreferences(loader);
+    }
+
+    /**
+     * 解锁前把凭据加密存储的 SharedPreferences 请求改道到 DE 存储。
+     *
+     * 上面那个 getStorageContext 钩子只覆盖了走它的那条路。2026-09-11 的日志
+     * 里 com.oplus.gesture 在开机 13 秒内连崩 4 次，走的是另一条：
+     *
+     *   java.lang.IllegalStateException: SharedPreferences in credential
+     *       encrypted storage are not available until after user is unlocked
+     *     at android.app.ContextImpl.getSharedPreferences(ContextImpl.java:643)
+     *     at com.oplus.gesture.util.GestureUtil.getDefaultGestureSwitch
+     *     at com.oplus.gesture.database.ActionContentProvider.query
+     *     at com.oplus.gesture.server.ScreenOffGestureService.D1
+     *     at com.oplus.gesture.server.ScreenOffGestureService.onCreate
+     *
+     * 即用户解锁前就有人查 ActionContentProvider，provider 去读自己的
+     * SharedPreferences，撞上 CE 存储未就绪。对照手机（同 ColorOS 版本）
+     * 开机全程零崩溃，是移植侧独有的时序差异。
+     *
+     * 这里不猜是谁在解锁前发起查询，直接让读取降级：锁屏期间给 DE 存储里的
+     * 那一份（通常为空，getDefaultGestureSwitch 因此拿到默认值），解锁后
+     * isUserUnlocked 变真，本钩子不再改道，后续读到的仍是原厂 CE 数据。
+     *
+     * 防重入靠 Context.isDeviceProtectedStorage()——改道后拿到的 DE 上下文
+     * 该方法返回 true，不会再次进入改道分支。
+     */
+    private static void hookLockedSharedPreferences(ClassLoader loader) {
+        try {
+            XposedHelpers.findAndHookMethod("android.app.ContextImpl", loader,
+                    "getSharedPreferences", String.class, int.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(XC_MethodHook.MethodHookParam hook) {
+                    try {
+                        if (!(hook.thisObject instanceof Context)) return;
+                        Context ctx = (Context) hook.thisObject;
+                        if (ctx.isDeviceProtectedStorage()) return;
+                        UserManager um = (UserManager) ctx.getSystemService(Context.USER_SERVICE);
+                        if (um == null || um.isUserUnlocked()) return;
+                        Context de = ctx.createDeviceProtectedStorageContext();
+                        hook.setResult(de.getSharedPreferences(
+                                (String) hook.args[0], (Integer) hook.args[1]));
+                        if (LOCKED_SP_REDIRECTS.incrementAndGet() == 1) {
+                            XposedBridge.log("ColorOSVoiceWakeupBridge: gesture SharedPreferences "
+                                    + "redirected to DE storage while user is locked");
+                        }
+                    } catch (Throwable t) { XposedBridge.log(t); }
+                }
+            });
         } catch (Throwable t) { XposedBridge.log(t); }
     }
 

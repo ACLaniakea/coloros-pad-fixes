@@ -126,3 +126,187 @@ allow system_app oplus_ux_task_app_proc file { open read write ioctl getattr };
 allowxperm untrusted_app oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
 allowxperm platform_app oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
 allowxperm system_app oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+
+# ===========================================================================
+# 2026-09-11：补回移植丢失的调度 / 帧提升 SELinux 放行
+#
+# 对照手机（同 ColorOS 16，日志缓冲覆盖 05-24 ~ 09-11 共 3.5 个月）：
+#   手机 avc denied 合计 10 条，且全是良性的 zygote unix_stream_socket getopt。
+#   平板 20 分钟内 323 条，其中 331 次判定里 permissive=0 占 331-2，全部真拦。
+# 下面只补"平板有、手机没有"且确实打断功能的那几类，纯噪声的不补。
+#
+# --- 1. sched_assist 的 UX 标记入口 ---------------------------------------
+# /proc/oplus_scheduler/sched_assist/ 下只有两个文件被 ROM 策略单独打了标签：
+#     im_flag_app   -> oplus_imflag_app_proc
+#     ux_task_app   -> oplus_ux_task_app_proc   （本文件上方已放行）
+# 其余文件全部继承目录标签 oplus_scheduler_sched_assist_proc：
+#     im_flag  ux_task  lb_enable  sched_assist_enabled ...
+# 实测 DAC 是 0666（im_flag / ux_task / lb_enable），即内核侧就是让应用直接写的，
+# 只有 sched_assist_enabled 是 0664（仍然只有 root 能写，本规则不改变这点）。
+#
+# 被拦的实例（各域 comm 见注释）：
+#   22 次 untrusted_app  file {read write} name=im_flag,ux_task
+#                        << flar2.devcheck / com.coloros.calendar 等
+#    3 次 cameraserver   dir  {search}     name=sched_assist  << CDU-1-FrameProc
+#    3 次 oplus_backuprestore_app dir {search}                << com.heytap.cloud
+# 应用写不进 im_flag/ux_task ⇒ 它们的关键线程不会被标成 UX 任务 ⇒
+# sched_assist 的 UX 优先级与迁移优化对这些应用整条失效。
+allow untrusted_app oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow untrusted_app oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow platform_app oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow platform_app oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow system_app oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow system_app oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow priv_app oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow priv_app oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow cameraserver oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow cameraserver oplus_scheduler_sched_assist_proc file { open read write getattr };
+
+# --- 2. frame_boost 的 UX 线程标记入口 -------------------------------------
+# /proc/oplus_frame_boost/ 由本项目 oplus-bsp-module 里的 ua_cpu_ioctl 创建
+# （见 oplus-bsp-module/post-fs-data.sh 的模块清单注释）。节点建出来了、标签也
+# 对，但 ROM 策略里没有对应的 allow —— 属于"我们把节点装了回来，规则没跟上"。
+#
+#    9 次 system_app  file {read write} name=sys_ctrl  << .oplus.onetrace 等
+#   另有 cameraserver 对 ctrl / sys_ctrl 的拒绝。
+# system_server/system_app 靠 sys_ctrl 下发 UX 线程标记，被拦等于帧提升半残。
+#
+# 注：sys_ctrl 的 DAC 是 0770 system:system，所以即使放行 SELinux，
+# cameraserver（非 system uid）仍会被 DAC 挡住 —— 那条纯粹是消除噪声，
+# 真正起作用的是 system_app / system_server 两条。ctrl 是 0777，不受此限。
+allow system_app proc_frame_boost_sys_ctrl file { open read write getattr };
+allow system_server proc_frame_boost_sys_ctrl file { open read write getattr };
+allow cameraserver proc_frame_boost_sys_ctrl file { open read write getattr };
+allow cameraserver proc_frame_boost_ctrl file { open read write getattr };
+
+# --- 3. Athena 内存优化的两个写入口 ---------------------------------------
+#   13 次 system_server zygote_tmpfs    file     {write}  << comm=athena_hybridsw
+#    2 次 system_server vndbinder_device chr_file {write} << comm=athena_hybridsw
+# athena_hybridsw 是 com.oplus.athena 在 system_server 侧的线程，负责把应用
+# 内存交给 hybridswap。两条写入被拦 ⇒ 这条内存回收通路在平板上是断的。
+allow system_server zygote_tmpfs file { write open getattr };
+allow system_server vndbinder_device chr_file { write open getattr ioctl };
+
+# --- 4. 音频实时线程提权 ---------------------------------------------------
+#    5 次 audioserver -> untrusted_app process {getsched} << comm=AudioRtBoostThr
+# audioserver 读不到应用音频线程的调度参数 ⇒ 无法把它提到实时优先级。
+allow audioserver untrusted_app process getsched;
+
+# --- 5. ADSP 远程调用的目录遍历 -------------------------------------------
+#    9 次 priv_app adsprpcd_file dir {search}   << comm=AI-unit[1]
+#    4 次 priv_app adsprpcd_file dir {getattr}
+# 本文件第 8 行已为 platform_app 放行同一目录，priv_app 是漏掉的那半。
+allow priv_app adsprpcd_file dir { open read getattr search };
+allow priv_app adsprpcd_file file { open read getattr map };
+
+# --- 6. 2026-09-11 重启复核后补齐的系统服务侧域 ---------------------------
+# 上面第 1、2 组是按当时日志里出现过的域写的，只覆盖到应用侧。重启一次之后
+# 开机早期又冒出一批系统服务的同类拒绝（各 1~3 次，全部 permissive=0）：
+#
+#   surfaceflinger           -> oplus_scheduler_sched_assist_proc [dir]  {search}
+#   bootanim                 -> oplus_scheduler_sched_assist_proc [dir]  {search}
+#   radio (m.android.phone)  -> oplus_scheduler_sched_assist_proc [dir]  {search}
+#   permissioncontroller_app -> oplus_scheduler_sched_assist_proc [dir]  {search}
+#   audioserver / bootanim / mediaserver / radio / permissioncontroller_app
+#                            -> proc_frame_boost_ctrl      [file] {read write}
+#   audioserver / bootanim   -> proc_frame_boost_sys_ctrl  [file] {read write}
+#   hal_gameopt_oplus_aidl   -> proc_frame_boost_sys_ctrl  [file] {ioctl}
+#
+# surfaceflinger 那条最要紧：合成器被拦在 sched_assist 目录门口，等于它自己的
+# 关键线程没法登记成 UX 任务。这与本轮新增的 oplus_lb_bridge 是同一条链——
+# 负载均衡接通了，但线程没被标成 UX，均衡器也挑不出它们来迁移。
+#
+# 注：sys_ctrl 的 DAC 是 0770 system:system，audioserver / bootanim 不是
+# system uid，放行 SELinux 后仍会被 DAC 挡住，那两条只为消除日志噪声；
+# ctrl 是 0777，对应的几条是真的会生效。
+allow surfaceflinger oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow surfaceflinger oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow bootanim oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow radio oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow radio oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow permissioncontroller_app oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow permissioncontroller_app oplus_scheduler_sched_assist_proc file { open read write getattr };
+
+allow surfaceflinger proc_frame_boost_ctrl file { open read write getattr };
+allow surfaceflinger proc_frame_boost_sys_ctrl file { open read write getattr };
+allow audioserver proc_frame_boost_ctrl file { open read write getattr };
+allow audioserver proc_frame_boost_sys_ctrl file { open read write getattr };
+allow bootanim proc_frame_boost_ctrl file { open read write getattr };
+allow bootanim proc_frame_boost_sys_ctrl file { open read write getattr };
+allow mediaserver proc_frame_boost_ctrl file { open read write getattr };
+allow radio proc_frame_boost_ctrl file { open read write getattr };
+allow permissioncontroller_app proc_frame_boost_ctrl file { open read write getattr };
+allow hal_gameopt_oplus_aidl proc_frame_boost_sys_ctrl file { open read write getattr ioctl };
+allowxperm hal_gameopt_oplus_aidl proc_frame_boost_sys_ctrl file ioctl { 0x0000-0xffff };
+
+# --- 7. 2026-09-11 第二次重启复核后的收尾 ---------------------------------
+# 上一组补完之后重启，拒绝从 20 条降到 12 条，剩下的全是同两类缺口：
+#
+# (a) ux_task_app 的系统服务侧
+#     本文件第 123~128 行（更早加的）只放行了 untrusted_app / platform_app /
+#     system_app 三个应用域。实测下列系统服务同样在写这个节点：
+#         surfaceflinger  bootanim  audioserver  mediaserver
+#         radio(m.android.phone)  permissioncontroller_app
+#     surfaceflinger 那条是关键——合成器把自己的关键线程 tid 写进 ux_task_app，
+#     sched_assist 据此标 UX；被拦就等于合成线程从未进入 UX 集合，
+#     新装的 oplus_lb_bridge 再怎么均衡也挑不到它们。
+#
+# (b) frame_boost ctrl 的 ioctl
+#     第 6 组只给了 read/write/open/getattr，漏了 ioctl，也没配 allowxperm。
+#     实测调用方用的是 ioctlcmd=0xde02（见 radio 与 permissioncontroller_app）。
+#     节点 DAC 是 0777，原厂就是让各域直接 ioctl 的。
+allow surfaceflinger oplus_ux_task_app_proc file { open read write getattr ioctl };
+allow bootanim oplus_ux_task_app_proc file { open read write getattr ioctl };
+allow audioserver oplus_ux_task_app_proc file { open read write getattr ioctl };
+allow mediaserver oplus_ux_task_app_proc file { open read write getattr ioctl };
+allow radio oplus_ux_task_app_proc file { open read write getattr ioctl };
+allow permissioncontroller_app oplus_ux_task_app_proc file { open read write getattr ioctl };
+allowxperm surfaceflinger oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allowxperm bootanim oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allowxperm audioserver oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allowxperm mediaserver oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allowxperm radio oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allowxperm permissioncontroller_app oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+
+allow surfaceflinger proc_frame_boost_ctrl file ioctl;
+allow bootanim proc_frame_boost_ctrl file ioctl;
+allow audioserver proc_frame_boost_ctrl file ioctl;
+allow mediaserver proc_frame_boost_ctrl file ioctl;
+allow radio proc_frame_boost_ctrl file ioctl;
+allow permissioncontroller_app proc_frame_boost_ctrl file ioctl;
+allow cameraserver proc_frame_boost_ctrl file ioctl;
+allowxperm surfaceflinger proc_frame_boost_ctrl file ioctl { 0x0000-0xffff };
+allowxperm bootanim proc_frame_boost_ctrl file ioctl { 0x0000-0xffff };
+allowxperm audioserver proc_frame_boost_ctrl file ioctl { 0x0000-0xffff };
+allowxperm mediaserver proc_frame_boost_ctrl file ioctl { 0x0000-0xffff };
+allowxperm radio proc_frame_boost_ctrl file ioctl { 0x0000-0xffff };
+allowxperm permissioncontroller_app proc_frame_boost_ctrl file ioctl { 0x0000-0xffff };
+allowxperm cameraserver proc_frame_boost_ctrl file ioctl { 0x0000-0xffff };
+allow bootanim oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow audioserver oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow audioserver oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow mediaserver oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow mediaserver oplus_scheduler_sched_assist_proc file { open read write getattr };
+
+# --- 8. 收尾：用 untrusted_app_all 属性终止逐域追加 -------------------------
+# 第三次重启后只剩两类，暴露了前面按域逐条写的根本问题：
+#
+#   untrusted_app_30 (com.omarea.vtools, comm=hwuiTask0) -> ux_task / im_flag
+#   mediaprovider    (com.android.photopicker)           -> sched_assist [dir]
+#
+# untrusted_app_30 是**独立的 SELinux 类型**，不是 untrusted_app 的实例——
+# AOSP 按应用的 targetSdk 分出 untrusted_app_25/27/29/30/32 等一串类型，
+# 前面那条 allow untrusted_app 一个都覆盖不到。继续逐个补是打地鼠，
+# 改用 AOSP 自带的 untrusted_app_all 属性，它按定义涵盖全部这些类型。
+#
+# 放行范围与原厂意图一致：这两个节点的 DAC 都是 0666
+# （proc_create("ux_task", 0666, ...) / im_flag 同），OPlus 本来就让普通应用
+# 直接写；对照手机上同类访问一次拒绝都没有。
+allow untrusted_app_all oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow untrusted_app_all oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow untrusted_app_all oplus_ux_task_app_proc file { open read write getattr ioctl };
+allowxperm untrusted_app_all oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
+allow mediaprovider oplus_scheduler_sched_assist_proc dir { search open read getattr };
+allow mediaprovider oplus_scheduler_sched_assist_proc file { open read write getattr };
+allow mediaprovider oplus_ux_task_app_proc file { open read write getattr ioctl };
+allowxperm mediaprovider oplus_ux_task_app_proc file ioctl { 0x0000-0xffff };
