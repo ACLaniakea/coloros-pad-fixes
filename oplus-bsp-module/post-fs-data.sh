@@ -105,6 +105,24 @@ done
 #   sched_assist/ 里；如果目标内核已经把这些目标内建，下面的加载循环会通过
 #   /sys/module 识别并跳过对应 .ko。外挂文件保留给旧内核回退使用。
 # ---------------------------------------------------------------------------
+# 注意：MODULES 是靠 `for m in $MODULES` 按空白分词遍历的普通字符串，
+# 里面**不能写注释**——`#` 开头的词会被当成模块名去 insmod。说明一律写在外面。
+#
+# ★ per-CPU 模块预留已到上限（2026-09-12 查明）★
+#
+# 清单末尾的模块会间歇性 insmod 失败：
+#     oplus_resctrl: Could not allocate 3408 bytes percpu data   (rc=12 ENOMEM)
+# 这不是常规内存不足，而是内核给模块预留的 per-CPU 区（arm64 GKI 的
+# PERCPU_MODULE_RESERVE，编译期常量）被前面三十多个模块吃光。
+# percpu_modalloc() 只能从这个保留块里分配，不会退化到动态 chunk，所以是硬上限。
+#
+# 实测确认是容量而非顺序问题：把 oplus_resctrl 提到清单第二位之后它确实装上了，
+# 但失败转移到了 oplus_bsp_game_opt——换了个受害者而已。因此已改回原顺序，
+# 让代价落在 oplus_resctrl（缓存/带宽分区）而不是 oplus_bsp_game_opt：后者注册
+# 2 个 rvh 且不注销，装上就 rmmod 不掉，时装时不装比稳定不装更糟。
+#
+# 要真正解决只有一条路：重编内核、调大 PERCPU_MODULE_RESERVE。在那之前，
+# **往本清单再加任何使用 per-CPU 数据的模块都会挤掉一个现有模块**。
 MODULES="
 oplus_cpu_sched_sched_assist
 oplus_ipc
