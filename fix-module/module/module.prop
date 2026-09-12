@@ -1,6 +1,6 @@
 id=coloros_port_fix
 name=联想平板 Pro GT - ColorOS 修复模块
 author=ACLaniakea
-version=4.0.4
-versionCode=400004
+version=4.0.5
+versionCode=400005
 description=修好移植包里瘸掉的底层部分：system_server 整条 SYSTEMSERVERCLASSPATH 的 AOT 产物失配、温控、内存与交换、前台调度延迟、相机/AON、音频传感器与 CryptoEng 兼容，以及移植时丢掉的 SELinux 放行（UX 线程登记、帧率提升）。做法是开机早期 bind 覆盖必要配置、补齐策略规则，AOT 产物在本机重编并按构建指纹校验后才绑定，内存策略一律交还原厂分档，全程保留原厂服务链路。

@@ -32,19 +32,30 @@ log_msg "boot_completed after ${i}s; fuse disarmed"
 # 原厂脚本由 boot_completed 触发，给它时间跑完（建 swapfile + losetup 较慢）
 sleep 45
 
-# The tablet product script is an older branch and leaves zram_opt at 160/60.
-# The reference phone's current osvelte profile resolves to 125/60.  Apply the
-# same contextual policy once after the product script finishes; this is a
-# one-shot boot action, not a resident daemon, and only runs when the genuine
-# external zram_opt module has registered its control plane.
+# ============================================================================
+# zram_opt 的 swappiness 策略：交还本机原厂（2026-09-13 撤销覆盖）
+#
+# 这里原本一律写 vm=125 / swapd=125 / direct=60，理由只有一句"对照机 PKX110 的
+# osvelte profile 解析成 125/60"。那是纯粹的对齐论据，没有任何实测支撑，而且
+# 照搬错了对象：
+#
+#   - 本机自己的原厂脚本 /product/bin/init.oplus.nandswap.sh 里写的是
+#     vm_swappiness=160、direct_swappiness=60；
+#   - swapd 专用的那档我们也一并压了：zram_opt 模块默认
+#     g_hybridswapd_swappiness = 200，被我们改成 125；
+#   - 对照机那个 125 是它自己脚本按机型分档算出来的（同一个脚本里还有
+#     vm_swappiness=100 和 200 的分支），本来就不该跨机型照抄。
+#
+# 方向上这一手是不利的：swappiness 越高越偏向回收匿名页、越多东西进 zram。
+# 把 vm 从 160 压到 125、把 swapd 从 200 压到 125，等于让这台内存最紧的机器
+# 更不敢用 swap —— 与"后台一多就掉帧、swap 用量上不去"的现象直接相关。
+#
+# 现在什么都不做：产品脚本负责 vm/direct，swapd/kswapd 用模块默认。
+# 只读一次记进日志，便于以后核对。
+# ============================================================================
 MEM_POLICY=/proc/oplus_mem/swappiness_para
-MEM_DYNAMIC=/proc/oplus_mem/dynamic_swappiness
-if [ -w "$MEM_POLICY" ]; then
-    echo 'direct_swappiness=60' >"$MEM_POLICY" 2>/dev/null
-    echo 'vm_swappiness=125' >"$MEM_POLICY" 2>/dev/null
-    echo 'swapd_swappiness=125' >"$MEM_POLICY" 2>/dev/null
-    [ -w "$MEM_DYNAMIC" ] && echo '125 0 125 0' >"$MEM_DYNAMIC" 2>/dev/null
-    log_msg "zram_opt policy aligned to reference: vm=125 direct=60 swapd=125 dynamic=125/0/125/0"
+if [ -r "$MEM_POLICY" ]; then
+    log_msg "zram_opt policy left to stock: $(tr '\n' ' ' <"$MEM_POLICY" 2>/dev/null)"
 fi
 
 # ============================================================================
