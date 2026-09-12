@@ -1,6 +1,6 @@
 id=aclaniakea_oplus_bsp
 name=联想平板 Pro GT - OPlus BSP 内核模块
-version=4.0.5
-versionCode=400005
+version=4.0.4
+versionCode=400004
 author=ACLaniakea
 description=提供一加 BSP 的调度、压缩内存与后台冻结能力：原厂模块优先，自编模块只补移植包漏掉或接不上的那几段。两个调度桥随开机启用——一个把 sched_assist 的负载均衡入口接回调度 tick，一个把 UX 标记翻译成 WALT 认识的任务 boost；内存侧补回缺失的碎片度上报模块，让原厂的主动规整链路重新闭合，并修正 osvelte 的节点命名使 lmkd 与媒体资源管理能找到它。开机后再补回帧组对 SurfaceFlinger 的提频与迁移加成。内存回收倾向（swappiness）一律交还本机原厂脚本，不跨机型照搬对照机的分档值。
