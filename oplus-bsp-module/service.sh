@@ -178,3 +178,68 @@ lmkd_reattach_osvelte() {
 
 # 放最后、并再等一会儿：这段不急，让开机后的换页与预加载先过去
 ( sleep 45; lmkd_reattach_osvelte ) &
+
+# ============================================================================
+# hybridswap 熄屏停工桥（2026-09-13）
+#
+# 症状：设备睡着时 hybridswapd 仍持续烧 0.15~0.3 核，且 swapd_wakeup 累计达
+# 19 万次（对照机同期 6741 次）。
+#
+# 根因：hybridswapd 的主唤醒路径本来有熄屏闸门——
+#     if (atomic_read(&swapd_pause)) { count(SWAPD_MANUAL_PAUSE); return; }
+#     if (atomic_read(&display_off))  return;
+# 而 display_off 由面板通知器回调置位，源码里是
+#     #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
+# 这两个是**平台侧 CONFIG**，而我们的构建脚本只从一加模块自己的 Makefile 里
+# 提取 $(CONFIG_x) 组成并集，平台 CONFIG 从来不在其中，于是整段通知器被编掉：
+# 实测出货的 oplus_mm_hybridswap_zram.ko 只引用 register_memory_notifier，
+# 一个 panel/drm/fb 通知器符号都没有 —— display_off 永远是 0。
+#
+# 后果不只是白烧 CPU：熄屏期间 swapd 被高频唤醒，而唤醒越密、两次快照的间隔
+# 越短，refault 守卫越容易触发（实测 99.7% 的唤醒空转），主动回收因此长期失效。
+#
+# 为什么不重编模块修：正经修法是打开 CONFIG_QCOM_PANEL_EVENT_NOTIFIER 重编。
+# 符号是有的（__ksymtab_panel_event_notifier_register 来自 panel_event_notifier
+# 模块，已有 9 个模块在用），但要 <linux/soc/qcom/panel_event_notifier.h>，
+# 那在高通 display-drivers 仓里，我们没有；手写头文件去凑回调签名与枚举值，
+# 对 zram/swap 核心模块来说风险不对等。
+#
+# 桥接语义完全等价：上面两个检查紧挨着且 pause 在前，写 swapd_pause 与置
+# display_off 对唤醒路径的效果相同。实测 pause=1 后 hybridswapd 由 15.6%
+# 直接降到 0.0% 单核，30 秒唤醒由 +6 变 +0。
+#
+# 判据用背光的 bl_power：熄屏=4（FB_BLANK_POWERDOWN）、亮屏=0，实测跟随准确。
+# 不用 debug.tracing.screen_state——它是 stale 的，睡着了还报 1。
+# 失效保护：读不到判据一律写 0（放行），保证最坏情况是回到现状而不是永久暂停。
+# 建 disable-swapd-screenoff 文件即可关掉。
+# ============================================================================
+swapd_screenoff_bridge() {
+    _pn=/sys/block/zram0/hybridswap_swapd_pause
+    _bl=/sys/class/backlight/panel0-backlight/bl_power
+    [ -w "$_pn" ] || { log_msg "swapd-screenoff: $_pn 不可写，不启动"; return 0; }
+    [ -r "$_bl" ] || { log_msg "swapd-screenoff: 读不到 $_bl，不启动"; return 0; }
+    echo 0 >"$_pn" 2>/dev/null          # 起步先放行，避免继承上一轮的暂停态
+    log_msg "swapd-screenoff: 桥已启动（判据 $_bl，熄屏暂停 swapd）"
+
+    _last=-1
+    while :; do
+        _v=$(cat "$_bl" 2>/dev/null)
+        case "$_v" in
+            ''|*[!0-9]*) _want=0 ;;     # 读不出来就放行
+            0)           _want=0 ;;     # 亮屏
+            *)           _want=1 ;;     # 熄屏
+        esac
+        if [ "$_want" != "$_last" ]; then
+            echo "$_want" >"$_pn" 2>/dev/null
+            [ "$_last" = -1 ] || log_msg "swapd-screenoff: bl_power=$_v -> swapd_pause=$_want"
+            _last=$_want
+        fi
+        sleep 10
+    done
+}
+
+if [ -f "$MODDIR/disable-swapd-screenoff" ]; then
+    log_msg "swapd-screenoff: 已被 disable 文件关闭"
+else
+    ( swapd_screenoff_bridge ) &
+fi
