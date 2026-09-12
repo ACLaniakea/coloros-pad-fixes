@@ -802,24 +802,71 @@ bind_over sys_osense_memory_decisionmaker_config.xml
 # 产物不入库（54MB+46MB，且绑定具体构建）。模块安装包里若无 payload/oat/，
 # 本函数静默跳过，不影响其余修复。
 # ============================================================================
+# 2026-09-12：从只绑 services.* 改为按清单绑整条 SYSTEMSERVERCLASSPATH。
+# art-oat-repair.sh 每产出一组就往 payload/oat/oat-manifest.txt 追加一行
+# "<基名> <目标目录>"。老安装包里只有 services.* 没有清单，这里就地补一条，
+# 行为与旧版完全一致。
 bind_system_server_oat() {
     _src="$MODDIR/payload/oat"
-    _dst=/system/framework/oat/arm64
+    _mf="$_src/oat-manifest.txt"
+    _fpf="$_src/oat-fingerprint.txt"
     [ -d "$_src" ] || return 0
-    for _f in services.odex services.vdex services.art; do
-        [ -f "$_src/$_f" ] || { log_msg "system_server oat: 缺 $_f，整组跳过"; return 0; }
-    done
+
+    # 以 payload 里实际存在的 .odex 为准，清单只用来查目标目录。
+    # 反过来（只认清单）会漏掉清单出现之前就产出的那批，例如 services.*。
     _done=""
-    for _f in services.odex services.vdex services.art; do
-        [ -f "$_dst/$_f" ] || continue
-        chown 0:0 "$_src/$_f"
-        chmod 0644 "$_src/$_f"
-        chcon u:object_r:system_file:s0 "$_src/$_f" 2>/dev/null
-        if mount --bind "$_src/$_f" "$_dst/$_f" 2>/dev/null; then
-            _done="$_done $_f"
-        else
-            log_msg "WARN: system_server oat bind 失败 $_f"
+    for _o in "$_src"/*.odex; do
+        [ -f "$_o" ] || continue
+        _b=${_o##*/}; _b=${_b%.odex}
+        _dst=$(sed -n "s/^$_b //p" "$_mf" 2>/dev/null | head -1)
+        [ -n "$_dst" ] || _dst=/system/framework/oat/arm64
+
+        # 逐项指纹：这份产物是对着哪个 jar、哪套启动镜像编的？对不上就别绑。
+        # 装到别的移植包上时，包里自带的产物必然失配；这时什么都不做是对的——
+        # art-oat-repair.sh 会在本次开机后重编，下次开机再绑，绝不能拿一份
+        # 不匹配的产物去盖掉人家本来好好的原厂产物。
+        if [ -s "$_fpf" ]; then
+            _bad=""
+            # 指纹是一行 "键:值" 记号，键为文件名。这里逐项重算再比，
+            # 缺哪一项就当不匹配——宁可不绑，也不拿错产物盖掉原厂的。
+            for _k in boot.art boot.vdex "$_b.jar"; do
+                case "$_k" in
+                    boot.art)  _f=/system/framework/arm64/boot.art ;;
+                    boot.vdex) _f=/system/framework/boot.vdex ;;
+                    *)         _f="${_dst%/oat/arm64}/$_b.jar" ;;
+                esac
+                [ -f "$_f" ] || continue
+                # 必须用 grep -E：toybox 的 BRE 不支持 \| 交替，用 grep -q 写
+                # "\( \|$\)" 会永远匹配不上，守卫就成了永远判定失配。
+                grep -qE " $_k:$(stat -c %s "$_f" 2>/dev/null)( |$)" "$_fpf" 2>/dev/null || _bad="$_bad $_k"
+            done
+            if [ -n "$_bad" ]; then
+                log_msg "system_server oat: $_b 的产物指纹与本机不符（$_bad），跳过绑定，待 art-oat-repair 重编"
+                continue
+            fi
         fi
+        # odex/vdex 必须成对；.art 只在原厂也有的时候才要求，否则会把
+        # 一份与新 odex 不配套的旧 app image 留在原地
+        [ -f "$_src/$_b.odex" ] && [ -f "$_src/$_b.vdex" ] || {
+            log_msg "system_server oat: $_b 缺 odex/vdex，整组跳过"; continue; }
+        if [ -f "$_dst/$_b.art" ] && [ ! -f "$_src/$_b.art" ]; then
+            log_msg "system_server oat: $_b 原厂有 .art 而本机产物没有，整组跳过"
+            continue
+        fi
+        _grp=""
+        for _e in odex vdex art; do
+            [ -f "$_src/$_b.$_e" ] || continue
+            [ -f "$_dst/$_b.$_e" ] || continue
+            chown 0:0 "$_src/$_b.$_e"
+            chmod 0644 "$_src/$_b.$_e"
+            chcon u:object_r:system_file:s0 "$_src/$_b.$_e" 2>/dev/null
+            if mount --bind "$_src/$_b.$_e" "$_dst/$_b.$_e" 2>/dev/null; then
+                _grp="$_grp $_b.$_e"
+            else
+                log_msg "WARN: system_server oat bind 失败 $_b.$_e"
+            fi
+        done
+        _done="$_done$_grp"
     done
     [ -n "$_done" ] && log_msg "system_server oat 已绑定本机重编产物:$_done"
 }

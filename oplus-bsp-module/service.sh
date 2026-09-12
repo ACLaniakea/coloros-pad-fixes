@@ -104,3 +104,66 @@ else
 fi
 log_msg "nandswap props: init=$(getprop sys.oplus.nandswap.init) app_memcg=$(getprop persist.sys.oplus.hybridswap_app_memcg) swapsize=$(getprop persist.sys.oplus.nandswap.swapsize.curr)"
 log_msg "--- end ---"
+
+# ============================================================================
+# lmkd 重挂 /dev/osvelte（2026-09-12）
+#
+# osvelte 的字符设备由 oplus_mm_mm_osvelte 在加载时创建，而我们的模块要等
+# /data 挂好才能在 post-fs-data 里 insmod——实测模块在开机后 8s 才装上，lmkd
+# 1.8s 就起来了。lmkd 对 osvelte 的探测是**开机一次性**的：那时 /dev/osvelte
+# 还不存在，它缓存下"osvelte is not supported"，之后无论内存压力多大都不会再试
+# （实测把 MemAvailable 压到 1369MB、PSI avg10=11.67，它依然不开）。
+# 官方的 lmkd.reinit 钩子也不重走这条探测。
+#
+# 对照机上 lmkd 的 fd 7 常开着 /dev/osvelte，它是原厂形态；平板这边这条一直是断的。
+# 唯一能接回去的办法是在节点就位之后让 lmkd 重启一次。
+#
+# 收益要说清楚：这条链只用于 lmkd 杀进程时的信息转储（字符串是
+# "osvelte info dump triggered by lmkd"），**不参与杀谁的决策**，属于诊断/上报。
+# 真正影响决策的那条——libresourcemanagerservice.so 读
+# /proc/osvelte/dma_buf/procinfo——在模块改名之后已经自己通了，不依赖本段。
+#
+# lmkd 在 init.rc 里是 critical 服务，所以这里卡得很严：
+#   - 必须已经 boot_completed（开机中途绝不动它，避免任何引导循环的可能）；
+#   - /dev/osvelte 必须已存在，且 lmkd 确实没打开它，否则什么都不做；
+#   - 每次开机最多一次；
+#   - 放在最后并延时，等系统稳定；
+#   - 建 disable-lmkd-osvelte 文件即可关掉。
+# 触发引导保护的门槛是「4 分钟内崩溃超过 4 次」，单次重启差得很远；实测重启后
+# lmkd 正常起来（pid 变化）并立刻 "Connection with lmkd established"。
+# ============================================================================
+lmkd_reattach_osvelte() {
+    [ -f "$MODDIR/disable-lmkd-osvelte" ] && { log_msg "lmkd-osvelte: 已被 disable 文件关闭"; return 0; }
+    [ "$(getprop sys.boot_completed)" = "1" ] || { log_msg "lmkd-osvelte: 未 boot_completed，跳过"; return 0; }
+    [ -c /dev/osvelte ] || { log_msg "lmkd-osvelte: /dev/osvelte 不存在，跳过"; return 0; }
+
+    _l=$(pidof lmkd 2>/dev/null)
+    [ -n "$_l" ] || { log_msg "lmkd-osvelte: lmkd 未运行，跳过"; return 0; }
+    if ls -l "/proc/$_l/fd" 2>/dev/null | grep -q '/dev/osvelte'; then
+        log_msg "lmkd-osvelte: lmkd 已持有 /dev/osvelte，无需处理"
+        return 0
+    fi
+
+    log_msg "lmkd-osvelte: lmkd(pid=$_l) 未持有 /dev/osvelte，重启一次令其重新探测"
+    setprop ctl.restart lmkd
+    _i=0
+    while [ "$_i" -lt 10 ]; do
+        sleep 1
+        _i=$((_i + 1))
+        _n=$(pidof lmkd 2>/dev/null)
+        [ -n "$_n" ] && [ "$_n" != "$_l" ] && break
+    done
+    _n=$(pidof lmkd 2>/dev/null)
+    if [ -z "$_n" ]; then
+        log_msg "WARN lmkd-osvelte: 重启后 lmkd 未起来（init 会自行拉起；本次不再重试）"
+        return 0
+    fi
+    if ls -l "/proc/$_n/fd" 2>/dev/null | grep -q '/dev/osvelte'; then
+        log_msg "lmkd-osvelte: 成功，lmkd(pid=$_n) 已持有 /dev/osvelte"
+    else
+        log_msg "WARN lmkd-osvelte: lmkd(pid=$_n) 重启后仍未持有 /dev/osvelte"
+    fi
+}
+
+# 放最后、并再等一会儿：这段不急，让开机后的换页与预加载先过去
+( sleep 45; lmkd_reattach_osvelte ) &

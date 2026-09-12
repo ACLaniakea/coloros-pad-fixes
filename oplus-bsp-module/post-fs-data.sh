@@ -140,6 +140,13 @@ done
 #
 # 往本清单再加任何使用 per-CPU 数据的模块，仍会挤掉一个现有模块；
 # 要根治只能重编内核调大 PERCPU_MODULE_RESERVE。
+#
+# oplus_mm_proactive_compact 是移植包漏掉、我们自建补回来的。它只读地算内存碎片度，
+# 导出 /proc/oplus_mem/fragmentation_index（格式：是否碎片 hpage_order proactiveness）。
+# 它自己不发起规整——ColorOS 框架读到 is_fragmented=1 后置 sys.oplus.vm.oplus_compact_memory，
+# init 起 oplus_compact_memory 服务，autochmod.sh 里 echo 1 > /proc/sys/vm/compact_memory。
+# 消费端（init 服务定义、autochmod.sh 的函数）平板上本来就齐，缺的只是内核这一端，
+# 所以在补上之前这条链整条不通。不用任何 vendor hook，无 per-CPU 变量，不占预留。
 MODULES="
 oplus_cpu_sched_sched_assist
 oplus_ipc
@@ -163,6 +170,7 @@ oplus_cpu_sched_task_sched
 oplus_cpu_waker_identify
 oplus_bsp_zram_opt
 oplus_bsp_kswapd_opt
+oplus_mm_proactive_compact
 oplus_mm_hybridswap_zram
 oplus_mm_exit_mm_optimize
 ua_cpu_ioctl
