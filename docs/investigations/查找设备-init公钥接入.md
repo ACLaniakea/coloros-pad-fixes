@@ -6,7 +6,7 @@
 version 0）已经从 `Cryptoeng.zip`（ColorOS-CryptoengHAL 软实现二进制）里提取出来：
 
 - 模数 1024 bit，指数 65537，SPKI DER 162 字节；
-- 文件：`docs/findphone-init-rsa1024.pem`（PEM）、`docs/findphone-init-rsa1024.der`（二进制 SPKI）。
+- 文件：`docs/assets/findphone-init-rsa1024.pem`（PEM）、`docs/assets/findphone-init-rsa1024.der`（二进制 SPKI）。
 
 `ColorOsCryptoEngBridge` 已把该密钥内嵌为默认注册公钥：`initKeyB64()` 在未检测到
 `persist.findphone.initkey` 属性或 `/data/local/tmp/findphone_init_key.*` 文件覆盖时，
@@ -17,7 +17,7 @@ version 0）已经从 `Cryptoeng.zip`（ColorOS-CryptoengHAL 软实现二进制�
 把 PEM 推到设备即可（文件覆盖优先级高于内嵌）：
 
 ```
-adb push docs/findphone-init-rsa1024.pem /data/local/tmp/findphone_init_key.pem
+adb push docs/assets/findphone-init-rsa1024.pem /data/local/tmp/findphone_init_key.pem
 adb shell su -c "chmod 644 /data/local/tmp/findphone_init_key.pem"
 adb shell su -c "am force-stop com.coloros.findmyphone"
 ```

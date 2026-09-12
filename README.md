@@ -182,14 +182,13 @@ bash tools/build_all.sh
 
 ## 文档
 
-- [v4.0.2 发布说明](docs/4.0.2-release-notes.md)
-- [v4.0.1 发布说明](docs/4.0.1-release-notes.md)
-- [v3.2.1 发布说明](docs/3.2.1-release-notes.md)
-- [v3.2.0 发布说明](docs/3.2.0-release-notes.md)
-- [v3.1.0 发布说明](docs/3.1.0-release-notes.md)
-- [修复汇总与技术记录](修复汇总.md)
-- [内核兼容性与后续移植说明](内核兼容性与后续移植说明.md)
-- [主线 Linux 与 Arch Linux 可行性说明](主线Linux内核与ArchLinux启动可行性说明.md)
+全部文档收在 [`docs/`](docs/)，索引见 [docs/README.md](docs/README.md)。
+
+- [变更记录 CHANGELOG](CHANGELOG.md) — 每版一句话摘要
+- [发布说明](docs/release-notes/) — 每版改了什么、怎么验证、已知问题
+- [排查记录](docs/investigations/) — 完整定位过程与实测数据，含被排除的假设
+- [参考资料](docs/reference/) — 修复汇总、内核兼容性、主线内核可行性、LSPosed 收敛方案
+- [刷机事故与救援手册](kernel-compat/刷机事故与救援手册.md) — 变砖时怎么救
 
 ## 贡献与反馈
 
@@ -212,5 +211,5 @@ CryptoEng 的分流、HKDF、AIDL 调用和互操作代码属于本项目代码�
 感谢所有测试者、上游开发者和开源社区的支持。
 
 <p align="center">
-  <img src="docs/donate-wechat.png" alt="微信赞助码" width="220">
+  <img src="docs/assets/donate-wechat.png" alt="微信赞助码" width="220">
 </p>
