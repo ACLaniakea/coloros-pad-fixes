@@ -1,6 +1,6 @@
 id=coloros_port_tuning
-name=联想平板 Pro GT - ColorOS 调优
+name=[已废弃] 联想平板 Pro GT - ColorOS 调优
 author=ACLaniakea
 version=3.2.1
 versionCode=302001
-description=SM8650Q/pineapple ColorOS 移植调优：全局 swappiness=20 阻止关键进程被持续换出 + 禁用 osense 主动换出/内存清理策略，解决开机与长待机唤醒的动画卡顿掉帧。
+description=已废弃，请勿安装。它把 swappiness 压到 20 并禁用 osense 的主动换出，与 4.0.4 起确立的「内存策略一律交还原厂」直接冲突；那一版的结论是这类越权调优正是卡顿的来源。所需能力已并入 FixModule 与 OplusBSP-Modules。
