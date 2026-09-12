@@ -8,7 +8,8 @@
 
 接回被移植弄断的 AOT 与内存链路：修好 `oplus-services.jar` 在 system_server 里的
 解释执行、补回缺失的碎片度上报模块、修正 osvelte 的节点命名、接回 hybridswap 的
-熄屏闸门，并撤销我们此前对 swappiness 的一处越权覆盖。
+熄屏闸门，并撤销我们此前的两处越权覆盖：对 swappiness 的压低，以及把 AMS 缓存
+进程上限从原厂 96 降到 48（后者是后台留存差于对照机的直接原因）。
 
 ## [4.0.3](docs/release-notes/4.0.3.md)
 

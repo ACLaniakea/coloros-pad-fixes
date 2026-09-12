@@ -745,16 +745,26 @@ restore_stock_swappiness_once
 # 实测全局搜索 com.heytap.quicksearchbox 只活了 116~258 秒，而同一次开机里
 # 桌面活了 41670 秒，"搜索呼不出来"就是它在冷启动。
 #
-# 删除后原厂自己按内存算：CUR_MAX_CACHED_PROCESSES 24 -> 48、
-# CUR_MAX_EMPTY_PROCESSES 12 -> 24、CUR_TRIM_CACHED_PROCESSES 4 -> 8。
+# 删除后实测 CUR_MAX_CACHED_PROCESSES 24 -> 48、CUR_MAX_EMPTY_PROCESSES 12 -> 24。
 #
-# 这里不设任何值，只把覆盖拿掉，让原厂策略生效。resetprop -p 会同时清运行时
-# 与持久化存储；属性不存在时它返回 not found，属正常情况，不记噪声日志。
+# 更正（2026-09-13）：当时把 48 当成了"原厂按内存算出来的值"，**这是错的**。
+# 48 其实来自我们自己的 BaseFix hook（OStatsCpuGuard 的 8GB 降档），它在
+# ActivityManagerConstants 上把框架要求的值压下去。真正的原厂值是 96：
+# Athena 从 /my_product/etc/extension/feature_com.oplus.athena.xml 的
+# "12|128-8|96" 按 MemTotal 7.4GB 落到 8GB 档算出 96 并调 setProcessLimit(96)，
+# 日志可见 "CommonAction: get cache=96 from product"。那个 hook 现已改为默认不
+# 干预，只有显式设置属性时才降档。
+#
+# 同时不再删除 persist.sys.aclaniakea.max_cached：它现在是 BaseFix hook 的正式
+# 开关（8~256，未设置即交还原厂），由本函数删除会让开关在下次开机失效。只清掉
+# 两个早前手工调试留下的 *_test 属性。
+#
+# resetprop -p 会同时清运行时与持久化存储；属性不存在时返回 not found，属正常
+# 情况，不记噪声日志。
 # ============================================================================
 drop_stale_cached_process_overrides() {
     _dropped=""
-    for _k in persist.sys.aclaniakea.max_cached \
-              persist.sys.max_cached_test \
+    for _k in persist.sys.max_cached_test \
               persist.sys.oplus.max_cached_test; do
         [ -n "$(getprop "$_k" 2>/dev/null)" ] || continue
         resetprop -p --delete "$_k" >/dev/null 2>&1

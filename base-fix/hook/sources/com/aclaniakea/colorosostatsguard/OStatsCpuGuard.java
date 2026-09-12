@@ -34,7 +34,7 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
      * property keeps the tested 48.
      */
     private static final String CACHE_CAP_PROP = "persist.sys.aclaniakea.max_cached";
-    private static final int CACHE_CAP_DEFAULT = 48;
+    private static final int CACHE_CAP_NONE = 0;
     private static final int CACHE_CAP_MIN = 8;
     private static final int CACHE_CAP_MAX = 256;
     private static final AtomicInteger CACHE_CAP_APPLIED = new AtomicInteger(-1);
@@ -115,22 +115,37 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
     }
 
     /**
-     * The source-phone framework overrides ActivityManager's cache limit to
-     * 96 processes. On the 8 GB tablet that retained 80+ processes and built
-     * a 3.8 GB ZRAM working set; wake then faulted hundreds of MB of
-     * system_server/SystemUI pages back in at once. A 64-process follow-up
-     * still produced roughly 3.45 GB swap-in and 5.1 GB swap-out in one
-     * repeatable eleven-app switch, including zsmalloc order-0 failures. Use
-     * a still-generous 48
-     * process ceiling on <=9 GB variants, while preserving lower/default
-     * limits and leaving 12 GB variants untouched. ActivityManagerConstants,
-     * not ActivityManagerService.setProcessLimit(), owns the cached-process
-     * override. The source framework also keeps a hard-coded ten-minute
-     * post-boot no-kill window. On this 8 GB target it allows nearly 300
-     * ProcessRecords and about 3 GB of ZRAM to accumulate before the first
-     * trim, producing simultaneous swap-in and kswapd spikes. Apply both
-     * corrections directly to ActivityManagerConstants after construction and
-     * after its DeviceConfig refresh paths; no resident worker is needed.
+     * Optional cached-process downshift for <=9 GB variants.  Off by default.
+     *
+     * Historical note.  This guard used to clamp the ceiling to 48 on every
+     * <=9 GB device and additionally zero the framework's ten-minute post-boot
+     * no-kill window.  The measurements behind those numbers were real: at the
+     * framework's own 96 the tablet retained 80+ processes and built a 3.8 GB
+     * ZRAM working set, and wake then faulted hundreds of MB of
+     * system_server/SystemUI pages back in at once; a 64-process follow-up
+     * still produced ~3.45 GB swap-in and ~5.1 GB swap-out over one repeatable
+     * eleven-app switch, with zsmalloc order-0 failures.
+     *
+     * They were, however, taken before four separate defects were fixed:
+     * oplus-services.jar was running interpreted inside system_server, our own
+     * code had pushed swappiness down from the device's stock 160 to 125,
+     * hybridswap's screen-off gate never engaged so swapd spun around the
+     * clock, and the fragmentation reporter the stock compaction chain needs
+     * was missing entirely.  With those repaired the clamp no longer earns its
+     * keep, and it was the reason background retention looked so much worse
+     * than the reference device: Athena resolves this tablet's own ceiling
+     * from /my_product/etc/extension/feature_com.oplus.athena.xml
+     * ("12|128-8|96", 7.4 GB -> the 8 GB bucket -> 96) and calls
+     * setProcessLimit(96), and this guard silently pushed it back to 48.
+     *
+     * So the default is now "do not deviate".  Setting
+     * persist.sys.aclaniakea.max_cached to 8..256 re-enables the downshift at
+     * that ceiling and, as before, also drops the post-boot no-kill window to
+     * zero; clearing the property restores both to whatever the framework and
+     * Athena decide.  ActivityManagerConstants, not
+     * ActivityManagerService.setProcessLimit(), owns the override, so the
+     * corrections are applied directly to it after construction and after its
+     * DeviceConfig refresh paths; no resident worker is needed.
      */
     private static void installCachedProcessLimitGuard(ClassLoader cl) {
         long ramKb = readPhysicalRamKb();
@@ -190,17 +205,21 @@ public final class OStatsCpuGuard implements IXposedHookLoadPackage {
                     return value;
                 }
                 XposedBridge.log(TAG + ": ignoring out-of-range " + CACHE_CAP_PROP
-                        + "=" + value + "; keeping " + CACHE_CAP_DEFAULT);
+                        + "=" + value + "; leaving the stock ceiling alone");
             }
         } catch (Throwable ignored) {
-            // Unset, unreadable or non-numeric: keep the measured default.
+            // Unset, unreadable or non-numeric: leave the framework alone.
         }
-        return CACHE_CAP_DEFAULT;
+        return CACHE_CAP_NONE;
     }
 
     private static void applyEightGbCachedProcessPolicy(Object constants) {
         if (constants == null) return;
         int cap = cachedProcessCap();
+        // Unset property means "do not deviate": Athena already resolves this
+        // device's own ceiling from /my_product/etc/extension (8 GB -> 96) and
+        // calls setProcessLimit() with it.  Only clamp when explicitly asked.
+        if (cap <= CACHE_CAP_NONE) return;
         try {
             int requested = XposedHelpers.getIntField(
                     constants, "mOverrideMaxCachedProcesses");
