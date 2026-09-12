@@ -3,4 +3,4 @@ name=联想平板 Pro GT - ZUI 相机移植
 version=4.0.4
 versionCode=400004
 author=ACLaniakea
-description=将 TB710FU 原厂 ZUI 相机作为系统基底部署，含 LCAF 参数与 ColorOS 相册入口。Lenovo 原生身份层只在相机进程内生效，按进程名识别而不依赖安装期分配的 UID；Hybrid Mount 下保留同签名更新包，确保应用私有命名空间可读取 APK。
+description=把 TB710FU 原厂 ZUI 相机作为系统基底部署，含 LCAF 参数与 ColorOS 相册入口。Lenovo 身份层只在相机进程内生效，按进程名识别而不依赖 UID。
