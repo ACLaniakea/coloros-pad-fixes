@@ -6,10 +6,10 @@
 
 ## [4.0.4](docs/release-notes/4.0.4.md)
 
-接回被移植弄断的 AOT 与内存链路：修好 `oplus-services.jar` 在 system_server 里的
-解释执行、补回缺失的碎片度上报模块、修正 osvelte 的节点命名、接回 hybridswap 的
-熄屏闸门，并撤销我们此前的两处越权覆盖：对 swappiness 的压低，以及把 AMS 缓存
-进程上限从原厂 96 降到 48（后者是后台留存差于对照机的直接原因）。
+恢复被移植弄断的 AOT、osvelte 与 HybridSwap 链路，并将 OPlus performance HAL
+桥接到 Lenovo 面板的真实事件。HAL 保持运行；内核侧修正其亮屏后延迟暂停 swapd 的
+时序失配，并节流 Lenovo slowpath 的重复唤醒。补回 `snapshotd` 的 200ms refault 基线
+刷新；此前已否决的参考机 watermark hook 不包含在发布版本。
 
 ## [4.0.3](docs/release-notes/4.0.3.md)
 

@@ -9,7 +9,7 @@
 
 | 版本 | 主题 |
 | --- | --- |
-| [4.0.4](release-notes/4.0.4.md) | 接回被移植弄断的 AOT 与内存链路 |
+| [4.0.4](release-notes/4.0.4.md) | AOT、内存链路、HybridSwap 内核桥接与 refault 基线修复 |
 | [4.0.3](release-notes/4.0.3.md) | 调度链三项与模块清单清理 |
 | [4.0.2](release-notes/4.0.2.md) | 相机身份层去写死 UID，新增 8GB 内存档 |
 | [4.0.1](release-notes/4.0.1.md) | 统一版本号，重写模块与应用简介 |
@@ -24,7 +24,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [4.0.4 内存与 AOT 排查](investigations/4.0.4-内存与AOT排查.md) | system_server 解释执行、碎片度上报缺失、osvelte 命名、hybridswap 熄屏闸门；以及排除掉的四条 |
+| [4.0.4 内存与 AOT 排查](investigations/4.0.4-内存与AOT排查.md) | AOT、osvelte、面板状态、HAL 暂停语义、slowpath 唤醒；以及已否决的跨内核 hook |
 | [4.0.3 调度链与 SELinux 排查](investigations/4.0.3-调度链与SELinux排查.md) | sched_assist 负载均衡未触发、UX→WALT 翻译、帧组提频、per-CPU 预留 |
 | [AON 相机 DSP 修复过程](investigations/AON-相机-DSP修复过程.md) | 常亮感知相机与 DSP 链路 |
 | [扬声器破音排查](investigations/扬声器破音排查.md) | 音频失真定位 |
