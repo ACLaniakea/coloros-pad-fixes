@@ -155,36 +155,6 @@ done
 # init 起 oplus_compact_memory 服务，autochmod.sh 里 echo 1 > /proc/sys/vm/compact_memory。
 # 消费端（init 服务定义、autochmod.sh 的函数）平板上本来就齐，缺的只是内核这一端，
 # 所以在补上之前这条链整条不通。不用任何 vendor hook，无 per-CPU 变量，不占预留。
-# ============================================================================
-# POSIX 消息队列挂载点（2026-09-14）
-#
-# r2 内核开了 CONFIG_POSIX_MQUEUE，但 Android 的 init 从不挂 mqueue——它是
-# Linux 容器要用的，AOSP 用不着。内核侧有（/proc/filesystems 里有 mqueue）、
-# 用户侧没有挂载点，DroidSpaces 起容器时就缺这一块。
-#
-# 实测手动 `mount -t mqueue mqueue /dev/mqueue` 成功，故在此补上。
-# 失败不影响其余流程：容器之外没有东西依赖它。
-# ============================================================================
-mount_posix_mqueue() {
-    grep -q '\bmqueue\b' /proc/filesystems 2>/dev/null || {
-        log_msg "mqueue: 内核不支持，跳过"
-        return 0
-    }
-    if grep -q ' /dev/mqueue ' /proc/mounts 2>/dev/null; then
-        log_msg "mqueue: 已挂载，跳过"
-        return 0
-    fi
-    mkdir -p /dev/mqueue 2>/dev/null
-    chmod 1777 /dev/mqueue 2>/dev/null
-    if mount -t mqueue mqueue /dev/mqueue 2>/dev/null; then
-        log_msg "mqueue: 已挂载到 /dev/mqueue"
-    else
-        log_msg "WARN mqueue: 挂载失败（容器可能缺 POSIX 消息队列）"
-    fi
-}
-
-mount_posix_mqueue
-
 MODULES="
 oplus_cpu_sched_sched_assist
 oplus_resctrl

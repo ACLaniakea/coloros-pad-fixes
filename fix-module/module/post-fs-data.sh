@@ -911,6 +911,36 @@ bind_system_server_oat
 #     以及 decisionmaker 的 scene 1010 三者必须同进同退。
 # 这三条是本轮最需要盯的回归点：若出现切换应用卡顿或换入风暴，先回滚它们。
 # ============================================================================
+# ============================================================================
+# POSIX 消息队列挂载点（2026-09-14）
+#
+# r2 内核开了 CONFIG_POSIX_MQUEUE，但 Android 的 init 从不挂 mqueue——它是
+# Linux 容器要用的，AOSP 用不着。内核侧有（/proc/filesystems 里有 mqueue）、
+# 用户侧没有挂载点，DroidSpaces 起容器时就缺这一块。
+#
+# 实测手动 `mount -t mqueue mqueue /dev/mqueue` 成功，故在此补上。
+# 失败不影响其余流程：容器之外没有东西依赖它。
+# ============================================================================
+mount_posix_mqueue() {
+    grep -q '\bmqueue\b' /proc/filesystems 2>/dev/null || {
+        log_msg "mqueue: 内核不支持，跳过"
+        return 0
+    }
+    if grep -q ' /dev/mqueue ' /proc/mounts 2>/dev/null; then
+        log_msg "mqueue: 已挂载，跳过"
+        return 0
+    fi
+    mkdir -p /dev/mqueue 2>/dev/null
+    chmod 1777 /dev/mqueue 2>/dev/null
+    if mount -t mqueue mqueue /dev/mqueue 2>/dev/null; then
+        log_msg "mqueue: 已挂载到 /dev/mqueue"
+    else
+        log_msg "WARN mqueue: 挂载失败（容器可能缺 POSIX 消息队列）"
+    fi
+}
+
+mount_posix_mqueue
+
 FEATURE_TARGET=/my_stock/etc/extension/com.oplus.oplus-feature.xml
 FEATURE_RUNTIME_DIR=/dev/coloros_port_fix
 FEATURE_RUNTIME="$FEATURE_RUNTIME_DIR/com.oplus.oplus-feature.xml"
