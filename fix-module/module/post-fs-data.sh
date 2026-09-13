@@ -447,8 +447,12 @@ patch_stock_nandswap() {
     #
     # 开启时仍支持 2~16GB 通用档位，兼容 4/6/8/12GB 等不同设备；关闭时由上方
     # 状态同步清理运行时 swapsize 镜像，滑块索引仍由 Athena 保存在 Secure 中。
+    # D：平板移植包把 zram0 压缩算法写死为 lz4；PKX110 对照机实际运行 zstd。
+    # 本机内核已原生注册 zstd，且算法必须在 disksize 写入前选择，所以在同一份
+    # nandswap 启动脚本里一次性改写，避免另起服务与原厂初始化争抢 zram0。
     sed -e 's%if \[\[ "$prop_nandswap_size" == "4" \]\]; then%if [ "$fn_enable" != "true" ]; then if [ "$mem_total" -le 524288 ]; then swap_size_mb=384; elif [ "$mem_total" -le 1048576 ]; then swap_size_mb=768; elif [ "$mem_total" -le 2097152 ]; then swap_size_mb=1280; elif [ "$mem_total" -le 3145728 ]; then swap_size_mb=1536; elif [ "$mem_total" -le 4194304 ]; then swap_size_mb=2560; elif [ "$mem_total" -le 6291456 ]; then swap_size_mb=3072; elif [ "$mem_total" -le 8388608 ]; then swap_size_mb=5632; elif [ "$mem_total" -le 12582912 ]; then swap_size_mb=5632; else swap_size_mb=7680; fi; else prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize); if ! [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null; then prop_nandswap_size=$(getprop persist.sys.oplus.nandswap.swapsize.curr); fi; if [ "$prop_nandswap_size" -ge 2 ] 2>/dev/null \&\& [ "$prop_nandswap_size" -le 16 ] 2>/dev/null; then swap_size_mb=$((prop_nandswap_size * 1024)); elif [[ "$prop_nandswap_size" == "4" ]]; then%' \
         -e '/^[[:space:]][[:space:]]zram_increase=\$(expr/i\		fi' \
+        -e 's%^comp_algorithm="lz4"$%comp_algorithm="zstd"%' \
         "$_src" >"$_work" 2>/dev/null
 
     # 改完必须还是合法脚本，否则 nandswap 服务整个起不来，eswap 全没。
@@ -477,6 +481,11 @@ patch_stock_nandswap() {
         rm -f "$_work"; umount "$_mnt" 2>/dev/null
         return 0
     fi
+    if ! grep -qxF 'comp_algorithm="zstd"' "$_work"; then
+        log_msg "ERROR: nandswap-patch 未能选择 zstd，放弃 bind"
+        rm -f "$_work"; umount "$_mnt" 2>/dev/null
+        return 0
+    fi
     # C 单独判：没匹配上只是内存扩展档位没修好，不该连累 A/B 一起放弃。
     if grep -qF 'swap_size_mb=$((prop_nandswap_size * 1024))' "$_work" \
         && grep -qF 'fn_enable" != "true"' "$_work" \
@@ -499,7 +508,7 @@ patch_stock_nandswap() {
     fi
 
     if mount --bind "$_work" "$_src" 2>/dev/null; then
-        log_msg "nandswap-patch: 已 bind 改后脚本（tmpfs 载体，avail_buffers 与 zram2ufs 均保持原厂值；$_c_ok；ctx=$_ctx）"
+        log_msg "nandswap-patch: 已 bind 改后脚本（tmpfs 载体，zram0=zstd，avail_buffers 与 zram2ufs 均保持原厂值；$_c_ok；ctx=$_ctx）"
     else
         log_msg "WARN: nandswap-patch bind 失败，回落到 service.sh 的运行时写入"
         umount "$_mnt" 2>/dev/null

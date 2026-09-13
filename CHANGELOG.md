@@ -12,6 +12,8 @@
 刷新已在 r2 撤回：它把原厂事件驱动机制错误改为 5Hz 轮询。最终确认 4K ZRAM
 兼容路径把每次普通 `pswpin` 都误计进 HybridSwap 私有 `fault_cnt`，已改为只统计
 真正的 `ZRAM_WB` fault-out；原厂阈值与事件驱动快照保持不变。
+同时将移植脚本写死的 `lz4` 改为对照机原厂实际使用的标准 `zstd`；等量约 5GB
+ZRAM 数据下物理占用减少约 500MB，锁屏窗口同步 direct reclaim 降低约 39%。
 此前已否决的参考机 watermark hook 不包含在发布版本。
 
 ## [4.0.3](docs/release-notes/4.0.3.md)
