@@ -1,0 +1,12 @@
+--- a/mport/mm/hybridswap_zram/hybridswap/hybridswapd.c
++++ b/mport/mm/hybridswap_zram/hybridswap/hybridswapd.c
+@@ -78,7 +78,9 @@
+ #define PAGES_PER_1MB (1 << 8)
+ 
+ typedef bool (*free_swap_is_low_func)(void);
+-static free_swap_is_low_func free_swap_is_low_fp;
++/* zram_opt owns this callback slot. Keeping a private copy here left the
++ * original low-swap swappiness guard disconnected. */
++extern free_swap_is_low_func free_swap_is_low_fp;
+ 
+ static unsigned long long global_anon_refault_ratio;

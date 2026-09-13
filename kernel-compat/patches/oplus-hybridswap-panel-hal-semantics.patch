@@ -1,0 +1,48 @@
+--- a/mm/hybridswap_zram/hybridswap/internal.h
++++ b/mm/hybridswap_zram/hybridswap/internal.h
+@@ -616,6 +616,7 @@ extern struct hybridswapd_operations *hybridswapd_ops;
+ 
+ extern void hybridswapd_ops_init(struct hybridswapd_operations *ops);
+ extern void hybridswapd_chp_ops_init(struct hybridswapd_operations *ops);
++extern bool hybridswapd_panel_bridge_active(void);
+ #else
+ static inline bool hybridswap_swapd_enabled(void) { return false; }
+ #endif
+--- a/mm/hybridswap_zram/hybridswap/hybridswapd.c
++++ b/mm/hybridswap_zram/hybridswap/hybridswapd.c
+@@ -2088,6 +2088,20 @@ static void unregister_panel_event_notifier(void)
+ }
+ 
++/*
++ * With the Lenovo kprobe fallback registered, actual panel blank/unblank is
++ * authoritative. The ported performance HAL writes manual pause late across
++ * those transitions, so it must not override display_off.
++ */
++bool hybridswapd_panel_bridge_active(void)
++{
++#ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
++	return READ_ONCE(panel_event_kp_registered);
++#else
++	return false;
++#endif
++}
++
+ void hybridswapd_ops_init(struct hybridswapd_operations *ops)
+ {
+ 	ops->fault_out_pause = &fault_out_pause;
+--- a/mm/hybridswap_zram/hybridswap/hybridmain.c
++++ b/mm/hybridswap_zram/hybridswap/hybridmain.c
+@@ -1687,6 +1687,16 @@ ssize_t hybridswap_swapd_pause_store(struct device *dev,
+ 	type_buf = strstrip((char *)buf);
+ 	if (kstrtobool(type_buf, &val))
+ 		return -EINVAL;
++
++	/* The registered panel bridge supplies the real screen state. Keep the
++	 * manual node released so a delayed HAL write cannot survive unblank. */
++	if (hybridswapd_panel_bridge_active()) {
++		atomic_set(hybridswapd_ops->swapd_pause, 0);
++		return len;
++	}
+ 	atomic_set(hybridswapd_ops->swapd_pause, val);
+ 	return len;
+ }

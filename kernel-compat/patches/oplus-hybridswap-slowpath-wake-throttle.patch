@@ -1,0 +1,31 @@
+--- a/mm/hybridswap_zram/hybridswap/hybridswapd.c
++++ b/mm/hybridswap_zram/hybridswap/hybridswapd.c
+@@ -84,6 +84,14 @@ static unsigned long long global_anon_refault_ratio;
+ static unsigned long long swapd_skip_interval;
+ static bool last_round_is_empty;
+ static unsigned long last_swapd_time;
++#ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
++/* Lenovo 6.1 exposes allocation slowpath, rather than OnePlus's watermark
++ * decision hook. It may fire per allocation while refault blocks reclaim. */
++static unsigned long last_slowpath_wake;
++#define SLOWPATH_WAKE_INTERVAL msecs_to_jiffies(200)
++#endif
+ static struct eventfd_ctx *swapd_press_efd[LEVEL_COUNT];
+@@ -1861,8 +1869,20 @@ static void vh_alloc_pages_slowpath(void *data, gfp_t gfp_flags,
+ 		unsigned int order, unsigned long delta)
+ {
+-	if (gfp_flags & __GFP_KSWAPD_RECLAIM)
+-		wake_all_swapd();
++	unsigned long last;
++
++	if (!(gfp_flags & __GFP_KSWAPD_RECLAIM))
++		return;
++
++#ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
++	last = READ_ONCE(last_slowpath_wake);
++	if (time_before(jiffies, last + SLOWPATH_WAKE_INTERVAL) ||
++	    cmpxchg(&last_slowpath_wake, last, jiffies) != last)
++		return;
++#endif
++	wake_all_swapd();
+ }

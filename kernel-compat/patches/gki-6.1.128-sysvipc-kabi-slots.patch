@@ -1,0 +1,164 @@
+# 让 CONFIG_SYSVIPC 不破坏 GKI modversion ABI（2026-09-13）
+#
+# 问题：CONFIG_SYSVIPC 会往 struct task_struct 加 sysvsem/sysvshm 两个字段，
+#       改变布局与 genksyms 类型文本，导致全部导出符号 CRC 变化
+#       （module_layout 0xea759d7f -> 0x28c5e94f），289 个厂商预编模块全部拒载，
+#       开机第一屏即重启。
+# 做法：把这两个字段移出 task_struct，复用 GKI 为厂商预留的
+#       ANDROID_KABI_RESERVE 槽位（reserved5 放 sysv_sem，reserved6+7 放 sysv_shm），
+#       布局与类型文本均不变 -> CRC 不变 -> 厂商模块照常加载，同时 SysV IPC 真正可用。
+#       避开 android_vendor_data1：一加 BSP 的 sched_assist 等模块在用它。
+#       ipc/util.c 里加了三条编译期断言，防止槽位不足或不连续时静默写坏相邻字段。
+#
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1095,10 +1095,12 @@
+ 
+ 	struct nameidata		*nameidata;
+ 
+-#ifdef CONFIG_SYSVIPC
+-	struct sysv_sem			sysvsem;
+-	struct sysv_shm			sysvshm;
+-#endif
++/*
++ * CONFIG_SYSVIPC 原本在此加入 sysvsem / sysvshm，会改变 task_struct 的布局与
++ * genksyms 类型文本，使全部导出符号的 modversion CRC 变化，厂商预编模块随即
++ * 全部拒载。改为复用 GKI 预留的 ANDROID_KABI_RESERVE 槽位（见下方访问宏），
++ * 布局与类型文本均不变。
++ */
+ #ifdef CONFIG_DETECT_HUNG_TASK
+ 	unsigned long			last_switch_count;
+ 	unsigned long			last_switch_time;
+@@ -1572,6 +1574,16 @@
+ 	 */
+ };
+ 
++#ifdef CONFIG_SYSVIPC
++/*
++ * 复用预留槽：reserved5 放 sysv_sem（1 个指针），reserved6+7 放 sysv_shm
++ * （struct list_head，2 个指针）。三者在结构体中连续声明，8 字节对齐，
++ * 与原字段等价。避开 android_vendor_data1——一加 BSP 模块在用它。
++ */
++#define task_sysvsem(t)	(*(struct sysv_sem *)&(t)->android_kabi_reserved5)
++#define task_sysvshm(t)	(*(struct sysv_shm *)&(t)->android_kabi_reserved6)
++#endif
++
+ static inline struct pid *task_pid(struct task_struct *task)
+ {
+ 	return task->thread_pid;
+--- a/include/linux/shm.h
++++ b/include/linux/shm.h
+@@ -18,7 +18,7 @@
+ 	      unsigned long shmlba);
+ bool is_file_shm_hugepages(struct file *file);
+ void exit_shm(struct task_struct *task);
+-#define shm_init_task(task) INIT_LIST_HEAD(&(task)->sysvshm.shm_clist)
++#define shm_init_task(task) INIT_LIST_HEAD(&task_sysvshm(task).shm_clist)
+ #else
+ struct sysv_shm {
+ 	/* empty */
+--- a/ipc/shm.c
++++ b/ipc/shm.c
+@@ -444,12 +444,12 @@
+ 
+ 		task_lock(task);
+ 
+-		if (list_empty(&task->sysvshm.shm_clist)) {
++		if (list_empty(&task_sysvshm(task).shm_clist)) {
+ 			task_unlock(task);
+ 			break;
+ 		}
+ 
+-		shp = list_first_entry(&task->sysvshm.shm_clist, struct shmid_kernel,
++		shp = list_first_entry(&task_sysvshm(task).shm_clist, struct shmid_kernel,
+ 				shm_clist);
+ 
+ 		/*
+@@ -787,7 +787,7 @@
+ 	shp->ns = ns;
+ 
+ 	task_lock(current);
+-	list_add(&shp->shm_clist, &current->sysvshm.shm_clist);
++	list_add(&shp->shm_clist, &task_sysvshm(current).shm_clist);
+ 	task_unlock(current);
+ 
+ 	/*
+--- a/ipc/sem.c
++++ b/ipc/sem.c
+@@ -1851,7 +1851,7 @@
+ {
+ 	struct sem_undo_list *undo_list;
+ 
+-	undo_list = current->sysvsem.undo_list;
++	undo_list = task_sysvsem(current).undo_list;
+ 	if (!undo_list) {
+ 		undo_list = kzalloc(sizeof(*undo_list), GFP_KERNEL_ACCOUNT);
+ 		if (undo_list == NULL)
+@@ -1860,7 +1860,7 @@
+ 		refcount_set(&undo_list->refcnt, 1);
+ 		INIT_LIST_HEAD(&undo_list->list_proc);
+ 
+-		current->sysvsem.undo_list = undo_list;
++		task_sysvsem(current).undo_list = undo_list;
+ 	}
+ 	*undo_listp = undo_list;
+ 	return 0;
+@@ -2315,9 +2315,9 @@
+ 		if (error)
+ 			return error;
+ 		refcount_inc(&undo_list->refcnt);
+-		tsk->sysvsem.undo_list = undo_list;
++		task_sysvsem(tsk).undo_list = undo_list;
+ 	} else
+-		tsk->sysvsem.undo_list = NULL;
++		task_sysvsem(tsk).undo_list = NULL;
+ 
+ 	return 0;
+ }
+@@ -2338,10 +2338,10 @@
+ {
+ 	struct sem_undo_list *ulp;
+ 
+-	ulp = tsk->sysvsem.undo_list;
++	ulp = task_sysvsem(tsk).undo_list;
+ 	if (!ulp)
+ 		return;
+-	tsk->sysvsem.undo_list = NULL;
++	task_sysvsem(tsk).undo_list = NULL;
+ 
+ 	if (!refcount_dec_and_test(&ulp->refcnt))
+ 		return;
+--- a/ipc/util.c
++++ b/ipc/util.c
+@@ -87,6 +87,18 @@
+  * chain: since msgmni scales to lowmem this callback routine will be
+  * called upon successful memory add / remove to recompute msmgni.
+  */
++/*
++ * sysvsem / sysvshm 复用 task_struct 的 ANDROID_KABI_RESERVE 槽位，
++ * 槽位不够或不连续会静默写坏相邻字段，故在此断言。
++ */
++static_assert(sizeof(struct sysv_sem) <= sizeof(u64),
++	"task_sysvsem 槽位不足：sysv_sem 超过一个 ANDROID_KABI_RESERVE");
++static_assert(sizeof(struct sysv_shm) <= 2 * sizeof(u64),
++	"task_sysvshm 槽位不足：sysv_shm 超过两个 ANDROID_KABI_RESERVE");
++static_assert(offsetof(struct task_struct, android_kabi_reserved7) -
++	      offsetof(struct task_struct, android_kabi_reserved6) == sizeof(u64),
++	"android_kabi_reserved6/7 不连续，task_sysvshm 会越界");
++
+ static int __init ipc_init(void)
+ {
+ 	proc_mkdir("sysvipc", NULL);
+--- a/kernel/kcmp.c
++++ b/kernel/kcmp.c
+@@ -196,8 +196,8 @@
+ 		break;
+ 	case KCMP_SYSVSEM:
+ #ifdef CONFIG_SYSVIPC
+-		ret = kcmp_ptr(task1->sysvsem.undo_list,
+-			       task2->sysvsem.undo_list,
++		ret = kcmp_ptr(task_sysvsem(task1).undo_list,
++			       task_sysvsem(task2).undo_list,
+ 			       KCMP_SYSVSEM);
+ #else
+ 		ret = -EOPNOTSUPP;

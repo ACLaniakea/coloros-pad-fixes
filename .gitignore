@@ -65,3 +65,6 @@ androguard.db
 workspace/
 fix-module/module/hook/BaseFix-Hook.apk
 fix-module/module/payload/oat/
+
+# EDL 配置里是本机绝对路径，配方见 kernel-compat/刷机事故与救援手册.md 第七节
+edl_config.json
