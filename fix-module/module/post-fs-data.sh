@@ -879,7 +879,18 @@ bind_system_server_oat
 # 需要两类改动：
 #   a) 补 oplus.software.audio.dolby_support —— 原厂表缺这一条，导致设置内
 #      “声音与振动→音效”页的杜比区域被隐藏；补上后走原生 DMS HAL 链路。
-#   b) 删掉两条源手机 PSI 主动清理策略。
+#   b) 曾经删掉两条 PSI 主动清理策略，2026-09-13 已放回，现在只增不删。
+#
+# 【2026-09-13 更正】之前这三处改动（FEATURE_DROP 两条、decisionmaker 的 5 条
+# rule、nirvana 的 SupportMultiWin=false）都写着理由是「源手机的策略，平板上会
+# 误杀分屏里的后台应用」。这个前提是错的：移植源根本不是手机，而是
+# 一加平板 3 Pro（OPD2513，ro.vendor.oplus.market.name 实测确认），本身就是
+# 大屏平板，那几条规则就是给平板多窗口/小窗场景写的。
+#
+# 真正的错配在内存容量：源机是 12/16GB 机型，本机只有 8GB（MemTotal 7.4GB）。
+# 也就是说我们在一台内存只有源机一半的设备上，把这套 ROM 里仅有的几条
+# PSI 内存压力清理通道给关掉了 —— 对后台留存是加分，对卡顿是减分。
+# 三处已全部按原厂恢复，需与 payload/osense/ 下两个 XML 同进同退。
 #
 # 旧实现是 bind 一份仓库内手工维护的 51 条快照。等价于把原厂表里所有未被
 # 收录的条目一并删除（原厂 52 条，快照 48 条），且 OTA 换了原厂表之后会静默
@@ -906,9 +917,10 @@ FEATURE_RUNTIME="$FEATURE_RUNTIME_DIR/com.oplus.oplus-feature.xml"
 
 # 需要补上的特性
 FEATURE_ADD='oplus.software.audio.dolby_support'
-# 需要移除的特性：仅剩源手机 PSI 主动清理两条，与内核无关
-FEATURE_DROP='oplus.software.psi_multi_window_clean
-oplus.software.psi_miniprogram_clean'
+# 需要移除的特性：已清空。曾经删过源机的两条 PSI 主动清理
+# （psi_multi_window_clean / psi_miniprogram_clean），2026-09-13 全部放回，
+# 理由见上方说明。
+FEATURE_DROP=''
 
 apply_feature_override() {
     [ -f "$FEATURE_TARGET" ] || return 0
