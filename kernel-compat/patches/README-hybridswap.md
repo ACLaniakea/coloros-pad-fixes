@@ -8,6 +8,7 @@
 | `oplus-hybridswap-panel-kprobe-fallback.patch` | kprobe 版面板事件桥,替代编不出来的原生 notifier | 模块内有 `hybridswap_panel_event_pre_handler` |
 | `oplus-hybridswap-panel-hal-semantics.patch` | 配套的 ops 语义调整 | 同上 |
 | `oplus-hybridswap-slowpath-wake-throttle.patch` | 给 `vh_alloc_pages_slowpath` 的 `wake_all_swapd()` 加 200ms 节流 | 模块内有 `last_slowpath_wake` |
+| `oplus-hybridswap-fault-counter-scope.patch` | 4K ZRAM 下只统计真正的 `ZRAM_WB` fault-out，避免把普通 `pswpin` 当成 refault | `hybridswap_stat_snap` 的首个 `fault_cnt` 不再跟随纯 ZRAM 换入增长 |
 
 **已删除**:`oplus-hybridswap-refault-snapshot-fallback.patch` 与 `oplus-hybridswap-wmark-wakeup.patch`。
 前者把原厂事件驱动的 `snapshotd` 错改为 5Hz 轮询，实测 `swapd_hit_refaults` 仍近乎全票命中；

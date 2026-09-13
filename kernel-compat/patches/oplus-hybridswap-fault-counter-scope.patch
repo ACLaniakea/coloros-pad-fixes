@@ -1,0 +1,23 @@
+--- a/mport/mm/hybridswap_zram/hybridswap/hybridswap.c
++++ b/mport/mm/hybridswap_zram/hybridswap/hybridswap.c
+@@ -5629,11 +5629,18 @@ static bool hybridswap_fault_out_check(struct zram *zram,
+ 	if (is_chp_zram(zram))
+ 		return false;
+ 
+-	hybridswap_fault_stat(zram, index);
+-
+ 	if (!zram_test_flag(zram, index, ZRAM_WB))
+ 		return false;
+ 
++	/*
++	 * fault_cnt is the HybridSwap fault-out refault source, not a counter
++	 * for ordinary reads from in-RAM ZRAM.  The factory 64K-ZRAM path skips
++	 * this function for ordinary ZRAM slots through is_chp_zram(); on a 4K
++	 * compatibility kernel that shortcut is absent, so counting before the
++	 * ZRAM_WB test incorrectly turns every pswpin into a refault event.
++	 */
++	hybridswap_fault_stat(zram, index);
++
+ 	zram_set_flag(zram, index, ZRAM_BATCHING_OUT);
+ 	*zentry = zram_get_handle(zram, index);
+ 	zram_slot_unlock(zram, index);
