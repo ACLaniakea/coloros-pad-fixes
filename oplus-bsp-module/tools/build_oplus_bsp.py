@@ -17,6 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 REQUIRED = ("module.prop", "post-fs-data.sh", "service.sh")
+# HybridSwap 已内建 Lenovo 面板 kprobe；这个早期独立桥探测同一事件，且只为旧
+# HybridSwap 二进制构建。源码试验件留在 kernel-compat/，不得随正式包出货。
+EXCLUDED_KOS = {"oplus_hybridswap_panel_bridge.ko"}
 
 
 def version() -> str:
@@ -30,7 +33,8 @@ def main() -> None:
     missing = [n for n in REQUIRED if not (ROOT / n).is_file()]
     if missing:
         raise SystemExit("missing module files: " + ", ".join(missing))
-    kos = sorted((ROOT / "ko").glob("*.ko"))
+    kos = sorted(ko for ko in (ROOT / "ko").glob("*.ko")
+                 if ko.name not in EXCLUDED_KOS)
     if not kos:
         raise SystemExit("no .ko under oplus-bsp-module/ko/")
     out = REPO / "releases" / f"OplusBSP-Modules-v{version()}.zip"

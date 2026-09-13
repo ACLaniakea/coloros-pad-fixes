@@ -129,8 +129,16 @@ done
 # 先试过把 oplus_resctrl 提到清单最前面，它确实装上了，但失败转移到
 # oplus_bsp_game_opt——证明是容量不是顺序。
 #
-# 最终移除 oplus_resctrl，依据三条：
-#   1. 对照机 PKX110 的 694 个已加载模块里没有任何 resctrl 字样，非原厂组件；
+# 【2026-09-13 更正并撤销】下面这三条理由里，第 1 条是错的：oplus_resctrl 确实
+# 在 OPD2513 自己的 BSP 源码树里（mport/auto/oplus_resctrl.ko、
+# common/drivers/soc/oplus/oplus_resctrl），拿"对照机 PKX110 没有"去判"非原厂"
+# 方向就错了——PKX110 不是移植源，一加平板 3 Pro(OPD2513) 才是。
+# 真正成立的只有容量约束。现已重编内核把 PERCPU_MODULE_RESERVE 从 8KB 提到
+# 32KB（kernel-compat/patches/gki-6.1.128-oplus-gloom-and-percpu.patch），
+# 约束解除，oplus_resctrl 已放回清单，与 game_opt 共存。
+#
+# 原记录（第 1 条已作废，2、3 仍成立）：
+#   1. ~~对照机 PKX110 的 694 个已加载模块里没有任何 resctrl 字样，非原厂组件~~；
 #   2. 本清单里无任何模块依赖它；
 #   3. 它建的是 /proc/oplus_resctrl/{ioc_dist_read,ioc_dist_write,iocost_ppm}
 #      ——blk-iocost 的 IO 开销控制器，不是加载器旧注释写的"cache/带宽分区"
@@ -149,6 +157,8 @@ done
 # 所以在补上之前这条链整条不通。不用任何 vendor hook，无 per-CPU 变量，不占预留。
 MODULES="
 oplus_cpu_sched_sched_assist
+oplus_resctrl
+oplus_mm_gloom
 oplus_ipc
 oplus_cpu_detection
 oplus_cpu_sched_task_cpustats
