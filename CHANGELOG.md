@@ -8,8 +8,9 @@
 
 恢复被移植弄断的 AOT、osvelte 与 HybridSwap 链路，并将 OPlus performance HAL
 桥接到 Lenovo 面板的真实事件。HAL 保持运行；内核侧修正其亮屏后延迟暂停 swapd 的
-时序失配，并节流 Lenovo slowpath 的重复唤醒。补回 `snapshotd` 的 200ms refault 基线
-刷新；此前已否决的参考机 watermark hook 不包含在发布版本。
+时序失配，并节流 Lenovo slowpath 的重复唤醒。曾尝试的 `snapshotd` 定时 refault 基线
+刷新已在 r2 撤回：它把原厂事件驱动机制错误改为 5Hz 轮询，不能降低真实换入风暴。
+此前已否决的参考机 watermark hook 不包含在发布版本。
 
 ## [4.0.3](docs/release-notes/4.0.3.md)
 

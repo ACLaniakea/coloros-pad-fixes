@@ -9,7 +9,7 @@
 
 | 版本 | 主题 |
 | --- | --- |
-| [4.0.4](release-notes/4.0.4.md) | AOT、内存链路、HybridSwap 内核桥接与 refault 基线修复 |
+| [4.0.4](release-notes/4.0.4.md) | AOT、内存链路与 HybridSwap 内核桥接 |
 | [4.0.3](release-notes/4.0.3.md) | 调度链三项与模块清单清理 |
 | [4.0.2](release-notes/4.0.2.md) | 相机身份层去写死 UID，新增 8GB 内存档 |
 | [4.0.1](release-notes/4.0.1.md) | 统一版本号，重写模块与应用简介 |
