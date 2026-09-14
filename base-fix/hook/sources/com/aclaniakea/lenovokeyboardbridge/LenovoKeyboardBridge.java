@@ -1,12 +1,8 @@
 package com.aclaniakea.lenovokeyboardbridge;
 
 import android.app.ActivityManager;
-import android.app.AlertDialog;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
 import android.database.ContentObserver;
 import android.hardware.input.InputManager;
 import android.os.Bundle;
@@ -22,9 +18,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -60,7 +53,6 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
     private static final int KEY_AI = KeyEvent.KEYCODE_ASSIST;
     private static final String AI_PACKAGE = "aclaniakea_lenovo_keyboard_ai_package";
     private static final String AI_ACTION = "aclaniakea_lenovo_keyboard_ai_action";
-    private static final String AI_SHOW_SYSTEM_APPS = "aclaniakea_lenovo_keyboard_show_system_apps";
     private static final String AI_PREF_KEY = "aclaniakea_lenovo_keyboard_ai_key";
     private static final String CUSTOM_PAGE_EXTRA = "aclaniakea_lenovo_keyboard_custom_page";
     // Reuse the stock ColorOS SubSettings host for the pen page as well.  The
@@ -69,18 +61,20 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
     private static final String PEN_HAPTIC_PAGE_EXTRA = "aclaniakea_lenovo_pen_haptic_page";
     private static final String PEN_HAPTIC_ENABLED = "lenovo_pen_global_writing_haptic";
     private static final String PEN_HAPTIC_PATTERN = "lenovo_pen_global_writing_haptic_pattern";
-    private static final String CUSTOM_PAGE_MODE = "aclaniakea_lenovo_keyboard_page_mode";
-    private static final String PAGE_MODE_APP_PICKER = "app_picker";
-    // Marks an otherwise stock ManageApplications instance as the independent
-    // custom-key picker.  Normal Settings > 应用管理 is untouched.
+    // Marks a normal Settings application-management page as our picker.
+    // The page itself remains entirely OEM-owned, including search states.
     private static final String APP_MANAGEMENT_PICKER_EXTRA =
             "aclaniakea_lenovo_keyboard_app_management_picker";
-    private static final int APP_PICKER_SYSTEM_APPS_MENU_ID = 0x6ac1;
-    /** The app picker currently on screen, so its list can be refiltered in
-     *  place.  Rebuilding the page cannot do this: buildColorOsAppPicker()
-     *  returns immediately once its root view is present. */
-    private static AppPickerAdapter livePickerAdapter;
-    private static android.app.Activity livePickerActivity;
+    private static final String CUSTOM_PAGE_MODE = "aclaniakea_lenovo_keyboard_page_mode";
+    private static final String PAGE_MODE_APP_PICKER = "app_picker";
+    // SmartKeyAppsFragment reads its mode directly from Intent.flags.  100 is
+    // the OEM press-key app-selection mode and gives us the complete stock
+    // search/list/fast-scroll implementation.
+    private static final String SMART_KEY_PICKER_EXTRA =
+            "aclaniakea_lenovo_keyboard_smart_key_picker";
+    private static final int SMART_KEY_APPS_MODE = 100;
+    private static volatile boolean smartKeyPickerActive;
+    private static volatile boolean smartKeyPickerInitializing;
     private static final String ACTION_APP = "app";
     private static final String ACTION_NOTIFICATIONS = "notifications";
     private static final String ACTION_RECENTS = "recents";
@@ -722,7 +716,6 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             // point to refresh the selected action after returning from the
             // app picker.
             hookCustomPageResume(host, loader);
-            hookCustomAppPickerOverflow(loader);
             XposedBridge.log(TAG + ": ColorOS custom-key subpage hook installed");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": ColorOS custom-key subpage hook failed");
@@ -730,90 +723,6 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
         }
     }
 
-    /**
-     * The app picker stays an independent custom-key page.  Its system-app
-     * toggle belongs in the real Settings action-bar overflow, like other
-     * ColorOS pickers, rather than being drawn over the search field.
-     */
-    private static void hookCustomAppPickerOverflow(final ClassLoader loader) {
-        try {
-            final Class<?> activity = XposedHelpers.findClass("com.android.settings.SubSettings", loader);
-            XC_MethodHook createMenuHook = new XC_MethodHook() {
-                        @Override protected void afterHookedMethod(MethodHookParam hook) {
-                            android.app.Activity host = (android.app.Activity) hook.thisObject;
-                            if (!isAppPickerPage(host)) return;
-                            android.view.Menu menu = (android.view.Menu) hook.args[0];
-                            if (menu.findItem(APP_PICKER_SYSTEM_APPS_MENU_ID) != null) return;
-                            android.view.MenuItem item = menu.add(android.view.Menu.NONE,
-                                    APP_PICKER_SYSTEM_APPS_MENU_ID, android.view.Menu.NONE,
-                                    "显示系统应用");
-                            item.setCheckable(true);
-                            item.setChecked(Settings.Secure.getInt(host.getContentResolver(),
-                                    AI_SHOW_SYSTEM_APPS, 0) != 0);
-                            item.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
-                            XposedBridge.log(TAG + ": custom app-picker overflow added");
-                        }
-                    };
-            XC_MethodHook itemSelectedHook = new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
-                            android.app.Activity host = (android.app.Activity) hook.thisObject;
-                            if (!isAppPickerPage(host)) return;
-                            android.view.MenuItem item = (android.view.MenuItem) hook.args[0];
-                            if (item == null || item.getItemId() != APP_PICKER_SYSTEM_APPS_MENU_ID) return;
-                            boolean show = !item.isChecked();
-                            Settings.Secure.putInt(host.getContentResolver(), AI_SHOW_SYSTEM_APPS,
-                                    show ? 1 : 0);
-                            item.setChecked(show);
-                            // Refilter the list that is actually on screen.
-                            // Recreating the activity looked equivalent but is
-                            // not: the rebuilt fragment hits the "already
-                            // built" guard in buildColorOsAppPicker(), so the
-                            // old adapter stayed installed with its original
-                            // flag and the list never changed.
-                            AppPickerAdapter live = livePickerAdapter;
-                            boolean refreshed = live != null && livePickerActivity == host;
-                            if (refreshed) {
-                                live.setShowSystemApps(show);
-                            } else {
-                                livePickerAdapter = null;
-                                livePickerActivity = null;
-                                host.recreate();
-                            }
-                            XposedBridge.log(TAG + ": custom app-picker system apps=" + show
-                                    + " refreshed-in-place=" + refreshed
-                                    + " items=" + (live == null ? -1 : live.getCount()));
-                            hook.setResult(Boolean.TRUE);
-                        }
-                    };
-            // SubSettings inherits both callbacks. findAndHookMethod() looks
-            // only on the concrete class on this LSPosed build, so walk its
-            // actual Activity hierarchy just like the existing fragment hook.
-            boolean createInstalled = false;
-            boolean selectInstalled = false;
-            for (Class<?> type = activity; type != null; type = type.getSuperclass()) {
-                try {
-                    Method method = type.getDeclaredMethod("onCreateOptionsMenu", android.view.Menu.class);
-                    XposedBridge.hookMethod(method, createMenuHook);
-                    createInstalled = true;
-                    break;
-                } catch (NoSuchMethodException ignored) { }
-            }
-            for (Class<?> type = activity; type != null; type = type.getSuperclass()) {
-                try {
-                    Method method = type.getDeclaredMethod("onOptionsItemSelected", android.view.MenuItem.class);
-                    XposedBridge.hookMethod(method, itemSelectedHook);
-                    selectInstalled = true;
-                    break;
-                } catch (NoSuchMethodException ignored) { }
-            }
-            if (!createInstalled || !selectInstalled) {
-                throw new NoSuchMethodException("SubSettings action-bar callback missing");
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": custom app-picker overflow hook failed");
-            XposedBridge.log(t);
-        }
-    }
 
     private static void hookCustomPageResume(final Class<?> host, final ClassLoader loader) {
         for (Class<?> type = host; type != null; type = type.getSuperclass()) {
@@ -824,6 +733,8 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
                         if (host.isInstance(hook.thisObject)) {
                             if (isPenHapticPage(hook.thisObject)) {
                                 buildColorOsPenHapticPage(hook.thisObject, loader);
+                            } else if (isAppPickerPage(hook.thisObject)) {
+                                buildColorOsAppPicker(hook.thisObject, loader);
                             } else if (isCustomKeyPage(hook.thisObject)) {
                                 buildColorOsCustomKeyPage(hook.thisObject, loader);
                             }
@@ -852,6 +763,17 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             return activity instanceof android.app.Activity
                     && ((android.app.Activity) activity).getIntent()
                     .getBooleanExtra(PEN_HAPTIC_PAGE_EXTRA, false);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isAppPickerPage(Object fragment) {
+        try {
+            Object activity = XposedHelpers.callMethod(fragment, "getActivity");
+            return activity instanceof android.app.Activity
+                    && PAGE_MODE_APP_PICKER.equals(((android.app.Activity) activity).getIntent()
+                    .getStringExtra(CUSTOM_PAGE_MODE));
         } catch (Throwable ignored) {
             return false;
         }
@@ -969,10 +891,6 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             final Context context = (Context) XposedHelpers.callMethod(fragment, "getContext");
             if (context == null) return;
             Object activity = XposedHelpers.callMethod(fragment, "getActivity");
-            if (isAppPickerPage(activity)) {
-                buildColorOsAppPicker(fragment, activity, context, loader);
-                return;
-            }
             if (activity instanceof android.app.Activity) {
                 ((android.app.Activity) activity).setTitle("自定义键");
             }
@@ -1001,7 +919,14 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
                     "androidx.preference.Preference$OnPreferenceClickListener", loader);
             InvocationHandler appCallback = new InvocationHandler() {
                 @Override public Object invoke(Object proxy, Method method, Object[] args) {
-                    if ("onPreferenceClick".equals(method.getName())) openColorOsAppPicker(context);
+                    if ("onPreferenceClick".equals(method.getName())) {
+                        // App selection is the fourth member of this logical
+                        // radio group.  Commit it before opening the child
+                        // page so no parent action can remain selected behind
+                        // (or after cancelling) the picker.
+                        Settings.Secure.putString(context.getContentResolver(), AI_ACTION, ACTION_APP);
+                        openColorOsAppPicker(context);
+                    }
                     return Boolean.TRUE;
                 }
             };
@@ -1015,6 +940,7 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             final String[] actions = new String[] {
                     ACTION_NOTIFICATIONS, ACTION_RECENTS, ""
             };
+            final Object[] actionRows = new Object[actions.length];
             String selected = Settings.Secure.getString(context.getContentResolver(), AI_ACTION);
             if (selected == null) selected = "";
             for (int i = 0; i < titles.length; i++) {
@@ -1029,11 +955,31 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
                     XposedHelpers.callMethod(row, "setChecked",
                             Boolean.valueOf(actions[i].equals(selected)));
                 } catch (Throwable ignored) { }
+                actionRows[index] = row;
                 InvocationHandler callback = new InvocationHandler() {
                     @Override public Object invoke(Object proxy, Method method, Object[] args) {
                         if (!"onPreferenceClick".equals(method.getName())) return Boolean.FALSE;
                         Settings.Secure.putString(context.getContentResolver(), AI_ACTION,
                                 actions[index]);
+                        // Choosing an outer action replaces (rather than
+                        // merely hides) the previous app assignment.  Without
+                        // this, reopening the picker misleadingly restored a
+                        // radio mark for an action that is no longer active.
+                        Settings.Secure.putString(context.getContentResolver(), AI_PACKAGE, null);
+                        // OplusMarkPreference does not form a radio group just
+                        // because its siblings share a PreferenceCategory.
+                        // Clear the other live rows immediately, before the
+                        // delayed rebuild, so the old and new checks cannot
+                        // coexist during the COUI click animation.
+                        for (int j = 0; j < actionRows.length; j++) {
+                            if (j == index || actionRows[j] == null) continue;
+                            try {
+                                XposedHelpers.callMethod(actionRows[j], "setChecked", Boolean.FALSE);
+                            } catch (Throwable ignored) { }
+                        }
+                        try {
+                            XposedHelpers.callMethod(actionRows[index], "setChecked", Boolean.TRUE);
+                        } catch (Throwable ignored) { }
                         // COUI updates its marker after the listener returns.
                         // Rebuild after that animation transaction has fully
                         // committed, keeping this group genuinely single-choice.
@@ -1059,582 +1005,14 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
         }
     }
 
-    private static boolean isAppPickerPage(Object activity) {
-        return activity instanceof android.app.Activity
-                && PAGE_MODE_APP_PICKER.equals(((android.app.Activity) activity).getIntent()
-                .getStringExtra(CUSTOM_PAGE_MODE));
-    }
 
-    /** Build the picker in Settings itself so it keeps COUI spacing, scrolling,
-     * icons and the same radio-mark affordance as other ColorOS selections. */
-    private static void buildColorOsAppPicker(final Object fragment, final Object activity,
-            final Context context, final ClassLoader loader) {
-        try {
-            Object hostActivity = activity;
-            if (hostActivity == null) hostActivity = XposedHelpers.callMethod(fragment, "getActivity");
-            if (hostActivity instanceof android.app.Activity) {
-                ((android.app.Activity) hostActivity).setTitle("选择应用");
-            }
-            android.view.View root = (android.view.View) XposedHelpers.callMethod(fragment, "getView");
-            if (root == null || root.findViewWithTag("acl_app_picker_root") != null) return;
-            android.view.View containerView = root.findViewById(android.R.id.list_container);
-            if (!(containerView instanceof android.view.ViewGroup)) return;
-            android.view.ViewGroup container = (android.view.ViewGroup) containerView;
-            container.removeAllViews();
-            android.widget.LinearLayout page = new android.widget.LinearLayout(context);
-            page.setTag("acl_app_picker_root");
-            page.setOrientation(android.widget.LinearLayout.VERTICAL);
-            // These are the actual Settings app-management resources: the
-            // search bar and every list item retain OEM dimensions/styles.
-            android.view.View search = android.view.LayoutInflater.from(context)
-                    .inflate(0x7f0d0337, page, false);
-            // The source XML uses a themed dimension; inside a Preference
-            // container it can inherit MATCH_PARENT, so keep the OEM app-list
-            // height explicitly (52dp, app_list_search_bar_height).
-            final AppPickerAdapter adapter = new AppPickerAdapter(context, fragment);
-            livePickerAdapter = adapter;
-            livePickerActivity = hostActivity instanceof android.app.Activity
-                    ? (android.app.Activity) hostActivity : null;
-            // Keep the OEM search widget at its natural full width.  The
-            // system-app action lives in the native title-bar overflow above,
-            // so there is no second view competing for this hit target.
-            page.addView(search, new android.widget.LinearLayout.LayoutParams(-1, dp(context, 52)));
-            final android.widget.ListView list = new android.widget.ListView(context);
-            list.setDivider(null);
-            // The rows carry the card (see applyCardBackground), so nothing
-            // between them may paint an opaque fill of its own.  Neither of
-            // these was the cause of the dark-mode regression -- both were
-            // tried alone and changed nothing -- they just keep the row
-            // backgrounds unobstructed.
-            list.setCacheColorHint(android.graphics.Color.TRANSPARENT);
-            list.setScrollingCacheEnabled(false);
-            list.setBackground(null);
-            list.setAdapter(adapter);
-            // Use the same pale rounded card treatment as the Settings app
-            // manager.  A naked ListView here lost the grey list container
-            // that makes this page read as a native ColorOS sub-page.
-            android.widget.FrameLayout listCard = new android.widget.FrameLayout(context);
-            // The card is drawn per row (see applyCardBackground); this
-            // container only supplies the ColorOS page insets.
-            listCard.setBackground(null);
-            listCard.addView(list, new android.widget.FrameLayout.LayoutParams(-1, -1));
-            android.widget.LinearLayout.LayoutParams cardParams =
-                    new android.widget.LinearLayout.LayoutParams(-1, 0, 1f);
-            cardParams.setMargins(dp(context, 16), dp(context, 8), dp(context, 16), dp(context, 16));
-            page.addView(listCard, cardParams);
-            container.addView(page, new android.view.ViewGroup.LayoutParams(-1, -1));
-            // Stock's dim (background_mask_searchView_below_toolbar) is not
-            // decoration: SmartKeyAppSearchFeature gives it the click listener
-            // that calls changeStateWithAnimation(STATE_NORMAL), so it is also
-            // the "tap anywhere else to go back" affordance.  It sits above the
-            // list and starts below the search bar.
-            final android.view.View mask = new android.view.View(context);
-            int maskColor = context.getResources()
-                    .getIdentifier("search_view_window_mask", "color", "com.android.settings");
-            mask.setBackgroundColor(maskColor != 0
-                    ? context.getResources().getColor(maskColor, context.getTheme())
-                    : 0x66000000);
-            mask.setVisibility(android.view.View.GONE);
-            mask.setAlpha(0f);
-            android.view.ViewGroup.MarginLayoutParams maskParams =
-                    new android.view.ViewGroup.MarginLayoutParams(-1, -1);
-            maskParams.topMargin = dp(context, 52);
-            container.addView(mask, maskParams);
-            // 0x7f0d0337 is manage_applications_apps_search_view, whose root is
-            // com.coui.appcompat.searchview.COUISearchBar -- a stateful widget
-            // (STATE_NORMAL=0 / STATE_EDIT=1) that owns the expand animation,
-            // the hint animation and the cancel button.
-            //
-            // Reaching inside for the EditText and force-enabling it, as this
-            // did before, bypasses that state machine completely: the bar stays
-            // in STATE_NORMAL, so none of the animation runs.  Worse, a
-            // permanently focusable inner EditText swallows the touch that the
-            // bar needs in order to transition at all.
-            //
-            // Settings' own search (intelligence/search/SearchViewAnimate,
-            // itself a COUISearchBar subclass) shows the contract: it overrides
-            // changeStateWithAnimation() and toggles the editor's focusability
-            // from the target state *before* the animation runs --
-            //     setEditTextFocusable(state == STATE_EDIT)
-            // so the editor is non-focusable while collapsed.  Mirror that.
-            android.widget.EditText editor = searchEditor(search);
-            if (editor != null) {
-                editor.setHint("搜索应用");
-                editor.setEnabled(true);
-                // Collapsed: the bar, not the editor, must receive the touch.
-                setEditorFocusable(editor, false);
-                installSearchBarStateBridge(search, editor);
-                installSearchBarHost(search, editor, adapter);
-                installSearchStateAnimation(search, mask, editor,
-                        hostActivity instanceof android.app.Activity
-                                ? (android.app.Activity) hostActivity : null);
-                editor.addTextChangedListener(new android.text.TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) { }
-                @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
-                    adapter.filter(s == null ? "" : s.toString());
-                    XposedBridge.log(TAG + ": custom app-picker query=" + s
-                            + " results=" + adapter.getCount());
-                }
-                @Override public void afterTextChanged(android.text.Editable e) { }
-                });
-            } else {
-                XposedBridge.log(TAG + ": custom app-picker search editor missing");
-            }
-            if (hostActivity instanceof android.app.Activity) {
-                // The activity creates its toolbar before the fragment has
-                // replaced the list container.  Request one fresh native menu
-                // pass now so the overflow item is guaranteed to be present.
-                ((android.app.Activity) hostActivity).invalidateOptionsMenu();
-            }
-            list.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
-                @Override public void onItemClick(android.widget.AdapterView<?> p, android.view.View v,
-                        int position, long id) {
-                    ResolveInfo info = adapter.getItem(position);
-                    Settings.Secure.putString(context.getContentResolver(), AI_PACKAGE,
-                            info.activityInfo.packageName);
-                    Settings.Secure.putString(context.getContentResolver(), AI_ACTION, ACTION_APP);
-                    Object current = XposedHelpers.callMethod(fragment, "getActivity");
-                    if (current instanceof android.app.Activity) ((android.app.Activity) current).finish();
-                }
-            });
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": build ColorOS app picker failed");
-            XposedBridge.log(t);
-        }
-    }
 
-    private static int dp(Context context, int value) {
-        return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
-    }
 
-    /**
-     * COUISearchBar never transitions on its own -- changeState* is reachable
-     * only from changeState(int,boolean) -- so the page has to drive it.  That
-     * is the whole of the host contract: stock (ManageAppFeature and
-     * OplusViewDragSearchFeature) calls changeStateWithAnimation() and nothing
-     * else on this path.
-     *
-     * In particular do NOT call openSoftInput() here.  AnimatorHelper's
-     * startAnimateToEditState()/startAnimateToNormalState() already call it at
-     * the right point of the animation, gated on mInputMethodAnimationEnabled
-     * (default true) and mShowImeAnimDuration (default 0) -- the exact defaults
-     * stock relies on, since neither setInputMethodAnimationEnabled() nor
-     * controlImeShowAnim() appears anywhere in Settings.  Raising the keyboard
-     * from here fires it before the animation and leaves the two out of step.
-     */
-    private static void installSearchBarHost(final android.view.View search,
-            final android.widget.EditText editor, final AppPickerAdapter adapter) {
-        final int STATE_NORMAL = 0, STATE_EDIT = 1;
-        try {
-            XposedHelpers.callMethod(search, "setFunctionalButtonText", "取消");
-        } catch (Throwable ignored) {
-            // Older COUI builds label it themselves.
-        }
-        android.view.View.OnClickListener expand = new android.view.View.OnClickListener() {
-            @Override public void onClick(android.view.View v) {
-                try {
-                    XposedHelpers.callMethod(search, "changeStateWithAnimation", STATE_EDIT);
-                } catch (Throwable t) {
-                    XposedBridge.log(TAG + ": search bar expand failed");
-                }
-            }
-        };
-        editor.setOnClickListener(expand);
-        search.setOnClickListener(expand);
-        try {
-            Object cancel = XposedHelpers.callMethod(search, "getFunctionalButton");
-            if (cancel instanceof android.view.View) {
-                ((android.view.View) cancel).setOnClickListener(new android.view.View.OnClickListener() {
-                    @Override public void onClick(android.view.View v) {
-                        try {
-                            editor.setText("");
-                            adapter.filter("");
-                            XposedHelpers.callMethod(search, "changeStateWithAnimation", STATE_NORMAL);
-                        } catch (Throwable t) {
-                            XposedBridge.log(TAG + ": search bar collapse failed");
-                        }
-                    }
-                });
-            }
-        } catch (Throwable ignored) {
-            // No cancel affordance on this build; back still leaves the page.
-        }
-    }
 
-    /** COUISearchBar exposes its editor directly; only fall back to a scan. */
-    private static android.widget.EditText searchEditor(android.view.View search) {
-        try {
-            Object found = XposedHelpers.callMethod(search, "getSearchEditText");
-            if (found instanceof android.widget.EditText) return (android.widget.EditText) found;
-        } catch (Throwable ignored) {
-            // Not a COUISearchBar on this build; the scan below still works.
-        }
-        return findEditText(search);
-    }
 
-    private static void setEditorFocusable(android.widget.EditText editor, boolean focusable) {
-        editor.setFocusable(focusable);
-        editor.setFocusableInTouchMode(focusable);
-    }
 
-    /**
-     * Reproduce SearchViewAnimate's override on an instance we cannot subclass:
-     * the view comes from XML, so hook changeStateWithAnimation() and apply the
-     * same focusability toggle before the animation runs.  Guarded to this one
-     * instance -- Settings has other COUISearchBars.
-     */
-    private static void installSearchBarStateBridge(final android.view.View search,
-            final android.widget.EditText editor) {
-        try {
-            Class<?> bar = search.getClass().getClassLoader()
-                    .loadClass("com.coui.appcompat.searchview.COUISearchBar");
-            if (!bar.isInstance(search)) return;
-            XposedHelpers.findAndHookMethod(bar, "changeStateWithAnimation", Integer.TYPE,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
-                            if (hook.thisObject != search) return;
-                            setEditorFocusable(editor, ((Integer) hook.args[0]) == 1 /* STATE_EDIT */);
-                        }
-                    });
-        } catch (Throwable t) {
-            // Without the bridge the bar still works, it just will not animate;
-            // leave the editor reachable so the page stays usable.
-            setEditorFocusable(editor, true);
-            XposedBridge.log(TAG + ": COUISearchBar state bridge unavailable, search box left static");
-        }
-    }
 
-    /**
-     * The expand animation stock runs on this exact page.
-     *
-     * COUISearchBar animates only itself -- the cancel button and the hint.
-     * Everything the page complained about missing is the *host's* half, and
-     * SmartKeyAppSearchFeature (the ColorOS app picker behind the smart-key
-     * setting, the closest thing in Settings to this page) spells it out in
-     * onStateChange(): fade the toolbar's children out, pull the content up
-     * into the row the toolbar was occupying, and raise the dim mask.
-     *
-     * Stock drives the lift by animating the content container's paddingTop
-     * from appBar.height down to toolbar.height, because there its search bar
-     * lives *inside* the app bar.  Ours sits in the content, so the equivalent
-     * lever is the app bar's own height: collapsing it to zero moves
-     * content_frame -- search bar first -- up by exactly the toolbar's height.
-     * Measured on device that is 137px, which lands the bar at y=84..221, the
-     * same rows stock's expanded bar occupies.  Translating the content instead
-     * would be clipped by list_container.
-     */
-    private static void installSearchStateAnimation(final android.view.View search,
-            final android.view.View mask, final android.widget.EditText editor,
-            final android.app.Activity activity) {
-        if (activity == null) return;
-        try {
-            android.content.res.Resources res = activity.getResources();
-            final android.view.View appBar = activity.findViewById(
-                    res.getIdentifier("abl", "id", "com.android.settings"));
-            android.view.View bar = activity.findViewById(
-                    res.getIdentifier("toolbar", "id", "com.android.settings"));
-            if (appBar == null || !(bar instanceof android.view.ViewGroup)) {
-                XposedBridge.log(TAG + ": app bar missing, search expand animation skipped");
-                return;
-            }
-            final android.view.ViewGroup toolbar = (android.view.ViewGroup) bar;
-            // Collapsing the app bar empties the toolbar's row but does not
-            // move the content: measured on device, content_frame stays pinned
-            // at y=221 because its offset is its own top inset, not the app
-            // bar's height.  That is exactly why stock animates the content
-            // container's paddingTop rather than the bar -- so drive the same
-            // inset here, and fall back to a translation if this build carries
-            // the offset some other way.
-            final android.view.View content = activity.findViewById(
-                    res.getIdentifier("content_frame", "id", "com.android.settings"));
-            final int[] naturalHeight = new int[] { 0 };
-            mask.setOnClickListener(new android.view.View.OnClickListener() {
-                @Override public void onClick(android.view.View v) {
-                    try {
-                        XposedHelpers.callMethod(search, "changeStateWithAnimation", 0);
-                    } catch (Throwable t) {
-                        XposedBridge.log(TAG + ": search bar collapse from mask failed");
-                    }
-                }
-            });
-            Class<?> listener = search.getClass().getClassLoader()
-                    .loadClass("com.coui.appcompat.searchview.COUISearchBar$OnStateChangeListener");
-            Object proxy = java.lang.reflect.Proxy.newProxyInstance(
-                    search.getClass().getClassLoader(), new Class<?>[] { listener },
-                    new java.lang.reflect.InvocationHandler() {
-                        @Override public Object invoke(Object self, java.lang.reflect.Method method,
-                                Object[] args) {
-                            String name = method.getName();
-                            if ("onStateChange".equals(name) && args != null && args.length == 2) {
-                                boolean entering = ((Integer) args[1]) == 1 /* STATE_EDIT */;
-                                editor.setHint(entering ? "输入搜索内容" : "搜索应用");
-                                animateSearchState(appBar, toolbar, content, mask,
-                                        naturalHeight, entering);
-                                return null;
-                            }
-                            if ("equals".equals(name)) return self == (args == null ? null : args[0]);
-                            if ("hashCode".equals(name)) return System.identityHashCode(self);
-                            if ("toString".equals(name)) return "aclAppPickerSearchState";
-                            return null;
-                        }
-                    });
-            search.getClass().getMethod("addOnStateChangeListener", listener).invoke(search, proxy);
-        } catch (Throwable t) {
-            // Without this the bar still expands, it just does it alone.
-            XposedBridge.log(TAG + ": search expand animation unavailable");
-            XposedBridge.log(t);
-        }
-    }
 
-    /**
-     * 250ms / PathInterpolator(0.3, 0, 0.1, 1) for the lift and the toolbar
-     * fade, 150ms for the mask -- the durations and curves stock uses
-     * (TRANSLATE_UP_DURATION, FADE_DURATION, mCubicBezier*Interpolator).
-     */
-    private static void animateSearchState(final android.view.View appBar,
-            final android.view.ViewGroup toolbar, final android.view.View content,
-            final android.view.View mask, final int[] naturalHeight, final boolean entering) {
-        if (naturalHeight[0] <= 0) naturalHeight[0] = appBar.getHeight();
-        if (naturalHeight[0] <= 0) return;
-        final int full = naturalHeight[0];
-        int current = appBar.getLayoutParams().height;
-        if (current <= 0) current = appBar.getHeight();
-        android.animation.ValueAnimator lift =
-                android.animation.ValueAnimator.ofInt(current, entering ? 0 : full);
-        lift.setDuration(250);
-        lift.setInterpolator(entering
-                ? new android.view.animation.PathInterpolator(0.3f, 0f, 0.1f, 1f)
-                : new android.view.animation.PathInterpolator(0.3f, 0f, 0.9f, 1f));
-        lift.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() {
-            @Override public void onAnimationUpdate(android.animation.ValueAnimator animator) {
-                int height = (Integer) animator.getAnimatedValue();
-                android.view.ViewGroup.LayoutParams params = appBar.getLayoutParams();
-                params.height = height;
-                appBar.setLayoutParams(params);
-                // fadeToolbarChild(): the toolbar keeps its own bounds, only
-                // its children fade, so the back arrow and title vanish
-                // together with the row itself.
-                float alpha = (float) height / full;
-                for (int i = 0; i < toolbar.getChildCount(); i++) {
-                    toolbar.getChildAt(i).setAlpha(alpha);
-                }
-                liftContent(content, full - height);
-            }
-        });
-        lift.start();
-        mask.animate().cancel();
-        if (entering) {
-            mask.setVisibility(android.view.View.VISIBLE);
-            mask.animate().alpha(1f).setDuration(150).setListener(null).start();
-        } else {
-            mask.animate().alpha(0f).setDuration(150).setListener(
-                    new android.animation.AnimatorListenerAdapter() {
-                        @Override public void onAnimationEnd(android.animation.Animator a) {
-                            mask.setVisibility(android.view.View.GONE);
-                        }
-                    }).start();
-        }
-    }
-
-    /**
-     * Pull the page up by {@code amount} pixels.  Shrinking the top inset is
-     * what stock does and it relayouts, so the list still reaches the bottom
-     * of the window; translation is only the fallback for a build that carries
-     * the offset somewhere this cannot reach.
-     */
-    private static void liftContent(android.view.View content, int amount) {
-        if (content == null) return;
-        android.view.ViewGroup.LayoutParams params = content.getLayoutParams();
-        if (params instanceof android.view.ViewGroup.MarginLayoutParams) {
-            android.view.ViewGroup.MarginLayoutParams margins =
-                    (android.view.ViewGroup.MarginLayoutParams) params;
-            if (CONTENT_NATURAL_INSET[0] < 0) CONTENT_NATURAL_INSET[0] = margins.topMargin;
-            if (CONTENT_NATURAL_INSET[0] > 0) {
-                margins.topMargin = Math.max(0, CONTENT_NATURAL_INSET[0] - amount);
-                content.setLayoutParams(margins);
-                return;
-            }
-        }
-        if (CONTENT_NATURAL_INSET[0] < 0) CONTENT_NATURAL_INSET[0] = 0;
-        content.setTranslationY(-amount);
-    }
-
-    /** -1 until the page's natural top inset has been read once. */
-    private static final int[] CONTENT_NATURAL_INSET = new int[] { -1 };
-
-    private static android.widget.EditText findEditText(android.view.View view) {
-        if (view instanceof android.widget.EditText) return (android.widget.EditText) view;
-        if (!(view instanceof android.view.ViewGroup)) return null;
-        android.view.ViewGroup group = (android.view.ViewGroup) view;
-        for (int i = 0; i < group.getChildCount(); i++) {
-            android.widget.EditText found = findEditText(group.getChildAt(i));
-            if (found != null) return found;
-        }
-        return null;
-    }
-
-    private static final class AppPickerAdapter extends android.widget.BaseAdapter {
-        private final Context context; private final Object fragment;
-        private final ArrayList<ResolveInfo> all = new ArrayList<ResolveInfo>();
-        private final ArrayList<ResolveInfo> shown = new ArrayList<ResolveInfo>();
-        private boolean showSystemApps;
-        private String query = "";
-        AppPickerAdapter(Context c, Object f) {
-            context = c; fragment = f;
-            all.addAll(c.getPackageManager().queryIntentActivities(
-                    new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0));
-            Collections.sort(all, new Comparator<ResolveInfo>() { @Override public int compare(ResolveInfo a, ResolveInfo b) {
-                return String.valueOf(a.loadLabel(context.getPackageManager())).compareToIgnoreCase(
-                        String.valueOf(b.loadLabel(context.getPackageManager()))); }});
-            showSystemApps = Settings.Secure.getInt(c.getContentResolver(),
-                    AI_SHOW_SYSTEM_APPS, 0) != 0;
-            filter("");
-        }
-        void setShowSystemApps(boolean value) { showSystemApps = value; filter(query); }
-        void filter(String value) { query = value == null ? "" : value; shown.clear(); String q = query.trim().toLowerCase();
-            for (ResolveInfo i : all) {
-                boolean system = i.activityInfo != null && i.activityInfo.applicationInfo != null
-                        && (i.activityInfo.applicationInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0;
-                if (system && !showSystemApps) continue;
-                if (String.valueOf(i.loadLabel(context.getPackageManager())).toLowerCase().contains(q)) shown.add(i);
-            }
-            notifyDataSetChanged(); }
-        @Override public int getCount() { return shown.size(); }
-        @Override public ResolveInfo getItem(int p) { return shown.get(p); }
-        @Override public long getItemId(int p) { return p; }
-        /**
-         * ColorOS draws its list cards on the rows, not behind the list:
-         * activity_app_picker has no card container, manage_applications_item
-         * carries no background, and Settings ships the family
-         * card_list_item_{head,body,foot,full}_bg for exactly this.
-         *
-         * Setting those drawables directly does not work here: branch probes
-         * confirmed the name resolves, getDrawable() returns non-null and
-         * setBackground() runs, yet every sample inside a row read #000000
-         * under the dark theme while the stock app manager on the same device
-         * read #1a1a1a.  Their shapes fill with {@code ?attr/couiColorCard},
-         * and reading that through Resources#getColor in this context yields
-         * an opaque black at night -- ColorOS applies runtime RRO theme
-         * overlays, so the value in the resource table is not what comes back.
-         * A forced opaque fill on the same row did render, which is what ruled
-         * the drawing path itself out.
-         *
-         * So the geometry is taken from the position and the fill is read the
-         * way Settings' own pages read it, through COUIContextUtil (see
-         * cardFillColor).  Under the light theme the same attribute is opaque
-         * white, which is why only dark mode ever looked broken.
-         */
-        private void applyCardBackground(android.view.View row, int position) {
-            try {
-                int count = getCount();
-                boolean first = position == 0;
-                boolean last = position == count - 1;
-                float r = cardRadiusPx();
-                float[] radii = count <= 1 ? new float[] {r, r, r, r, r, r, r, r}
-                        : first ? new float[] {r, r, r, r, 0, 0, 0, 0}
-                        : last ? new float[] {0, 0, 0, 0, r, r, r, r}
-                        : new float[] {0, 0, 0, 0, 0, 0, 0, 0};
-                android.graphics.drawable.GradientDrawable shape =
-                        new android.graphics.drawable.GradientDrawable();
-                shape.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-                shape.setCornerRadii(radii);
-                shape.setColor(cardFillColor());
-                row.setBackground(shape);
-            } catch (Throwable ignored) { }
-        }
-
-        private float cardRadiusPx() {
-            try {
-                int id = context.getResources().getIdentifier(
-                        "coui_round_corner_m", "dimen", SETTINGS);
-                if (id != 0) return context.getResources().getDimension(id);
-            } catch (Throwable ignored) { }
-            return dp(context, 16);
-        }
-
-        /**
-         * coui_color_card is documented as #ffffffff by day and #1affffff at
-         * night (10% white meant to composite onto the page).  On this ROM the
-         * night value does not come back that way -- ColorOS applies runtime
-         * RRO theme overlays, and the resolved colour is opaque black, i.e.
-         * exactly the page colour, which is why the card was invisible.
-         *
-         * So the translucent overlay is honoured when that is what comes back,
-         * and anything else falls through to the values the stock app manager
-         * actually renders on this device (measured: #1a1a1a at night,
-         * #ffffff by day, page #000000 / #f0f1f2).
-         */
-        private int cardFillColor() {
-            boolean night = (context.getResources().getConfiguration().uiMode
-                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
-                    == android.content.res.Configuration.UI_MODE_NIGHT_YES;
-            // Preferred source of truth: the same helper the OEM pages use.
-            int card = couiAttrColor("couiColorCard");
-            if (card == 0) card = colorByName("coui_color_card", 0);
-            int alpha = android.graphics.Color.alpha(card);
-            if (alpha != 0 && alpha != 0xFF) {
-                int page = night ? 0xFF000000 : 0xFFF0F1F2;
-                float f = alpha / 255f;
-                return android.graphics.Color.rgb(
-                        Math.round(android.graphics.Color.red(card) * f
-                                + android.graphics.Color.red(page) * (1 - f)),
-                        Math.round(android.graphics.Color.green(card) * f
-                                + android.graphics.Color.green(page) * (1 - f)),
-                        Math.round(android.graphics.Color.blue(card) * f
-                                + android.graphics.Color.blue(page) * (1 - f)));
-            }
-            return night ? 0xFF1A1A1A : 0xFFFFFFFF;
-        }
-
-        /** COUIContextUtil.getAttrColor is how Settings' own pages read COUI colours. */
-        private int couiAttrColor(String attrName) {
-            try {
-                int attr = context.getResources().getIdentifier(attrName, "attr", SETTINGS);
-                if (attr == 0) return 0;
-                Class<?> util = context.getClassLoader()
-                        .loadClass("com.coui.appcompat.contextutil.COUIContextUtil");
-                return (Integer) XposedHelpers.callStaticMethod(util, "getAttrColor", context, attr);
-            } catch (Throwable ignored) { }
-            return 0;
-        }
-
-        private int colorByName(String name, int fallback) {
-            try {
-                int id = context.getResources().getIdentifier(name, "color", SETTINGS);
-                if (id != 0) return context.getColor(id);
-            } catch (Throwable ignored) { }
-            return fallback;
-        }
-
-        @Override public android.view.View getView(int p, android.view.View convert, android.view.ViewGroup parent) {
-            android.view.View row = convert == null ? android.view.LayoutInflater.from(context).inflate(0x7f0d033a, parent, false) : convert;
-            ResolveInfo info = getItem(p); ((android.widget.ImageView) row.findViewById(0x7f0a00f5)).setImageDrawable(info.loadIcon(context.getPackageManager()));
-            ((android.widget.TextView) row.findViewById(0x7f0a00fb)).setText(info.loadLabel(context.getPackageManager()));
-            // The app-manager item already contains ColorOS' right-side
-            // selection widget.  Reuse it so this picker has the same clear
-            // current-choice affordance as the first-level custom-key menu.
-            android.view.View oldCheck = row.findViewById(0x7f0a00fc);
-            if (oldCheck != null) oldCheck.setVisibility(android.view.View.GONE);
-            // Match OplusMarkPreference: a themed single-choice RadioButton,
-            // not the app-manager's multi-select checkbox.
-            android.widget.RadioButton mark = (android.widget.RadioButton) row.findViewWithTag("acl_picker_mark");
-            if (mark == null && row instanceof android.widget.LinearLayout) {
-                mark = new android.widget.RadioButton(context);
-                mark.setTag("acl_picker_mark"); mark.setClickable(false); mark.setFocusable(false);
-                android.widget.LinearLayout.LayoutParams markParams =
-                        new android.widget.LinearLayout.LayoutParams(-2, -2);
-                // Match Settings' list_item_right_margin (24dp).  The stock
-                // app-manager checkbox has a container around it; our picker
-                // adds a radio directly, so retain that visual end inset here.
-                markParams.setMargins(0, 0, dp(context, 24), 0);
-                ((android.widget.LinearLayout) row).addView(mark, markParams);
-            }
-            if (mark != null) mark.setChecked(info.activityInfo.packageName.equals(
-                    Settings.Secure.getString(context.getContentResolver(), AI_PACKAGE)));
-            applyCardBackground(row, p);
-            return row;
-        }
-    }
 
 
     private static Object newSettingsWidget(String name, Context context, ClassLoader loader)
@@ -1727,6 +1105,205 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * Independent picker page.  It deliberately uses the application-manager
+     * search and row resources, while retaining only the custom-key result
+     * action (one checked app, never an app-details launch).
+     */
+    private static void buildColorOsAppPicker(final Object fragment, final ClassLoader loader) {
+        try {
+            final Context context = (Context) XposedHelpers.callMethod(fragment, "getContext");
+            Object activity = XposedHelpers.callMethod(fragment, "getActivity");
+            if (context == null || !(activity instanceof android.app.Activity)) return;
+            final android.app.Activity host = (android.app.Activity) activity;
+            host.setTitle("选择应用");
+            android.view.View root = (android.view.View) XposedHelpers.callMethod(fragment, "getView");
+            if (root == null || root.findViewWithTag("acl_app_picker_root") != null) return;
+            android.view.View target = root.findViewById(android.R.id.list_container);
+            if (!(target instanceof android.view.ViewGroup)) return;
+            android.view.ViewGroup container = (android.view.ViewGroup) target;
+            container.removeAllViews();
+
+            android.widget.LinearLayout page = new android.widget.LinearLayout(context);
+            page.setTag("acl_app_picker_root");
+            page.setOrientation(android.widget.LinearLayout.VERTICAL);
+            android.view.View search = android.view.LayoutInflater.from(context)
+                    .inflate(0x7f0d0337, page, false); // manage_applications search bar
+            page.addView(search, new android.widget.LinearLayout.LayoutParams(-1, dp(context, 52)));
+            final ApplicationPickerAdapter adapter = new ApplicationPickerAdapter(context);
+            final android.widget.ListView list = new android.widget.ListView(context);
+            list.setDivider(null);
+            list.setCacheColorHint(android.graphics.Color.TRANSPARENT);
+            list.setAdapter(adapter);
+            page.addView(list, new android.widget.LinearLayout.LayoutParams(-1, 0, 1f));
+            container.addView(page, new android.view.ViewGroup.LayoutParams(-1, -1));
+            final android.view.View mask = new android.view.View(context);
+            mask.setBackgroundColor(0x66000000);
+            mask.setVisibility(android.view.View.GONE);
+            mask.setAlpha(0f);
+            try {
+                android.view.ViewGroup.MarginLayoutParams maskParams =
+                        new android.view.ViewGroup.MarginLayoutParams(-1, -1);
+                maskParams.topMargin = dp(context, 52);
+                container.addView(mask, maskParams);
+            } catch (Throwable ignored) { }
+
+            final android.widget.EditText editor = findEditText(search);
+            if (editor != null) {
+                editor.setHint("搜索应用");
+                installPickerSearchController(search, editor, adapter, host, mask);
+                editor.addTextChangedListener(new android.text.TextWatcher() {
+                    @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) { }
+                    @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
+                        adapter.filter(s == null ? "" : s.toString());
+                    }
+                    @Override public void afterTextChanged(android.text.Editable s) { }
+                });
+            }
+            list.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
+                @Override public void onItemClick(android.widget.AdapterView<?> parent,
+                        android.view.View view, int position, long id) {
+                    android.content.pm.ResolveInfo item = adapter.getItem(position);
+                    if (item == null || item.activityInfo == null) return;
+                    Settings.Secure.putString(context.getContentResolver(), AI_PACKAGE,
+                            item.activityInfo.packageName);
+                    Settings.Secure.putString(context.getContentResolver(), AI_ACTION, ACTION_APP);
+                    adapter.setChecked(item.activityInfo.packageName);
+                    host.finish();
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": build application picker failed");
+            XposedBridge.log(t);
+        }
+    }
+
+    /** Preserve the application-manager COUISearchBar state machine. */
+    private static void installPickerSearchController(final android.view.View search,
+            final android.widget.EditText editor, final ApplicationPickerAdapter adapter,
+            final android.app.Activity host, final android.view.View mask) {
+        try {
+            XposedHelpers.callMethod(search, "setFunctionalButtonText", "取消");
+            android.view.View.OnClickListener expand = new android.view.View.OnClickListener() {
+                @Override public void onClick(android.view.View view) {
+                    try {
+                        XposedHelpers.callMethod(search, "changeStateWithAnimation", 1);
+                        editor.requestFocus();
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": picker search expand failed");
+                    }
+                }
+            };
+            search.setOnClickListener(expand);
+            installPickerSearchHostAnimation(search, host, mask);
+            try {
+                Object cancel = XposedHelpers.callMethod(search, "getFunctionalButton");
+                if (cancel instanceof android.view.View) {
+                    ((android.view.View) cancel).setOnClickListener(
+                            new android.view.View.OnClickListener() {
+                        @Override public void onClick(android.view.View view) {
+                            editor.setText("");
+                            adapter.filter("");
+                            try {
+                                XposedHelpers.callMethod(search, "changeStateWithAnimation", 0);
+                            } catch (Throwable t) {
+                                XposedBridge.log(TAG + ": picker search collapse failed");
+                            }
+                        }
+                    });
+                }
+            } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": picker search controller unavailable");
+            XposedBridge.log(t);
+        }
+    }
+
+    /** The application-manager host half of COUISearchBar's expand/collapse. */
+    private static void installPickerSearchHostAnimation(final android.view.View search,
+            final android.app.Activity activity, final android.view.View mask) {
+        try {
+            final android.content.res.Resources resources = activity.getResources();
+            final android.view.View appBar = activity.findViewById(resources.getIdentifier(
+                    "abl", "id", SETTINGS));
+            final android.view.View toolbar = activity.findViewById(resources.getIdentifier(
+                    "toolbar", "id", SETTINGS));
+            final android.view.View content = activity.findViewById(resources.getIdentifier(
+                    "content_frame", "id", SETTINGS));
+            if (appBar == null || toolbar == null || content == null) return;
+            Class<?> listener = search.getClass().getClassLoader().loadClass(
+                    "com.coui.appcompat.searchview.COUISearchBar$OnStateChangeListener");
+            Object stateListener = Proxy.newProxyInstance(search.getClass().getClassLoader(),
+                    new Class<?>[] { listener }, new InvocationHandler() {
+                private int naturalHeight;
+                @Override public Object invoke(Object proxy, Method method, Object[] args) {
+                    if (!"onStateChange".equals(method.getName()) || args == null
+                            || args.length != 2) return null;
+                    final boolean entering = ((Integer) args[1]).intValue() == 1;
+                    if (naturalHeight <= 0) naturalHeight = appBar.getHeight();
+                    if (naturalHeight <= 0) return null;
+                    int from = appBar.getLayoutParams().height;
+                    if (from <= 0) from = entering ? naturalHeight : 0;
+                    android.animation.ValueAnimator animation = android.animation.ValueAnimator
+                            .ofInt(from, entering ? 0 : naturalHeight);
+                    animation.setDuration(250L);
+                    animation.setInterpolator(new android.view.animation.PathInterpolator(
+                            entering ? 0.1f : 0.3f, 0f, entering ? 0.1f : 0.9f, 1f));
+                    final int full = naturalHeight;
+                    animation.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() {
+                        @Override public void onAnimationUpdate(android.animation.ValueAnimator value) {
+                            int height = ((Integer) value.getAnimatedValue()).intValue();
+                            android.view.ViewGroup.LayoutParams params = appBar.getLayoutParams();
+                            params.height = height;
+                            appBar.setLayoutParams(params);
+                            toolbar.setAlpha(height / (float) full);
+                            content.setTranslationY(-(full - height));
+                        }
+                    });
+                    animation.start();
+                    mask.animate().cancel();
+                    if (entering) {
+                        mask.setVisibility(android.view.View.VISIBLE);
+                        mask.animate().alpha(1f).setDuration(150L).setListener(null).start();
+                    } else {
+                        mask.animate().alpha(0f).setDuration(150L)
+                                .setListener(new android.animation.AnimatorListenerAdapter() {
+                            @Override public void onAnimationEnd(android.animation.Animator animation) {
+                                mask.setVisibility(android.view.View.GONE);
+                            }
+                        }).start();
+                    }
+                    return null;
+                }
+            });
+            search.getClass().getMethod("addOnStateChangeListener", listener).invoke(search,
+                    stateListener);
+            mask.setOnClickListener(new android.view.View.OnClickListener() {
+                @Override public void onClick(android.view.View view) {
+                    XposedHelpers.callMethod(search, "changeStateWithAnimation", 0);
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": picker search host animation unavailable");
+            XposedBridge.log(t);
+        }
+    }
+
+    private static int dp(Context context, int value) {
+        return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private static android.widget.EditText findEditText(android.view.View view) {
+        if (view instanceof android.widget.EditText) return (android.widget.EditText) view;
+        if (!(view instanceof android.view.ViewGroup)) return null;
+        android.view.ViewGroup group = (android.view.ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            android.widget.EditText found = findEditText(group.getChildAt(i));
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     private static void openColorOsAppPicker(Context context) {
         try {
             Intent intent = new Intent();
@@ -1737,11 +1314,16 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             intent.putExtra(CUSTOM_PAGE_MODE, PAGE_MODE_APP_PICKER);
             context.startActivity(intent);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": ColorOS app picker launch failed");
+            XposedBridge.log(TAG + ": custom application picker launch failed");
             XposedBridge.log(t);
         }
     }
 
+    /**
+     * The custom-key picker is a tagged instance of Settings' own application
+     * management fragment.  No list, search view, icon, or search transition
+     * is recreated by the module; only the final row click is repurposed.
+     */
     private static void hookColorOsAppManagementPicker(final ClassLoader loader) {
         try {
             final Class<?> host = XposedHelpers.findClass(
@@ -1765,13 +1347,13 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
                             Settings.Secure.putString(activity.getContentResolver(), AI_ACTION,
                                     ACTION_APP);
                             XposedBridge.log(TAG + ": selected app " + packageName);
-                            hook.setResult(null); // do not open app details
+                            hook.setResult(null);
                             activity.finish();
                         }
                     });
-            XposedBridge.log(TAG + ": native ColorOS app picker hook installed");
+            XposedBridge.log(TAG + ": native application picker hook installed");
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": native ColorOS app picker hook failed");
+            XposedBridge.log(TAG + ": native application picker hook failed");
             XposedBridge.log(t);
         }
     }
@@ -1788,8 +1370,7 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
         }
     }
 
-    /** Same position calculation used by ManageApplications.onClick, before
-     * the stock code opens an app-detail page. */
+    /** Same position calculation used by ManageApplications before it opens details. */
     private static String appManagementClickedPackage(Object fragment, android.view.View row) {
         try {
             Object recycler = XposedHelpers.getObjectField(fragment, "mRecyclerView");
@@ -1797,23 +1378,308 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
                     "getChildAdapterPosition", row)).intValue();
             if (adapterPosition < 0) return null;
             int listType = XposedHelpers.getIntField(fragment, "mListType");
-            Object adapter = XposedHelpers.getObjectField(fragment, "mApplications");
-            if (adapter == null) return null;
-            int appPosition = ((Integer) XposedHelpers.callStaticMethod(adapter.getClass(),
+            Object applications = XposedHelpers.getObjectField(fragment, "mApplications");
+            if (applications == null) return null;
+            int appPosition = ((Integer) XposedHelpers.callStaticMethod(applications.getClass(),
                     "getApplicationPosition", listType, adapterPosition)).intValue();
-            Object adaptor = XposedHelpers.callMethod(fragment, "getAdaptor");
-            int realPosition = ((Integer) XposedHelpers.callMethod(adaptor,
+            Object adapter = XposedHelpers.callMethod(fragment, "getAdaptor");
+            int realPosition = ((Integer) XposedHelpers.callMethod(adapter,
                     "getChildAdapterRealPosition", appPosition)).intValue();
-            int count = ((Integer) XposedHelpers.callMethod(adapter,
+            int count = ((Integer) XposedHelpers.callMethod(applications,
                     "getApplicationCount")).intValue();
             if (realPosition < 0 || realPosition >= count) return null;
-            Object entry = XposedHelpers.callMethod(adapter, "getAppEntry", realPosition);
+            Object entry = XposedHelpers.callMethod(applications, "getAppEntry", realPosition);
             Object info = XposedHelpers.getObjectField(entry, "info");
             return (String) XposedHelpers.getObjectField(info, "packageName");
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": native picker item lookup failed");
             XposedBridge.log(t);
             return null;
+        }
+    }
+
+    /** App-manager row resource plus a single-choice result control. */
+    private static final class ApplicationPickerAdapter extends android.widget.BaseAdapter {
+        private final Context context;
+        private final java.util.ArrayList<android.content.pm.ResolveInfo> all =
+                new java.util.ArrayList<android.content.pm.ResolveInfo>();
+        private final java.util.ArrayList<android.content.pm.ResolveInfo> shown =
+                new java.util.ArrayList<android.content.pm.ResolveInfo>();
+        private String query = "";
+        private String checked;
+
+        ApplicationPickerAdapter(Context context) {
+            this.context = context;
+            all.addAll(context.getPackageManager().queryIntentActivities(
+                    new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0));
+            java.util.Collections.sort(all, new java.util.Comparator<android.content.pm.ResolveInfo>() {
+                @Override public int compare(android.content.pm.ResolveInfo left,
+                        android.content.pm.ResolveInfo right) {
+                    return String.valueOf(left.loadLabel(context.getPackageManager()))
+                            .compareToIgnoreCase(String.valueOf(
+                                    right.loadLabel(context.getPackageManager())));
+                }
+            });
+            checked = Settings.Secure.getString(context.getContentResolver(), AI_PACKAGE);
+            filter("");
+        }
+
+        void filter(String value) {
+            query = value == null ? "" : value;
+            String needle = query.trim().toLowerCase();
+            shown.clear();
+            for (android.content.pm.ResolveInfo info : all) {
+                String name = String.valueOf(info.loadLabel(context.getPackageManager())).toLowerCase();
+                if (name.contains(needle)) shown.add(info);
+            }
+            notifyDataSetChanged();
+        }
+
+        void setChecked(String packageName) {
+            checked = packageName;
+            notifyDataSetChanged();
+        }
+
+        @Override public int getCount() { return shown.size(); }
+        @Override public android.content.pm.ResolveInfo getItem(int position) {
+            return position >= 0 && position < shown.size() ? shown.get(position) : null;
+        }
+        @Override public long getItemId(int position) { return position; }
+
+        @Override public android.view.View getView(int position, android.view.View convert,
+                android.view.ViewGroup parent) {
+            android.view.View row = convert == null ? android.view.LayoutInflater.from(context)
+                    .inflate(0x7f0d033a, parent, false) : convert; // manage_applications_item
+            android.content.pm.ResolveInfo info = getItem(position);
+            if (info == null) return row;
+            android.view.View icon = row.findViewById(0x7f0a00f5);
+            if (icon instanceof android.widget.ImageView) {
+                ((android.widget.ImageView) icon).setImageDrawable(
+                        info.loadIcon(context.getPackageManager()));
+            }
+            android.view.View title = row.findViewById(0x7f0a00fb);
+            if (title instanceof android.widget.TextView) {
+                ((android.widget.TextView) title).setText(info.loadLabel(context.getPackageManager()));
+            }
+            android.view.View oldCheck = row.findViewById(0x7f0a00fc);
+            if (oldCheck != null) oldCheck.setVisibility(android.view.View.GONE);
+            android.widget.RadioButton mark = (android.widget.RadioButton) row.findViewWithTag(
+                    "acl_picker_mark");
+            if (mark == null && row instanceof android.widget.LinearLayout) {
+                mark = new android.widget.RadioButton(context);
+                mark.setTag("acl_picker_mark");
+                mark.setClickable(false);
+                mark.setFocusable(false);
+                android.widget.LinearLayout.LayoutParams params =
+                        new android.widget.LinearLayout.LayoutParams(-2, -2);
+                params.setMargins(0, 0, dp(context, 24), 0);
+                ((android.widget.LinearLayout) row).addView(mark, params);
+            }
+            if (mark != null) {
+                mark.setChecked(info.activityInfo != null
+                        && info.activityInfo.packageName.equals(checked));
+            }
+            return row;
+        }
+    }
+
+    /**
+     * Reuse the OEM picker intact.  It normally persists an assignment for a
+     * physical OPlus smart key; while our tagged instance is active, suppress
+     * only that persistence and mirror its selected package to the Lenovo key
+     * setting.  The stock picker still owns every view and interaction.
+     */
+    private static void hookStockSmartKeyAppPicker(final ClassLoader loader) {
+        try {
+            final Class<?> picker = XposedHelpers.findClass(
+                    "com.oplus.settings.feature.smartkey.SmartKeyAppsFragment", loader);
+            final Class<?> utils = XposedHelpers.findClass(
+                    "com.oplus.settings.feature.smartkey.SmartKeyUtils", loader);
+            final Class<?> searchAdapter = XposedHelpers.findClass(
+                    "com.oplus.settings.feature.smartkey.SmartKeyAppsSearchAdapter", loader);
+            final Class<?> customImageMarkPreference = XposedHelpers.findClass(
+                    "com.oplus.settings.feature.smartkey.CustomImageMarkPreference", loader);
+            final Class<?> preferenceViewHolder = XposedHelpers.findClass(
+                    "androidx.preference.PreferenceViewHolder", loader);
+            XposedHelpers.findAndHookMethod(customImageMarkPreference, "onBindViewHolder",
+                    preferenceViewHolder, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam hook) {
+                            if (!smartKeyPickerActive) return;
+                            Object view = XposedHelpers.callMethod(hook.args[0], "findViewById",
+                                    Integer.valueOf(android.R.id.icon));
+                            if (!(view instanceof android.widget.ImageView)) return;
+                            android.widget.ImageView icon = (android.widget.ImageView) view;
+                            resizeAppManagerIcon(icon);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(searchAdapter, "onBindViewHolder",
+                    XposedHelpers.findClass(
+                            "com.oplus.settings.feature.smartkey.SmartKeyAppsSearchAdapter$AppsViewHolder",
+                            loader), int.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam hook) {
+                            if (!smartKeyPickerActive) return;
+                            Object item = XposedHelpers.callMethod(hook.args[0], "getMItem");
+                            if (item instanceof android.view.View) {
+                                installSearchCardFeedback((android.view.View) item);
+                            }
+                            Object image = XposedHelpers.callMethod(hook.args[0], "getMImageView");
+                            if (!(image instanceof android.widget.ImageView)) return;
+                            android.widget.ImageView icon = (android.widget.ImageView) image;
+                            android.view.ViewGroup.LayoutParams params = icon.getLayoutParams();
+                            if (params == null) return;
+                            resizeAppManagerIcon(icon);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(picker, "onCreate", Bundle.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                    if (!isStockSmartKeyPicker(hook.thisObject)) return;
+                    // SmartKeyAppsFragment calls SmartKeyUtils.initData() from
+                    // its super-visible onCreate path.  Make that original
+                    // path read the Lenovo assignment from the outset.
+                    smartKeyPickerActive = true;
+                    smartKeyPickerInitializing = true;
+                }
+                @Override protected void afterHookedMethod(MethodHookParam hook) {
+                    if (!isStockSmartKeyPicker(hook.thisObject)) return;
+                    smartKeyPickerInitializing = false;
+                }
+            });
+            XposedHelpers.findAndHookMethod(picker, "onDestroy", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam hook) {
+                    if (isStockSmartKeyPicker(hook.thisObject)) smartKeyPickerActive = false;
+                }
+            });
+            XposedHelpers.findAndHookMethod(picker, "onPreferenceChange",
+                    XposedHelpers.findClass("androidx.preference.Preference", loader), Object.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                            if (!isStockSmartKeyPicker(hook.thisObject)
+                                    || !Boolean.TRUE.equals(hook.args[1])) return;
+                            Object preference = hook.args[0];
+                            String pkg = (String) XposedHelpers.callMethod(preference, "getKey");
+                            CharSequence title = (CharSequence) XposedHelpers.callMethod(preference,
+                                    "getTitle");
+                            saveStockPickerSelection((Context) XposedHelpers.callMethod(hook.thisObject,
+                                    "getContext"), pkg, title);
+                        }
+                    });
+            // appsSearchResultItemClick only binds a row and attaches this
+            // Kotlin-generated listener. Hook the actual click so the Lenovo
+            // assignment follows the stock search result selection.
+            XposedHelpers.findAndHookMethod(searchAdapter,
+                    "appsSearchResultItemClick$lambda$0", searchAdapter, int.class,
+                    android.view.View.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                            if (!smartKeyPickerActive) return;
+                            Object adapter = hook.args[0];
+                            int position = ((Integer) hook.args[1]).intValue();
+                            Object item = XposedHelpers.callMethod(adapter, "getItem",
+                                    Integer.valueOf(position));
+                            if (item == null) return;
+                            String pkg = (String) XposedHelpers.callMethod(item, "getPkgName");
+                            String label = (String) XposedHelpers.callMethod(item, "getName");
+                            saveStockPickerSelection((Context) XposedHelpers.getObjectField(
+                                    adapter, "mContext"), pkg, label);
+                        }
+
+                    });
+            XposedHelpers.findAndHookMethod(utils, "getTouchPowerValue", Context.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                            if (smartKeyPickerInitializing) hook.setResult("8");
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(utils, "getTouchAppCache", Context.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                            if (!smartKeyPickerInitializing) return;
+                            Context context = (Context) hook.args[0];
+                            String pkg = Settings.Secure.getString(context.getContentResolver(),
+                                    AI_PACKAGE);
+                            if (pkg == null || pkg.length() == 0) return;
+                            hook.setResult(configuredAppLabel(context) + "_PKG_" + pkg);
+                        }
+                    });
+            XposedHelpers.findAndHookMethod(utils, "setSettingData", Context.class, int.class,
+                    String.class, String.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                            if (smartKeyPickerActive) hook.setResult(null);
+                        }
+                    });
+            XposedBridge.log(TAG + ": stock SmartKey app picker bridge installed");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": stock SmartKey app picker bridge failed");
+            XposedBridge.log(t);
+        }
+    }
+
+    private static boolean isStockSmartKeyPicker(Object fragment) {
+        try {
+            Object activity = XposedHelpers.callMethod(fragment, "getActivity");
+            if (!(activity instanceof android.app.Activity)) return false;
+            android.app.Activity result = (android.app.Activity) activity;
+            return result.getIntent().getBooleanExtra(SMART_KEY_PICKER_EXTRA, false);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static void saveStockPickerSelection(Context context, String pkg, CharSequence label) {
+        if (context == null || pkg == null || pkg.length() == 0) return;
+        Settings.Secure.putString(context.getContentResolver(), AI_PACKAGE, pkg);
+        Settings.Secure.putString(context.getContentResolver(), AI_ACTION, ACTION_APP);
+        XposedBridge.log(TAG + ": stock picker selected " + pkg + " (" + label + ")");
+    }
+
+    private static void installSearchCardFeedback(final android.view.View item) {
+        try {
+            // The adapter's automatic COUI feedback is the defective path on
+            // this tablet.  Drive the same two stock animation methods from
+            // the exact view that receives the adapter click instead.
+            XposedHelpers.callMethod(item, "setBackgroundAnimationEnabled", Boolean.FALSE);
+            item.setOnTouchListener(new android.view.View.OnTouchListener() {
+                @Override public boolean onTouch(android.view.View view,
+                        android.view.MotionEvent event) {
+                    if (!smartKeyPickerActive) return false;
+                    try {
+                        switch (event.getActionMasked()) {
+                            case android.view.MotionEvent.ACTION_DOWN:
+                                XposedHelpers.callMethod(item, "startAppearAnimation");
+                                break;
+                            case android.view.MotionEvent.ACTION_UP:
+                            case android.view.MotionEvent.ACTION_CANCEL:
+                                XposedHelpers.callMethod(item, "startDisAppearAnimationOrNot");
+                                break;
+                            default:
+                                break;
+                        }
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": SmartKey card feedback failed");
+                        XposedBridge.log(t);
+                    }
+                    return false;
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": SmartKey search-card setup failed");
+            XposedBridge.log(t);
+        }
+    }
+
+    private static void resizeAppManagerIcon(android.widget.ImageView icon) {
+        try {
+            android.view.ViewGroup.LayoutParams params = icon.getLayoutParams();
+            if (params == null) return;
+            int size = (int) (36.0f * icon.getResources().getDisplayMetrics().density + 0.5f);
+            params.width = size;
+            params.height = size;
+            icon.setLayoutParams(params);
+            // The old application-management row uses enum value 3 (FIT_CENTER).
+            icon.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": SmartKey icon resize failed");
+            XposedBridge.log(t);
         }
     }
 
@@ -1958,75 +1824,4 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
         } catch (Throwable ignored) { }
     }
 
-    private static void showAppPicker(final Context context, final Object preference) {
-        final String[] actions = new String[] {
-                "打开应用", "打开通知中心", "显示最近任务", "不执行操作"
-        };
-        showChoiceDialog(context, "自定义键", actions, new DialogInterface.OnClickListener() {
-            @Override public void onClick(DialogInterface dialog, int which) {
-                if (which == 0) {
-                    showLaunchableAppPicker(context, preference);
-                    return;
-                }
-                String action = which == 1 ? ACTION_NOTIFICATIONS
-                        : which == 2 ? ACTION_RECENTS : "";
-                Settings.Secure.putString(context.getContentResolver(), AI_ACTION, action);
-                updateSummary(context, preference);
-            }
-        });
-    }
-
-    private static void showLaunchableAppPicker(final Context context, final Object preference) {
-        try {
-            Intent query = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-            List<ResolveInfo> raw = context.getPackageManager().queryIntentActivities(query, 0);
-            final ArrayList<ResolveInfo> apps = new ArrayList<ResolveInfo>();
-            for (ResolveInfo info : raw) {
-                if (info.activityInfo != null && info.activityInfo.packageName != null
-                        && !SETTINGS.equals(info.activityInfo.packageName)) apps.add(info);
-            }
-            Collections.sort(apps, new Comparator<ResolveInfo>() {
-                @Override public int compare(ResolveInfo a, ResolveInfo b) {
-                    return String.valueOf(a.loadLabel(context.getPackageManager()))
-                            .compareToIgnoreCase(String.valueOf(b.loadLabel(context.getPackageManager())));
-                }
-            });
-            final String[] labels = new String[apps.size() + 1];
-            labels[0] = "不执行操作";
-            for (int i = 0; i < apps.size(); i++) {
-                labels[i + 1] = String.valueOf(apps.get(i).loadLabel(context.getPackageManager()));
-            }
-            showChoiceDialog(context, "选择要打开的应用", labels, new DialogInterface.OnClickListener() {
-                @Override public void onClick(DialogInterface dialog, int which) {
-                    String value = which == 0 ? "" : apps.get(which - 1).activityInfo.packageName;
-                    Settings.Secure.putString(context.getContentResolver(), AI_PACKAGE, value);
-                    Settings.Secure.putString(context.getContentResolver(), AI_ACTION,
-                            value.length() == 0 ? "" : ACTION_APP);
-                    updateSummary(context, preference);
-                }
-            });
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": app picker failed");
-            XposedBridge.log(t);
-        }
-    }
-
-    /** Prefer ColorOS' COUI selector; the framework dialog retains the Settings theme as fallback. */
-    private static void showChoiceDialog(Context context, String title, String[] items,
-            DialogInterface.OnClickListener listener) {
-        try {
-            // COUI lives inside the Settings APK class loader, not the module
-            // loader.  Resolving it through Class.forName(String) selected the
-            // latter and silently took the platform-dialog fallback.
-            Class<?> builderClass = Class.forName(
-                    "com.coui.appcompat.dialog.COUIAlertDialogBuilder", true, context.getClassLoader());
-            Object builder = builderClass.getConstructor(Context.class).newInstance(context);
-            builderClass.getMethod("setTitle", CharSequence.class).invoke(builder, title);
-            builderClass.getMethod("setItems", CharSequence[].class, DialogInterface.OnClickListener.class)
-                    .invoke(builder, new Object[] { items, listener });
-            builderClass.getMethod("show").invoke(builder);
-        } catch (Throwable noCoui) {
-            new AlertDialog.Builder(context).setTitle(title).setItems(items, listener).show();
-        }
-    }
 }
