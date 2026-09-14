@@ -1,0 +1,8 @@
+# 构建中间产物：只留源码、Makefile、README 和编好的 .ko
+.*.cmd
+*.o
+*.mod
+*.mod.c
+*.usyms
+modules.order
+Module.symvers

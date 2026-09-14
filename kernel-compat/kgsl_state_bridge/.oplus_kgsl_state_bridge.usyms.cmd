@@ -1,1 +1,0 @@
-cmd_/run/media/ACLaniakea/IXUNICS/pad/coloros-pad-fixes/kernel-compat/kgsl_state_bridge/oplus_kgsl_state_bridge.usyms := llvm-nm /run/media/ACLaniakea/IXUNICS/pad/coloros-pad-fixes/kernel-compat/kgsl_state_bridge/oplus_kgsl_state_bridge.o | sed -n 's/^  *U //p' > /run/media/ACLaniakea/IXUNICS/pad/coloros-pad-fixes/kernel-compat/kgsl_state_bridge/oplus_kgsl_state_bridge.usyms
