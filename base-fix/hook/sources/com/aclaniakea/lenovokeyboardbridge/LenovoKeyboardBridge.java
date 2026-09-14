@@ -1123,6 +1123,23 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             cardParams.setMargins(dp(context, 16), dp(context, 8), dp(context, 16), dp(context, 16));
             page.addView(listCard, cardParams);
             container.addView(page, new android.view.ViewGroup.LayoutParams(-1, -1));
+            // Stock's dim (background_mask_searchView_below_toolbar) is not
+            // decoration: SmartKeyAppSearchFeature gives it the click listener
+            // that calls changeStateWithAnimation(STATE_NORMAL), so it is also
+            // the "tap anywhere else to go back" affordance.  It sits above the
+            // list and starts below the search bar.
+            final android.view.View mask = new android.view.View(context);
+            int maskColor = context.getResources()
+                    .getIdentifier("search_view_window_mask", "color", "com.android.settings");
+            mask.setBackgroundColor(maskColor != 0
+                    ? context.getResources().getColor(maskColor, context.getTheme())
+                    : 0x66000000);
+            mask.setVisibility(android.view.View.GONE);
+            mask.setAlpha(0f);
+            android.view.ViewGroup.MarginLayoutParams maskParams =
+                    new android.view.ViewGroup.MarginLayoutParams(-1, -1);
+            maskParams.topMargin = dp(context, 52);
+            container.addView(mask, maskParams);
             // 0x7f0d0337 is manage_applications_apps_search_view, whose root is
             // com.coui.appcompat.searchview.COUISearchBar -- a stateful widget
             // (STATE_NORMAL=0 / STATE_EDIT=1) that owns the expand animation,
@@ -1148,6 +1165,9 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
                 setEditorFocusable(editor, false);
                 installSearchBarStateBridge(search, editor);
                 installSearchBarHost(search, editor, adapter);
+                installSearchStateAnimation(search, mask, editor,
+                        hostActivity instanceof android.app.Activity
+                                ? (android.app.Activity) hostActivity : null);
                 editor.addTextChangedListener(new android.text.TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) { }
                 @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
@@ -1283,6 +1303,164 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": COUISearchBar state bridge unavailable, search box left static");
         }
     }
+
+    /**
+     * The expand animation stock runs on this exact page.
+     *
+     * COUISearchBar animates only itself -- the cancel button and the hint.
+     * Everything the page complained about missing is the *host's* half, and
+     * SmartKeyAppSearchFeature (the ColorOS app picker behind the smart-key
+     * setting, the closest thing in Settings to this page) spells it out in
+     * onStateChange(): fade the toolbar's children out, pull the content up
+     * into the row the toolbar was occupying, and raise the dim mask.
+     *
+     * Stock drives the lift by animating the content container's paddingTop
+     * from appBar.height down to toolbar.height, because there its search bar
+     * lives *inside* the app bar.  Ours sits in the content, so the equivalent
+     * lever is the app bar's own height: collapsing it to zero moves
+     * content_frame -- search bar first -- up by exactly the toolbar's height.
+     * Measured on device that is 137px, which lands the bar at y=84..221, the
+     * same rows stock's expanded bar occupies.  Translating the content instead
+     * would be clipped by list_container.
+     */
+    private static void installSearchStateAnimation(final android.view.View search,
+            final android.view.View mask, final android.widget.EditText editor,
+            final android.app.Activity activity) {
+        if (activity == null) return;
+        try {
+            android.content.res.Resources res = activity.getResources();
+            final android.view.View appBar = activity.findViewById(
+                    res.getIdentifier("abl", "id", "com.android.settings"));
+            android.view.View bar = activity.findViewById(
+                    res.getIdentifier("toolbar", "id", "com.android.settings"));
+            if (appBar == null || !(bar instanceof android.view.ViewGroup)) {
+                XposedBridge.log(TAG + ": app bar missing, search expand animation skipped");
+                return;
+            }
+            final android.view.ViewGroup toolbar = (android.view.ViewGroup) bar;
+            // Collapsing the app bar empties the toolbar's row but does not
+            // move the content: measured on device, content_frame stays pinned
+            // at y=221 because its offset is its own top inset, not the app
+            // bar's height.  That is exactly why stock animates the content
+            // container's paddingTop rather than the bar -- so drive the same
+            // inset here, and fall back to a translation if this build carries
+            // the offset some other way.
+            final android.view.View content = activity.findViewById(
+                    res.getIdentifier("content_frame", "id", "com.android.settings"));
+            final int[] naturalHeight = new int[] { 0 };
+            mask.setOnClickListener(new android.view.View.OnClickListener() {
+                @Override public void onClick(android.view.View v) {
+                    try {
+                        XposedHelpers.callMethod(search, "changeStateWithAnimation", 0);
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": search bar collapse from mask failed");
+                    }
+                }
+            });
+            Class<?> listener = search.getClass().getClassLoader()
+                    .loadClass("com.coui.appcompat.searchview.COUISearchBar$OnStateChangeListener");
+            Object proxy = java.lang.reflect.Proxy.newProxyInstance(
+                    search.getClass().getClassLoader(), new Class<?>[] { listener },
+                    new java.lang.reflect.InvocationHandler() {
+                        @Override public Object invoke(Object self, java.lang.reflect.Method method,
+                                Object[] args) {
+                            String name = method.getName();
+                            if ("onStateChange".equals(name) && args != null && args.length == 2) {
+                                boolean entering = ((Integer) args[1]) == 1 /* STATE_EDIT */;
+                                editor.setHint(entering ? "输入搜索内容" : "搜索应用");
+                                animateSearchState(appBar, toolbar, content, mask,
+                                        naturalHeight, entering);
+                                return null;
+                            }
+                            if ("equals".equals(name)) return self == (args == null ? null : args[0]);
+                            if ("hashCode".equals(name)) return System.identityHashCode(self);
+                            if ("toString".equals(name)) return "aclAppPickerSearchState";
+                            return null;
+                        }
+                    });
+            search.getClass().getMethod("addOnStateChangeListener", listener).invoke(search, proxy);
+        } catch (Throwable t) {
+            // Without this the bar still expands, it just does it alone.
+            XposedBridge.log(TAG + ": search expand animation unavailable");
+            XposedBridge.log(t);
+        }
+    }
+
+    /**
+     * 250ms / PathInterpolator(0.3, 0, 0.1, 1) for the lift and the toolbar
+     * fade, 150ms for the mask -- the durations and curves stock uses
+     * (TRANSLATE_UP_DURATION, FADE_DURATION, mCubicBezier*Interpolator).
+     */
+    private static void animateSearchState(final android.view.View appBar,
+            final android.view.ViewGroup toolbar, final android.view.View content,
+            final android.view.View mask, final int[] naturalHeight, final boolean entering) {
+        if (naturalHeight[0] <= 0) naturalHeight[0] = appBar.getHeight();
+        if (naturalHeight[0] <= 0) return;
+        final int full = naturalHeight[0];
+        int current = appBar.getLayoutParams().height;
+        if (current <= 0) current = appBar.getHeight();
+        android.animation.ValueAnimator lift =
+                android.animation.ValueAnimator.ofInt(current, entering ? 0 : full);
+        lift.setDuration(250);
+        lift.setInterpolator(entering
+                ? new android.view.animation.PathInterpolator(0.3f, 0f, 0.1f, 1f)
+                : new android.view.animation.PathInterpolator(0.3f, 0f, 0.9f, 1f));
+        lift.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() {
+            @Override public void onAnimationUpdate(android.animation.ValueAnimator animator) {
+                int height = (Integer) animator.getAnimatedValue();
+                android.view.ViewGroup.LayoutParams params = appBar.getLayoutParams();
+                params.height = height;
+                appBar.setLayoutParams(params);
+                // fadeToolbarChild(): the toolbar keeps its own bounds, only
+                // its children fade, so the back arrow and title vanish
+                // together with the row itself.
+                float alpha = (float) height / full;
+                for (int i = 0; i < toolbar.getChildCount(); i++) {
+                    toolbar.getChildAt(i).setAlpha(alpha);
+                }
+                liftContent(content, full - height);
+            }
+        });
+        lift.start();
+        mask.animate().cancel();
+        if (entering) {
+            mask.setVisibility(android.view.View.VISIBLE);
+            mask.animate().alpha(1f).setDuration(150).setListener(null).start();
+        } else {
+            mask.animate().alpha(0f).setDuration(150).setListener(
+                    new android.animation.AnimatorListenerAdapter() {
+                        @Override public void onAnimationEnd(android.animation.Animator a) {
+                            mask.setVisibility(android.view.View.GONE);
+                        }
+                    }).start();
+        }
+    }
+
+    /**
+     * Pull the page up by {@code amount} pixels.  Shrinking the top inset is
+     * what stock does and it relayouts, so the list still reaches the bottom
+     * of the window; translation is only the fallback for a build that carries
+     * the offset somewhere this cannot reach.
+     */
+    private static void liftContent(android.view.View content, int amount) {
+        if (content == null) return;
+        android.view.ViewGroup.LayoutParams params = content.getLayoutParams();
+        if (params instanceof android.view.ViewGroup.MarginLayoutParams) {
+            android.view.ViewGroup.MarginLayoutParams margins =
+                    (android.view.ViewGroup.MarginLayoutParams) params;
+            if (CONTENT_NATURAL_INSET[0] < 0) CONTENT_NATURAL_INSET[0] = margins.topMargin;
+            if (CONTENT_NATURAL_INSET[0] > 0) {
+                margins.topMargin = Math.max(0, CONTENT_NATURAL_INSET[0] - amount);
+                content.setLayoutParams(margins);
+                return;
+            }
+        }
+        if (CONTENT_NATURAL_INSET[0] < 0) CONTENT_NATURAL_INSET[0] = 0;
+        content.setTranslationY(-amount);
+    }
+
+    /** -1 until the page's natural top inset has been read once. */
+    private static final int[] CONTENT_NATURAL_INSET = new int[] { -1 };
 
     private static android.widget.EditText findEditText(android.view.View view) {
         if (view instanceof android.widget.EditText) return (android.widget.EditText) view;
