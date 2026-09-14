@@ -1,0 +1,10 @@
+# oplus_kgsl_state_bridge 在内核工作队列里用 filp_open/kernel_write 写
+# /sys/class/kgsl/kgsl/proc/<tgid>/state，主体域是 kernel。原策略没有这条放行，
+# 实测 59 次写入全部返回 -13 (-EACCES)，桥完全失效；补上之后 failed 归零。
+#
+# 只授予写那一个 sysfs 节点所需的最小权限。节点标签 vendor_sysfs_kgsl_proc，
+# 路径上还要能穿过 /sys (sysfs) 与 /sys/class/kgsl (vendor_sysfs_kgsl)。
+allow kernel vendor_sysfs_kgsl_proc file { open write getattr }
+allow kernel vendor_sysfs_kgsl_proc dir search
+allow kernel vendor_sysfs_kgsl dir search
+allow kernel sysfs dir search
