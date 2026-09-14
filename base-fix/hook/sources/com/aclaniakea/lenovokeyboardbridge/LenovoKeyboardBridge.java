@@ -1123,17 +1123,31 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             cardParams.setMargins(dp(context, 16), dp(context, 8), dp(context, 16), dp(context, 16));
             page.addView(listCard, cardParams);
             container.addView(page, new android.view.ViewGroup.LayoutParams(-1, -1));
-            android.widget.EditText editor = findEditText(search);
+            // 0x7f0d0337 is manage_applications_apps_search_view, whose root is
+            // com.coui.appcompat.searchview.COUISearchBar -- a stateful widget
+            // (STATE_NORMAL=0 / STATE_EDIT=1) that owns the expand animation,
+            // the hint animation and the cancel button.
+            //
+            // Reaching inside for the EditText and force-enabling it, as this
+            // did before, bypasses that state machine completely: the bar stays
+            // in STATE_NORMAL, so none of the animation runs.  Worse, a
+            // permanently focusable inner EditText swallows the touch that the
+            // bar needs in order to transition at all.
+            //
+            // Settings' own search (intelligence/search/SearchViewAnimate,
+            // itself a COUISearchBar subclass) shows the contract: it overrides
+            // changeStateWithAnimation() and toggles the editor's focusability
+            // from the target state *before* the animation runs --
+            //     setEditTextFocusable(state == STATE_EDIT)
+            // so the editor is non-focusable while collapsed.  Mirror that.
+            android.widget.EditText editor = searchEditor(search);
             if (editor != null) {
                 editor.setHint("搜索应用");
-                // The OEM resource normally receives these attributes from
-                // AppManagement's parent.  This is a standalone selector, so
-                // restore its input contract explicitly rather than leaving a
-                // visible-but-inert EditText in the preference container.
                 editor.setEnabled(true);
-                editor.setClickable(true);
-                editor.setFocusable(true);
-                editor.setFocusableInTouchMode(true);
+                // Collapsed: the bar, not the editor, must receive the touch.
+                setEditorFocusable(editor, false);
+                installSearchBarStateBridge(search, editor);
+                installSearchBarHost(search, editor, adapter);
                 editor.addTextChangedListener(new android.text.TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) { }
                 @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
@@ -1171,6 +1185,96 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
 
     private static int dp(Context context, int value) {
         return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /**
+     * COUISearchBar never transitions on its own: changeState* is reachable only
+     * from changeState(int,boolean), and openSoftInput() is public but never
+     * called internally.  The widget expects a host to drive both -- which is
+     * why simply placing it on the page left it inert.  Supply that host here.
+     */
+    private static void installSearchBarHost(final android.view.View search,
+            final android.widget.EditText editor, final AppPickerAdapter adapter) {
+        final int STATE_NORMAL = 0, STATE_EDIT = 1;
+        try {
+            XposedHelpers.callMethod(search, "setFunctionalButtonText", "取消");
+        } catch (Throwable ignored) {
+            // Older COUI builds label it themselves.
+        }
+        android.view.View.OnClickListener expand = new android.view.View.OnClickListener() {
+            @Override public void onClick(android.view.View v) {
+                try {
+                    XposedHelpers.callMethod(search, "changeStateWithAnimation", STATE_EDIT);
+                    XposedHelpers.callMethod(search, "openSoftInput", true);
+                } catch (Throwable t) {
+                    XposedBridge.log(TAG + ": search bar expand failed");
+                }
+            }
+        };
+        editor.setOnClickListener(expand);
+        search.setOnClickListener(expand);
+        try {
+            Object cancel = XposedHelpers.callMethod(search, "getFunctionalButton");
+            if (cancel instanceof android.view.View) {
+                ((android.view.View) cancel).setOnClickListener(new android.view.View.OnClickListener() {
+                    @Override public void onClick(android.view.View v) {
+                        try {
+                            editor.setText("");
+                            adapter.filter("");
+                            XposedHelpers.callMethod(search, "openSoftInput", false);
+                            XposedHelpers.callMethod(search, "changeStateWithAnimation", STATE_NORMAL);
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + ": search bar collapse failed");
+                        }
+                    }
+                });
+            }
+        } catch (Throwable ignored) {
+            // No cancel affordance on this build; back still leaves the page.
+        }
+    }
+
+    /** COUISearchBar exposes its editor directly; only fall back to a scan. */
+    private static android.widget.EditText searchEditor(android.view.View search) {
+        try {
+            Object found = XposedHelpers.callMethod(search, "getSearchEditText");
+            if (found instanceof android.widget.EditText) return (android.widget.EditText) found;
+        } catch (Throwable ignored) {
+            // Not a COUISearchBar on this build; the scan below still works.
+        }
+        return findEditText(search);
+    }
+
+    private static void setEditorFocusable(android.widget.EditText editor, boolean focusable) {
+        editor.setFocusable(focusable);
+        editor.setFocusableInTouchMode(focusable);
+    }
+
+    /**
+     * Reproduce SearchViewAnimate's override on an instance we cannot subclass:
+     * the view comes from XML, so hook changeStateWithAnimation() and apply the
+     * same focusability toggle before the animation runs.  Guarded to this one
+     * instance -- Settings has other COUISearchBars.
+     */
+    private static void installSearchBarStateBridge(final android.view.View search,
+            final android.widget.EditText editor) {
+        try {
+            Class<?> bar = search.getClass().getClassLoader()
+                    .loadClass("com.coui.appcompat.searchview.COUISearchBar");
+            if (!bar.isInstance(search)) return;
+            XposedHelpers.findAndHookMethod(bar, "changeStateWithAnimation", Integer.TYPE,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam hook) {
+                            if (hook.thisObject != search) return;
+                            setEditorFocusable(editor, ((Integer) hook.args[0]) == 1 /* STATE_EDIT */);
+                        }
+                    });
+        } catch (Throwable t) {
+            // Without the bridge the bar still works, it just will not animate;
+            // leave the editor reachable so the page stays usable.
+            setEditorFocusable(editor, true);
+            XposedBridge.log(TAG + ": COUISearchBar state bridge unavailable, search box left static");
+        }
     }
 
     private static android.widget.EditText findEditText(android.view.View view) {
