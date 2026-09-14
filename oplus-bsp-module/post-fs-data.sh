@@ -181,6 +181,7 @@ oplus_cpu_waker_identify
 oplus_bsp_zram_opt
 oplus_bsp_kswapd_opt
 oplus_mm_proactive_compact
+oplus_zsmalloc_cma_guard
 oplus_mm_hybridswap_zram
 oplus_mm_exit_mm_optimize
 ua_cpu_ioctl

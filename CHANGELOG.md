@@ -14,6 +14,10 @@
 真正的 `ZRAM_WB` fault-out；原厂阈值与事件驱动快照保持不变。
 同时将移植脚本写死的 `lz4` 改为对照机原厂实际使用的标准 `zstd`；等量约 5GB
 ZRAM 数据下物理占用减少约 500MB，锁屏窗口同步 direct reclaim 降低约 39%。
+启动期再将旧 performance HAL 的精确输出 `2300/2000/2300` 一次性桥接到对照机
+运行档 `2500/2200/2500`；有限等待后退出，不常驻，也不覆盖未知或自定义值。
+重新启用已完成 A/B 的 zsmalloc CMA 边界修复：仅从 `zs_malloc` 请求清除
+`__GFP_CMA`，避免 ZRAM 与显示争抢 CMA；并移除 KGSL 的 6 秒常驻 shell 轮询。
 此前已否决的参考机 watermark hook 不包含在发布版本。
 
 ## [4.0.3](docs/release-notes/4.0.3.md)

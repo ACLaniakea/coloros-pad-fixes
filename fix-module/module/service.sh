@@ -573,6 +573,43 @@ tune_avail_buffers() {
     log_msg "hybridswap: avail_buffers 写回原厂档 2200/1800/2200/$fst（原 [$before]），实际=[$(tr '\n' ' ' <"$node" 2>/dev/null)]"
 }
 
+# ColorOS 16 的 performance HAL 会在 nandswap 初始化之后再次选择运行时水位。
+# 本移植包里的旧 HAL 给 8GB 平板落成 2300/2000/2300，而 PKX110 对照机的新版
+# HAL 最终落成 2500/2200/2500。两边 nandswap 脚本的静态档都相同，所以这里仅
+# 桥接这个已经实机确认的旧 HAL 输出；未知值、更新后值和用户自定义值一律不碰。
+# 调用方只做有限次启动期轮询，本函数本身不启动后台任务。
+bridge_coloros_avail_buffers_once() {
+    _ab_node=/dev/memcg/memory.avail_buffers
+    [ -w "$_ab_node" ] || return 2
+
+    _ab_avail=$(awk '/^avail_buffers/{print $NF}' "$_ab_node" 2>/dev/null)
+    _ab_min=$(awk '/^min_avail_buffers/{print $NF}' "$_ab_node" 2>/dev/null)
+    _ab_high=$(awk '/^high_avail_buffers/{print $NF}' "$_ab_node" 2>/dev/null)
+    _ab_fst=$(awk '/^free_swap_threshold/{print $NF}' "$_ab_node" 2>/dev/null)
+
+    if [ "$_ab_avail" = 2500 ] && [ "$_ab_min" = 2200 ] &&
+       [ "$_ab_high" = 2500 ]; then
+        log_msg "hybridswap: avail_buffers 已是 ColorOS 对照档 2500/2200/2500/$_ab_fst"
+        return 0
+    fi
+
+    if [ "$_ab_avail" = 2300 ] && [ "$_ab_min" = 2000 ] &&
+       [ "$_ab_high" = 2300 ]; then
+        case "$_ab_fst" in ''|*[!0-9]*) return 2 ;; esac
+        _ab_before=$(tr '\n' ' ' <"$_ab_node" 2>/dev/null)
+        echo "2500 2200 2500 $_ab_fst" >"$_ab_node" 2>/dev/null
+        log_msg "hybridswap: 旧 performance HAL 档桥接为 ColorOS 对照档 2500/2200/2500/$_ab_fst（原 [$_ab_before]）"
+        return 0
+    fi
+
+    # 静态 nandswap 档说明 HAL 可能还没落值，调用方可以继续短暂等待。
+    if [ "$_ab_avail" = 2200 ] && [ "$_ab_min" = 1800 ] &&
+       [ "$_ab_high" = 2200 ]; then
+        return 1
+    fi
+    return 2
+}
+
 # 原厂 nandswap 服务在开机约 53 秒才跑完（ro.boottime.init.oplus.nandswap.sh），
 # 而本脚本开头只等到 sys.boot_completed（约 30~45 秒），先到先写会被它覆盖。
 # 不用盲睡，直接有界轮询我们依赖的那个状态本身：等 hybridswap_enable 里出现
@@ -626,20 +663,9 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
     # 原厂脚本写完 enable 之后还会继续写参数，留 1 秒交接窗口即可（原为 3 秒）。
     sleep 1
 
-    # ------------------------------------------------------------------------
-    # 2026-08-29：这里原本无条件调 tune_avail_buffers 抢写。
-    # 现在 post-fs-data 阶段已经把 /product/bin/init.oplus.nandswap.sh 本身
-    # patch 过并 bind 上去了（avail_buffers 保持原厂 2200/1800/2200/1536，且把它
-    # $zram2ufs_ratio 真正下发到 swapd_memcgs_param），所以正常路径下原厂脚本
-    # 出来的值**就已经是对的**，不需要我们再写一遍。
-    #
-    # 这里只做核对：值对就什么都不干，只记一行；值不对（说明 bind 没成、
-    # 或 ROM 更新后特征串没匹配上被跳过了）才回落到运行时写入。
-    # 一个坏掉的 patch 不该让参数悄悄退回原厂的 16G 档。
-    # ------------------------------------------------------------------------
-    # 判据是"不低于本机档位"，不是"等于"：perf HAL 在运行时把它抬高是原厂行为，
-    # 抬高的值要放行；只有明显偏低（说明 nandswap patch 没生效、退回了别的档）
-    # 才兜底写一次。
+    # 先保证静态 nandswap 档没有意外降级；随后给 performance HAL 最多 30 秒落
+    # 运行时值。只把已确认的旧档 2300/2000/2300 翻译成对照机档位，成功或遇到
+    # 未知值就立刻退出。这个等待发生在模块启动脚本内，不留下常驻用户态进程。
     _a_now=$(awk '/^avail_buffers/{print $NF}' /dev/memcg/memory.avail_buffers 2>/dev/null)
     case "$_a_now" in
         ''|*[!0-9]*) log_msg "hybridswap: avail_buffers 读不出来（[$_a_now]），不动它" ;;
@@ -653,22 +679,20 @@ if [ -e /sys/block/zram0/hybridswap_enable ]; then
             ;;
     esac
 
-    # ------------------------------------------------------------------------
-    # 这里曾经有一段后台任务：等 perf HAL 在开机 +55~80 秒把 avail_buffers 推成
-    # 2300/2000/2300 之后，再按脚本分档写回 2200/1800/2200。**已删除，2026-08-31。**
-    #
-    # 拿原厂 PKX110 对照才看清这是偏离：原厂 12G 机型的脚本分档同样是
-    # 2200/1800/2200，而实机跑的是 **2500/2200/2500** —— 也是 perf HAL 在运行时
-    # 抬上去的，**原厂让它抬**。我们却把 HAL 的运行时决策按回静态值。
-    #
-    # 而且方向还不利：这等于把内存缓冲垫调低。之前实测过缓冲垫直接影响解锁卡顿
-    # （2200/1800 相比 1500/1200，解锁瞬间的 pgsteal_direct 降 93%），HAL 抬到
-    # 2300/2000 只会更好。
-    #
-    # 所以这一处撤销同时满足"更像原厂"和"数据上更优"，没有取舍。
-    # 上面那段核对逻辑也一并放宽：只在值明显不对（说明 nandswap patch 没生效、
-    # 退回了别的档）时才兜底写一次，HAL 抬高的值一律放行。
-    # ------------------------------------------------------------------------
+    _ab_waited=0
+    while [ "$_ab_waited" -lt 30 ]; do
+        bridge_coloros_avail_buffers_once
+        _ab_result=$?
+        [ "$_ab_result" -eq 0 ] && break
+        [ "$_ab_result" -eq 2 ] && break
+        sleep 1
+        _ab_waited=$((_ab_waited + 1))
+    done
+    if [ "$_ab_result" -eq 1 ]; then
+        log_msg "hybridswap: 等旧 performance HAL 档超时 ${_ab_waited}s，保留当前值 [$(tr '\n' ' ' </dev/memcg/memory.avail_buffers 2>/dev/null)]"
+    elif [ "$_ab_result" -eq 2 ]; then
+        log_msg "hybridswap: avail_buffers 不是已知旧档，不覆盖 [$(tr '\n' ' ' </dev/memcg/memory.avail_buffers 2>/dev/null)]"
+    fi
 else
     log_msg "hybridswap: 节点不存在，跳过 zram2ufs 调整"
 fi
@@ -1219,22 +1243,22 @@ fi
 # 唤醒已由用户关闭；不要再启动其事件订阅守护，避免无意义的 logcat 连接和 taskset 调用。
 log_msg "voice power guard skipped: XiaoBu wakeup disabled"
 
-# ============================================================================
-# KGSL 显存前后台状态同步
-#
-# 移植包里没有任何组件写 /sys/class/kgsl/kgsl/proc/<pid>/state，导致高通自带的
-# GPU 显存回收从未运行过一次（所有进程恒为 foreground、gpumem_reclaimed 全 0）。
-# 详细定性与"为什么这里必须破例常驻"写在 bin/kgsl-state-sync.sh 的文件头。
-# ============================================================================
+# 不再启动 6 秒轮询的 KGSL 用户态桥。它能回收极少数 cached 应用的显存，但必须
+# 常驻并在前后台切换时双向维护状态；用户明确要求不使用常驻用户态。清理由旧版
+# 留下的进程后，把它曾标成 background 的项一次性还原，避免前台应用继续被回收。
 if [ -r "$MODDIR/kgsl-state-sync.pid" ]; then
     kill "$(cat "$MODDIR/kgsl-state-sync.pid" 2>/dev/null)" 2>/dev/null
     rm -f "$MODDIR/kgsl-state-sync.pid"
 fi
-if [ -x "$MODDIR/bin/kgsl-state-sync.sh" ] && [ -d /sys/class/kgsl/kgsl/proc ]; then
-    "$MODDIR/bin/kgsl-state-sync.sh" "$MODDIR" &
-    echo $! >"$MODDIR/kgsl-state-sync.pid"
-    log_msg "kgsl state sync started (page_alloc=$(($(cat /sys/class/kgsl/kgsl/page_alloc 2>/dev/null || echo 0) / 1048576))MB)"
-fi
+_kgsl_restored=0
+for _kgsl_state in /sys/class/kgsl/kgsl/proc/*/state; do
+    [ -r "$_kgsl_state" ] && [ -w "$_kgsl_state" ] || continue
+    _kgsl_current=$(cat "$_kgsl_state" 2>/dev/null)
+    [ "$_kgsl_current" = background ] || continue
+    printf '%s' foreground >"$_kgsl_state" 2>/dev/null || continue
+    _kgsl_restored=$((_kgsl_restored + 1))
+done
+log_msg "kgsl state sync disabled; restored_foreground=$_kgsl_restored"
 
 # ============================================================================
 # 这里曾经有 protect_ui_memcg()：把桌面 / system_server / SurfaceFlinger 所在
