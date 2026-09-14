@@ -15,7 +15,9 @@ oom_score_adj（桌面 adj 恒为 100，根本没有跳变可挂）。熄屏实�
 亮屏 2 秒内全部还原。配套 sepolicy.rule——缺它每次写入都是 -EACCES。
 同时修掉 4.0.4 里 `/dev/mqueue` 的能力检测：toybox grep 不认 `\b`，匹配恒空，
 挂载从未执行过。BSP 打包脚本的写死白名单会静默漏掉新增文件，已改为全收。
-换上 r3 配套内核，须与阻塞版 vendor_boot 成对刷入。
+配套内核为 r2，须与阻塞版 vendor_boot 成对刷入（开发中曾用 r3，但 r3 相对 r2
+的配置差异只有一行 LOCALVERSION，唯一实质改动是为 KGSL 桥加的两个符号导出；
+桥移除后已无消费者，故退回 r2）。
 同时修好 HybridSwap 那条从未闭合的熄屏闸门：面板 kprobe 挂错了事件源，
 本机只收到 FPS 变化，于是 display_off 永远为 0（待机主动回收从未停过），
 bridge_active 又只看"注册成功"就把 HAL 那路 swapd_pause 一并丢弃——对照机

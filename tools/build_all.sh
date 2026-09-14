@@ -76,7 +76,7 @@ echo "== SHA256SUMS =="
 # 同时带上配套内核件，它们没有版本后缀，glob 匹配不到。
 ( cd releases \
   && sha256sum $(ls *-v4.1.0.* | grep -v '^SHA256SUMS-') > SHA256SUMS-v4.1.0.txt \
-  && ( cd kernel && sha256sum boot-ACLaniakea-SM8650Q-droidspaces-r3.img \
+  && ( cd kernel && sha256sum boot-ACLaniakea-SM8650Q-droidspaces-r2.img \
                               vendor_boot-hyperSched-stub.img \
                               vendor_boot-ColorOS16-original-TB710FU.img ) \
      >> SHA256SUMS-v4.1.0.txt )

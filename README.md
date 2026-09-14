@@ -14,7 +14,7 @@
 项目以配套内核、KernelSU 模块和 LSPosed Hook 补齐移植系统的硬件适配、框架兼容与外设桥接。
 
 > [!WARNING]
-> **4.1.0 必须成对刷入 Release 内的 `boot-ACLaniakea-SM8650Q-droidspaces-r3.img` 与 `vendor_boot-hyperSched-stub.img`。** 两者均已在 TB710FU 实机验证。`vendor_boot-ColorOS16-original-TB710FU.img` 仅用于回退原始 ColorOS 引导链，不能与本项目的 boot 混刷。
+> **4.1.0 必须成对刷入 Release 内的 `boot-ACLaniakea-SM8650Q-droidspaces-r2.img` 与 `vendor_boot-hyperSched-stub.img`。** 两者均已在 TB710FU 实机验证。`vendor_boot-ColorOS16-original-TB710FU.img` 仅用于回退原始 ColorOS 引导链，不能与本项目的 boot 混刷。
 >
 > 不希望刷分区时，请使用最后一个纯模块版本 [v2.0.15](../../releases/tag/v2.0.15)。它不包含 3.0.0 及之后的内核级、调度与内存扩展修复，也不再维护。
 
@@ -30,7 +30,7 @@
 
 | 文件 | 用途 | 安装要求 |
 |---|---|---|
-| `boot-ACLaniakea-SM8650Q-droidspaces-r3.img` | 已验证的 SM8650Q r3 配套内核：DroidSpaces 容器特性、SysV IPC 走 KABI 预留槽、Gloom/pcppages hook | **必刷，先刷** |
+| `boot-ACLaniakea-SM8650Q-droidspaces-r2.img` | 已验证的 SM8650Q r2 配套内核：DroidSpaces 容器特性、SysV IPC 走 KABI 预留槽、Gloom/pcppages hook | **必刷，先刷** |
 | `vendor_boot-hyperSched-stub.img` | 与配套 boot 成套的阻塞版 vendor_boot | **必刷，与 boot 同时刷入** |
 | `vendor_boot-ColorOS16-original-TB710FU.img` | 原始 ColorOS vendor_boot 回退镜像 | **仅回退使用，不参与正常安装** |
 | `FixModule-*.zip` | 主修复模块 | **必装** |
@@ -73,7 +73,7 @@ adb shell su -c 'dd if=/dev/block/by-name/vendor_boot_a of=/sdcard/vendor_boot_a
 
 ```bash
 adb reboot bootloader
-fastboot flash boot boot-ACLaniakea-SM8650Q-droidspaces-r3.img
+fastboot flash boot boot-ACLaniakea-SM8650Q-droidspaces-r2.img
 fastboot flash vendor_boot vendor_boot-hyperSched-stub.img
 fastboot reboot
 ```
