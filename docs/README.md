@@ -9,6 +9,7 @@
 
 | 版本 | 主题 |
 | --- | --- |
+| [4.1.0](release-notes/4.1.0.md) | KGSL 显存回收链、mqueue 挂载、r3 配套内核 |
 | [4.0.4](release-notes/4.0.4.md) | AOT、内存链路与 HybridSwap 内核桥接 |
 | [4.0.3](release-notes/4.0.3.md) | 调度链三项与模块清单清理 |
 | [4.0.2](release-notes/4.0.2.md) | 相机身份层去写死 UID，新增 8GB 内存档 |
@@ -24,6 +25,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [r3 内核与 KGSL 桥验证](investigations/r3-内核与KGSL桥验证.md) | KGSL reclaim 链条逐环 kprobe 定位；kCFI 与 SELinux 两条实现路径的真实结论 |
 | [4.0.4 内存与 AOT 排查](investigations/4.0.4-内存与AOT排查.md) | AOT、osvelte、面板状态、HAL 暂停语义、slowpath 唤醒；以及已否决的跨内核 hook |
 | [4.0.3 调度链与 SELinux 排查](investigations/4.0.3-调度链与SELinux排查.md) | sched_assist 负载均衡未触发、UX→WALT 翻译、帧组提频、per-CPU 预留 |
 | [AON 相机 DSP 修复过程](investigations/AON-相机-DSP修复过程.md) | 常亮感知相机与 DSP 链路 |

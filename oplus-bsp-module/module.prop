@@ -1,6 +1,6 @@
 id=aclaniakea_oplus_bsp
 name=联想平板 Pro GT - OPlus BSP 内核模块
-version=4.0.4
-versionCode=400004
+version=4.1.0
+versionCode=410000
 author=ACLaniakea
 description=加载一加 BSP 的调度、压缩内存与后台冻结内核模块。原厂模块优先，自编的几个只补移植时漏掉或接不上的链路；开机后再把帧组对 SurfaceFlinger 的提频加成补回来。

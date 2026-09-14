@@ -185,12 +185,12 @@ static void kgsl_state_workfn(struct work_struct *work)
 		ret = write_kgsl_state(tgid, background);
 		if (!ret) {
 			if (atomic64_inc_return(&writes_ok) == 1)
-				pr_info("first state write succeeded\n");
+				pr_info("首次 state 写入成功\n");
 		} else if (ret == -ENOENT) {
 			atomic64_inc(&nodes_missing);
 		} else {
 			if (atomic64_inc_return(&writes_failed) == 1)
-				pr_warn("first write failed: %d (缺 SELinux 放行时是 -13)\n",
+				pr_warn("首次写入失败: %d（缺 SELinux 放行时是 -13）\n",
 					ret);
 		}
 	}
@@ -246,6 +246,9 @@ static void oom_score_adj_update_probe(void *unused, struct task_struct *task)
 			}
 		}
 	}
+	/* 槽位一旦分配就一直留着 tgid，进程退出后 pid 被复用时槽里是旧状态，
+	 * 可能压掉新进程的第一次更新。影响有限：熄屏/亮屏各有一次全量对齐会
+	 * 把所有进程重新按当前 adj 写一遍。 */
 	if (slot && (slot->tgid != tgid || slot->background != background ||
 		     slot->pending)) {
 		slot->tgid = tgid;

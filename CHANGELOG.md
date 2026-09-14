@@ -4,6 +4,21 @@
 
 本项目的版本号在所有模块与 APK 间保持统一，一个 Release 内的产物必须配套使用。
 
+## [4.1.0](docs/release-notes/4.1.0.md)
+
+把移植包里彻底断掉的 KGSL 显存回收链接了回来。平板的 Unevictable 与 KGSL
+page_alloc 是 1:1，对照机只有 10%——根因是没人写 `proc/<tgid>/state`，进程恒在
+PINNED 态，shrinker 的 count_objects 恒返回 0（压力下实测调用 1328 次、次次为 0），
+scan_objects 一次都没被调用过。新增 `oplus_kgsl_state_bridge` 补上这个写入者，
+只用 filp_open/kernel_write，不碰 msm_kgsl 私有函数；触发点是熄屏/亮屏而非
+oom_score_adj（桌面 adj 恒为 100，根本没有跳变可挂）。熄屏实测释放约 450~510MB，
+亮屏 2 秒内全部还原。配套 sepolicy.rule——缺它每次写入都是 -EACCES。
+同时修掉 4.0.4 里 `/dev/mqueue` 的能力检测：toybox grep 不认 `\b`，匹配恒空，
+挂载从未执行过。BSP 打包脚本的写死白名单会静默漏掉新增文件，已改为全收。
+换上 r3 配套内核，须与阻塞版 vendor_boot 成对刷入。
+并更正 4.0.4 的一条结论：那个面板 kprobe 在本机只送 FPS 变化，从不送
+blank/unblank，HybridSwap 的熄屏闸门实际仍是断的。
+
 ## [4.0.4](docs/release-notes/4.0.4.md)
 
 恢复被移植弄断的 AOT、osvelte 与 HybridSwap 链路，并将 OPlus performance HAL
