@@ -16,8 +16,14 @@ oom_score_adj（桌面 adj 恒为 100，根本没有跳变可挂）。熄屏实�
 同时修掉 4.0.4 里 `/dev/mqueue` 的能力检测：toybox grep 不认 `\b`，匹配恒空，
 挂载从未执行过。BSP 打包脚本的写死白名单会静默漏掉新增文件，已改为全收。
 换上 r3 配套内核，须与阻塞版 vendor_boot 成对刷入。
-并更正 4.0.4 的一条结论：那个面板 kprobe 在本机只送 FPS 变化，从不送
-blank/unblank，HybridSwap 的熄屏闸门实际仍是断的。
+同时修好 HybridSwap 那条从未闭合的熄屏闸门：面板 kprobe 挂错了事件源，
+本机只收到 FPS 变化，于是 display_off 永远为 0（待机主动回收从未停过），
+bridge_active 又只看"注册成功"就把 HAL 那路 swapd_pause 一并丢弃——对照机
+swapd_manual_pause 2.27 亿次，平板恒为 0。改挂 dsi_panel_power_off/on 并要求
+真的观测到过转换才接管。
+另外 KGSL 桥曾把待机内存换成解锁卡顿：回收过桌面的解锁 95 分位帧时是 101/121ms，
+没回收的只有 24ms。现放过 adj<0 的系统渲染进程、让 adj tracepoint 遵守熄屏状态、
+并把回收延迟对齐原厂 OSense 的 30 分钟规则；修后解锁 95 分位 8/5/5ms、掉帧 0%。
 
 ## [4.0.4](docs/release-notes/4.0.4.md)
 
