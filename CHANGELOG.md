@@ -6,26 +6,19 @@
 
 ## [4.1.0](docs/release-notes/4.1.0.md)
 
-把移植包里彻底断掉的 KGSL 显存回收链接了回来。平板的 Unevictable 与 KGSL
-page_alloc 是 1:1，对照机只有 10%——根因是没人写 `proc/<tgid>/state`，进程恒在
-PINNED 态，shrinker 的 count_objects 恒返回 0（压力下实测调用 1328 次、次次为 0），
-scan_objects 一次都没被调用过。新增 `oplus_kgsl_state_bridge` 补上这个写入者，
-只用 filp_open/kernel_write，不碰 msm_kgsl 私有函数；触发点是熄屏/亮屏而非
-oom_score_adj（桌面 adj 恒为 100，根本没有跳变可挂）。熄屏实测释放约 450~510MB，
-亮屏 2 秒内全部还原。配套 sepolicy.rule——缺它每次写入都是 -EACCES。
-同时修掉 4.0.4 里 `/dev/mqueue` 的能力检测：toybox grep 不认 `\b`，匹配恒空，
-挂载从未执行过。BSP 打包脚本的写死白名单会静默漏掉新增文件，已改为全收。
-配套内核为 r2，须与阻塞版 vendor_boot 成对刷入（开发中曾用 r3，但 r3 相对 r2
-的配置差异只有一行 LOCALVERSION，唯一实质改动是为 KGSL 桥加的两个符号导出；
-桥移除后已无消费者，故退回 r2）。
-同时修好 HybridSwap 那条从未闭合的熄屏闸门：面板 kprobe 挂错了事件源，
-本机只收到 FPS 变化，于是 display_off 永远为 0（待机主动回收从未停过），
-bridge_active 又只看"注册成功"就把 HAL 那路 swapd_pause 一并丢弃——对照机
-swapd_manual_pause 2.27 亿次，平板恒为 0。改挂 dsi_panel_power_off/on 并要求
-真的观测到过转换才接管。
-另外 KGSL 桥曾把待机内存换成解锁卡顿：回收过桌面的解锁 95 分位帧时是 101/121ms，
-没回收的只有 24ms。现放过 adj<0 的系统渲染进程、让 adj tracepoint 遵守熄屏状态、
-并把回收延迟对齐原厂 OSense 的 30 分钟规则；修后解锁 95 分位 8/5/5ms、掉帧 0%。
+修好 HybridSwap 那条从未闭合过的熄屏闸门：面板 kprobe 挂错了事件源，本机只收到
+FPS 变化（notif_type=4，负载 144/120），于是 display_off 永远为 0——待机时该停的
+主动回收从未停过；而 bridge_active 又只看"注册成功"就把 HAL 那路 swapd_pause
+一并丢弃，对照机 swapd_manual_pause 2.27 亿次、平板恒为 0。改挂
+dsi_panel_power_off/on 并要求真的观测到过转换才接管。
+补上 /dev/mqueue 挂载——4.0.4 的能力检测用了 toybox 不认的 \b，匹配恒空，挂载
+从未执行过。修正 BSP 打包脚本的写死白名单，它会静默漏掉新增文件。
+配套内核为 r2，须与阻塞版 vendor_boot 成对刷入。
+本版还调查过 KGSL 显存回收链并做出内核桥（熄屏实测释放 450~510MB），但最终移除：
+扫过 ROM 里所有引用该接口的组件，全是只读统计，没有任何一个写 state，参照机同样
+如此；而且收益在待机时无人消费，却要在下一次解锁时偿还（桌面 95 分位帧时
+24ms -> 101~121ms），加之实测内核击杀记录为 0，连防 OOM 的理由也不成立。
+同时更正 4.0.4 的一条结论：那个面板 kprobe 从来没送过 blank/unblank。
 
 ## [4.0.4](docs/release-notes/4.0.4.md)
 

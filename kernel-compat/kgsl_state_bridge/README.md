@@ -1,3 +1,16 @@
+> [!IMPORTANT]
+> **本模块已不随发布包出货，仅作为已排除路径的记录保留。**
+>
+> 移除理由：逐个扫过 ROM 里所有引用 `kgsl/kgsl/proc` 的组件
+> （`libAlgoProcess.so`、`memtrack-service`、`autochmod.sh`、若干 sepolicy），
+> **全是只读统计，没有任何一个写 `state`**；参照机 PKX110 命中同一批组件、
+> 同样只读，且其 `proc/<pid>/` 下连 `state` 节点都没有。原厂不驱动这套机制。
+>
+> 另有实测：桥带来的待机回收要在下一次解锁时偿还——桌面 95 分位帧时从 24ms
+> 涨到 101~121ms；而平板内核击杀记录为 0、PSI `some avg10=0.30`，并不缺内存。
+>
+> 下面的技术内容仍然有效，作为这条链路的分析记录。
+
 # oplus_kgsl_state_bridge
 
 补回移植包里缺失的 KGSL 显存回收触发者。
