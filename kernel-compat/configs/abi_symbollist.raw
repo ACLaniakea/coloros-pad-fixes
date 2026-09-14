@@ -3621,6 +3621,7 @@ filemap_map_pages
 filemap_release_folio
 filemap_write_and_wait_range
 filp_close
+filp_open
 filp_open_block
 find_extend_vma
 find_get_pages_range_tag
@@ -4578,6 +4579,7 @@ kernel_restart
 kernel_sendmsg
 kernel_sigaction
 kernel_sock_shutdown
+kernel_write
 kernfs_find_and_get_ns
 kernfs_notify
 kernfs_path_from_node
