@@ -156,7 +156,6 @@ done
 # 消费端（init 服务定义、autochmod.sh 的函数）平板上本来就齐，缺的只是内核这一端，
 # 所以在补上之前这条链整条不通。不用任何 vendor hook，无 per-CPU 变量，不占预留。
 MODULES="
-oplus_kgsl_state_bridge
 oplus_cpu_sched_sched_assist
 oplus_resctrl
 oplus_mm_gloom

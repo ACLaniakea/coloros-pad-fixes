@@ -17,9 +17,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 # 必须存在，缺了就是打包出错；除此之外模块根目录下的普通文件一律随包出货。
-# 早先这里是一份写死的白名单，结果新增的 sepolicy.rule 被静默漏掉——那条规则
-# 是 oplus_kgsl_state_bridge 写 sysfs 的前提，少了它桥装上去每次都是 -EACCES。
-REQUIRED = ("module.prop", "post-fs-data.sh", "service.sh", "sepolicy.rule")
+# 早先这里是一份写死的白名单，结果新增的 sepolicy.rule 被静默漏掉。现在改成
+# 顶层普通文件全收，新增文件不会再被默默丢掉。
+# （sepolicy.rule 本身已随 KGSL 桥一起删除，见下方 EXCLUDED_KOS 的说明。）
+REQUIRED = ("module.prop", "post-fs-data.sh", "service.sh")
 # oplus_hybridswap_panel_bridge 已彻底作废并从仓库删除：它和 HybridSwap 早期内建的
 # kprobe 挂的是同一个 panel_event_notification_trigger，而实测该函数在本机只送
 # FPS 变化（notif_type=4，负载 144/120），从不送 blank/unblank。真正可用的边是
