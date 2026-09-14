@@ -72,7 +72,14 @@ cp zui-camera-compat-hook/releases/ZUI-Camera-Compat-v4.1.0.apk releases/
 cp zui-camera-module/releases/LenovoPadProGT-ZUI-Camera-Port-v4.1.0.zip releases/
 
 echo "== SHA256SUMS =="
-( cd releases && sha256sum *-v4.1.0.* > SHA256SUMS-v4.1.0.txt )
+# 校验文件自身会被 *-v4.1.0.* 匹配到，列进去就永远 sha256sum -c 失败；排除掉。
+# 同时带上配套内核件，它们没有版本后缀，glob 匹配不到。
+( cd releases \
+  && sha256sum $(ls *-v4.1.0.* | grep -v '^SHA256SUMS-') > SHA256SUMS-v4.1.0.txt \
+  && ( cd kernel && sha256sum boot-ACLaniakea-SM8650Q-droidspaces-r3.img \
+                              vendor_boot-hyperSched-stub.img \
+                              vendor_boot-ColorOS16-original-TB710FU.img ) \
+     >> SHA256SUMS-v4.1.0.txt )
 
 echo "== releases =="
 ls -la releases/
