@@ -1188,10 +1188,19 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
     }
 
     /**
-     * COUISearchBar never transitions on its own: changeState* is reachable only
-     * from changeState(int,boolean), and openSoftInput() is public but never
-     * called internally.  The widget expects a host to drive both -- which is
-     * why simply placing it on the page left it inert.  Supply that host here.
+     * COUISearchBar never transitions on its own -- changeState* is reachable
+     * only from changeState(int,boolean) -- so the page has to drive it.  That
+     * is the whole of the host contract: stock (ManageAppFeature and
+     * OplusViewDragSearchFeature) calls changeStateWithAnimation() and nothing
+     * else on this path.
+     *
+     * In particular do NOT call openSoftInput() here.  AnimatorHelper's
+     * startAnimateToEditState()/startAnimateToNormalState() already call it at
+     * the right point of the animation, gated on mInputMethodAnimationEnabled
+     * (default true) and mShowImeAnimDuration (default 0) -- the exact defaults
+     * stock relies on, since neither setInputMethodAnimationEnabled() nor
+     * controlImeShowAnim() appears anywhere in Settings.  Raising the keyboard
+     * from here fires it before the animation and leaves the two out of step.
      */
     private static void installSearchBarHost(final android.view.View search,
             final android.widget.EditText editor, final AppPickerAdapter adapter) {
@@ -1205,7 +1214,6 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
             @Override public void onClick(android.view.View v) {
                 try {
                     XposedHelpers.callMethod(search, "changeStateWithAnimation", STATE_EDIT);
-                    XposedHelpers.callMethod(search, "openSoftInput", true);
                 } catch (Throwable t) {
                     XposedBridge.log(TAG + ": search bar expand failed");
                 }
@@ -1221,7 +1229,6 @@ public final class LenovoKeyboardBridge implements IXposedHookLoadPackage {
                         try {
                             editor.setText("");
                             adapter.filter("");
-                            XposedHelpers.callMethod(search, "openSoftInput", false);
                             XposedHelpers.callMethod(search, "changeStateWithAnimation", STATE_NORMAL);
                         } catch (Throwable t) {
                             XposedBridge.log(TAG + ": search bar collapse failed");
