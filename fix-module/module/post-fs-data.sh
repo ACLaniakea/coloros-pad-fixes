@@ -931,7 +931,8 @@ bind_system_server_oat
 # 失败不影响其余流程：容器之外没有东西依赖它。
 # ============================================================================
 mount_posix_mqueue() {
-    grep -q '\bmqueue\b' /proc/filesystems 2>/dev/null || {
+    # toybox 的 grep 不认 \b，用 -w 做整词匹配；写错会静默判成"内核不支持"。
+    grep -qw mqueue /proc/filesystems 2>/dev/null || {
         log_msg "mqueue: 内核不支持，跳过"
         return 0
     }
