@@ -70,6 +70,31 @@ static bool screen_off_sweep = true;
 module_param(screen_off_sweep, bool, 0644);
 MODULE_PARM_DESC(screen_off_sweep, "on screen blank mark every process background, restore on unblank");
 
+/*
+ * 熄屏后要等多久才真正回收。
+ *
+ * 为什么必须有这个延迟：桌面是唯一的大户（175~1187MB），但它也是解锁时第一个
+ * 重画的东西。实测同一台机器上，熄屏收了它的那两轮解锁后桌面 95 分位帧时是
+ * 101ms 和 121ms，没收的那轮只有 24ms —— 回收把最坏帧时放大了 4~5 倍。
+ * 对照机手机在解锁时桌面一帧都不重画，Unevictable 也只有 69MB，根本没有这
+ * 笔交易。
+ *
+ * 所以按时间分档：短暂锁屏（随手熄屏、看一眼消息）完全不回收，解锁保持顺滑；
+ * 只有真的长待机才值得用一次较慢的解锁换回几百 MB。
+ *
+ * 默认取 1800 秒，不是拍的：原厂 OSense 的内存决策器里本来就有同一性质的规则
+ *
+ *   <scene id="1000" name="SCENE_SCREEN_STATUS">
+ *     <rule index="1" tag="delay" skip="delay" offset="1800000">
+ *       <policy name="compress" type="screenoff" />
+ *
+ * offset 是毫秒，正好 30 分钟。原厂对"熄屏多久才值得动内存"已有定论，这里对齐
+ * 它，而不是另立一个数。
+ */
+static unsigned int screen_off_delay_sec = 1800;
+module_param(screen_off_delay_sec, uint, 0644);
+MODULE_PARM_DESC(screen_off_delay_sec, "seconds the screen must stay off before reclaiming");
+
 static bool bridge_enabled = true;
 module_param(bridge_enabled, bool, 0644);
 MODULE_PARM_DESC(bridge_enabled, "master switch; turning it off stops new writes");
@@ -81,6 +106,9 @@ struct kgsl_state_slot {
 };
 
 static struct tracepoint *oom_adj_tracepoint;
+/* 屏幕是否处于熄灭态。熄屏扫描与 adj tracepoint 两条路径共用，
+ * 否则 tracepoint 会推翻扫描刚做的决定。 */
+static bool pending_screen_off;
 static struct kgsl_state_slot state_slots[STATE_SLOT_COUNT];
 static DEFINE_SPINLOCK(state_lock);
 
@@ -202,7 +230,7 @@ static void oom_score_adj_update_probe(void *unused, struct task_struct *task)
 	unsigned long flags;
 	pid_t tgid;
 	bool background;
-	int i;
+	int i, adj;
 
 	if (!READ_ONCE(bridge_enabled))
 		return;
@@ -211,8 +239,13 @@ static void oom_score_adj_update_probe(void *unused, struct task_struct *task)
 	tgid = task_tgid_nr(task);
 	if (tgid <= 0)
 		return;
-	background = READ_ONCE(task->signal->oom_score_adj) >=
-		     READ_ONCE(adj_threshold);
+	/* 熄屏期间也要按熄屏规则判定。否则扫描刚把桌面标成 background，
+	 * 它的 adj 一变（回桌面时 0 -> 100 就会变）就触发本回调，而这里只看
+	 * adj>=threshold，算出 false 又把它写回 foreground —— 实测熄屏 18 秒
+	 * 后桌面仍是 foreground、185MB 一点没收，就是这么丢的。 */
+	adj = READ_ONCE(task->signal->oom_score_adj);
+	background = (READ_ONCE(pending_screen_off) && adj >= 0) ||
+		     adj >= READ_ONCE(adj_threshold);
 	atomic64_inc(&events_seen);
 
 	/* tracepoint 上下文里不做任何分配。
@@ -283,6 +316,7 @@ static void kgsl_state_sweep(bool force_background)
 	pid_t *tgids;
 	bool *bgs;
 	int n = 0, i, cap = 0;
+	int adj;
 
 	/* nr_threads 没有导出给模块用，先数一遍再分配 */
 	rcu_read_lock();
@@ -302,10 +336,19 @@ static void kgsl_state_sweep(bool force_background)
 			continue;
 		if (n >= cap)
 			break;
+		adj = READ_ONCE(p->signal->oom_score_adj);
+
+		/* 熄屏全量回收时也要放过 adj<0 的常驻系统进程：
+		 * SurfaceFlinger(-1000)、system_server(-900)、SystemUI(-800)
+		 * 正是画锁屏与解锁动画的那几个。把它们的显存在熄屏时收掉，
+		 * 解锁瞬间就得批量重新钉住，实测解锁窗口的掉帧原因高度集中在
+		 * "Number Slow issue draw commands"（15~20 次，占掉帧主因），
+		 * 正是下发绘制命令时卡在 GPU 侧的形态。
+		 * 大头本来也不在它们身上——桌面单进程就有 470~1187MB，adj 是
+		 * 0 或 100，仍然照收。 */
 		tgids[n] = task_tgid_nr(p);
-		bgs[n] = force_background ||
-			 READ_ONCE(p->signal->oom_score_adj) >=
-				 READ_ONCE(adj_threshold);
+		bgs[n] = (force_background && adj >= 0) ||
+			 adj >= READ_ONCE(adj_threshold);
 		n++;
 	}
 	rcu_read_unlock();
@@ -356,10 +399,8 @@ out:
  */
 static struct kprobe panel_off_kp, panel_on_kp;
 static bool panel_kp_registered;
-static bool pending_screen_off;
-
 static void kgsl_sweep_workfn(struct work_struct *work);
-static DECLARE_WORK(kgsl_sweep_work, kgsl_sweep_workfn);
+static DECLARE_DELAYED_WORK(kgsl_sweep_work, kgsl_sweep_workfn);
 
 static void kgsl_sweep_workfn(struct work_struct *work)
 {
@@ -371,7 +412,9 @@ static int panel_off_handler(struct kprobe *kp, struct pt_regs *regs)
 	if (!READ_ONCE(screen_off_sweep) || !READ_ONCE(bridge_enabled))
 		return 0;
 	WRITE_ONCE(pending_screen_off, true);
-	schedule_work(&kgsl_sweep_work);
+	/* 延迟回收；这段时间内亮屏会把它取消，等于从没发生过 */
+	schedule_delayed_work(&kgsl_sweep_work,
+			      msecs_to_jiffies(READ_ONCE(screen_off_delay_sec) * 1000U));
 	return 0;
 }
 
@@ -379,9 +422,11 @@ static int panel_on_handler(struct kprobe *kp, struct pt_regs *regs)
 {
 	if (!READ_ONCE(bridge_enabled))
 		return 0;
-	/* 亮屏一律还原，即使中途把 screen_off_sweep 关掉了也不能留下半回收状态 */
+	/* 亮屏一律还原，即使中途把 screen_off_sweep 关掉了也不能留下半回收状态。
+	 * 先撤销还没到期的那次回收——短暂锁屏就落在这一支，代价为零。 */
 	WRITE_ONCE(pending_screen_off, false);
-	schedule_work(&kgsl_sweep_work);
+	cancel_delayed_work(&kgsl_sweep_work);
+	schedule_delayed_work(&kgsl_sweep_work, 0);
 	return 0;
 }
 
@@ -444,7 +489,7 @@ static void __exit kgsl_state_bridge_exit(void)
 		unregister_kprobe(&panel_on_kp);
 	}
 	cancel_work_sync(&kgsl_state_work);
-	cancel_work_sync(&kgsl_sweep_work);
+	cancel_delayed_work_sync(&kgsl_sweep_work);
 	/* 卸载时把所有进程还原成 foreground，不给系统留下半回收状态 */
 	kgsl_state_sweep(false);
 	pr_info("已卸载; events=%lld writes=%lld missing=%lld failed=%lld full=%lld\n",

@@ -1243,22 +1243,11 @@ fi
 # 唤醒已由用户关闭；不要再启动其事件订阅守护，避免无意义的 logcat 连接和 taskset 调用。
 log_msg "voice power guard skipped: XiaoBu wakeup disabled"
 
-# 不再启动 6 秒轮询的 KGSL 用户态桥。它能回收极少数 cached 应用的显存，但必须
-# 常驻并在前后台切换时双向维护状态；用户明确要求不使用常驻用户态。清理由旧版
-# 留下的进程后，把它曾标成 background 的项一次性还原，避免前台应用继续被回收。
-if [ -r "$MODDIR/kgsl-state-sync.pid" ]; then
-    kill "$(cat "$MODDIR/kgsl-state-sync.pid" 2>/dev/null)" 2>/dev/null
-    rm -f "$MODDIR/kgsl-state-sync.pid"
-fi
-_kgsl_restored=0
-for _kgsl_state in /sys/class/kgsl/kgsl/proc/*/state; do
-    [ -r "$_kgsl_state" ] && [ -w "$_kgsl_state" ] || continue
-    _kgsl_current=$(cat "$_kgsl_state" 2>/dev/null)
-    [ "$_kgsl_current" = background ] || continue
-    printf '%s' foreground >"$_kgsl_state" 2>/dev/null || continue
-    _kgsl_restored=$((_kgsl_restored + 1))
-done
-log_msg "kgsl state sync disabled; restored_foreground=$_kgsl_restored"
+# KGSL 显存状态已由 oplus_kgsl_state_bridge 内核模块接管（见 OplusBSP-Modules）。
+# 这里曾经有两段遗留代码：杀掉 6 秒轮询的用户态同步器，再把它标过的 background
+# 一次性还原成 foreground。现在两段都删了——轮询器早已不随模块出货，而那个
+# 无条件还原循环会在 service.sh 阶段推翻内核桥刚做的判定，是隐患而非兜底。
+# 桥自己在 rmmod 时会把所有进程还原，不需要脚本代劳。
 
 # ============================================================================
 # 这里曾经有 protect_ui_memcg()：把桌面 / system_server / SurfaceFlinger 所在

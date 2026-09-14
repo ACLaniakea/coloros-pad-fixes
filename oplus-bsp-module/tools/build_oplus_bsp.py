@@ -20,8 +20,11 @@ REPO = ROOT.parent
 # 早先这里是一份写死的白名单，结果新增的 sepolicy.rule 被静默漏掉——那条规则
 # 是 oplus_kgsl_state_bridge 写 sysfs 的前提，少了它桥装上去每次都是 -EACCES。
 REQUIRED = ("module.prop", "post-fs-data.sh", "service.sh", "sepolicy.rule")
-# HybridSwap 已内建 Lenovo 面板 kprobe；这个早期独立桥探测同一事件，且只为旧
-# HybridSwap 二进制构建。源码试验件留在 kernel-compat/，不得随正式包出货。
+# oplus_hybridswap_panel_bridge 已彻底作废并从仓库删除：它和 HybridSwap 早期内建的
+# kprobe 挂的是同一个 panel_event_notification_trigger，而实测该函数在本机只送
+# FPS 变化（notif_type=4，负载 144/120），从不送 blank/unblank。真正可用的边是
+# msm_drm 的 dsi_panel_power_off / dsi_panel_power_on，已直接写进 HybridSwap。
+# 这条保留为守卫，防止旧构建产物被误放回 ko/。
 EXCLUDED_KOS = {"oplus_hybridswap_panel_bridge.ko"}
 
 

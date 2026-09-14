@@ -1,0 +1,153 @@
+修正面板事件源：原先那个 kprobe 在本机只收到 FPS 变化事件
+
+oplus-hybridswap-panel-kprobe-fallback.patch 把 kprobe 挂在
+panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读。
+实测在这台机器上该函数只送 notif_type=4（FPS 变化，负载 144/120，正是这块
+144Hz 屏的刷新率），从不送 blank/unblank。后果是两路屏幕信号同时失效：
+
+  * display_off 从初值 0 起永远不变 —— 熄屏时该停的主动回收从未停过
+    (wakeup_swapd 与 swapd_shrink_node 都靠它提前返回)；
+  * hybridswapd_panel_bridge_active() 只看 kprobe 注册标志，而注册是成功的，
+    于是 hybridswap_swapd_pause_store() 无条件清零并丢弃厂商 performance HAL
+    写进来的值 —— 对照机 PKX110 的 swapd_manual_pause 是 2.27 亿次，平板恒为 0。
+
+改挂 msm_drm 的面板电源函数，实测每次屏幕转换各触发一次、无歧义：
+  熄屏 sde_encoder_virt_disable -> dsi_panel_disable ->
+       dsi_display_unprepare -> dsi_panel_power_off
+  亮屏 dsi_display_prepare -> dsi_panel_power_on ->
+       dsi_panel_enable -> sde_encoder_virt_enable
+
+同时给 bridge_active 加上"真的观测到过一次转换"的条件。"注册成功"不等于
+"工作正常"正是上一版的根本错误；钩子哪天再失效，最坏结果是退回让 HAL 管，
+而不是谁都管不了。
+
+修复后实测：熄屏 30 秒 swapd 的 over_min_skip 增量为 0（完全停转），
+亮屏两个 30 秒窗口分别 +68852 与 +115593（正常恢复）。
+
+--- a/mm/hybridswap_zram/hybridswap/hybridswapd.c
++++ b/mm/hybridswap_zram/hybridswap/hybridswapd.c
+@@ -129,11 +129,10 @@
+ 
+ 
+ #ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
+-static struct kprobe panel_event_kp;
++static struct kprobe panel_off_kp, panel_on_kp;
+ static bool panel_event_kp_registered;
+-struct panel_event_prefix {
+-	unsigned int notif_type;
+-};
++/* 只有真的观测到一次熄屏或亮屏才置位。见 hybridswapd_panel_bridge_active()。 */
++static bool panel_event_seen;
+ #elif IS_ENABLED(CONFIG_DRM_MSM) || IS_ENABLED(CONFIG_DRM_OPLUS_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY)
+ static struct notifier_block fb_notif;
+ #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
+@@ -1958,20 +1957,30 @@
+ }
+ 
+ #ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
+-/* Lenovo's notifier rejects OPlus's MM client ID. On this 6.1 ABI, its
+- * dispatcher receives the primary-panel tag in x0 and a notification pointer
+- * in x1; notif_type 1 is blank and 2 is unblank.
++/* 原先挂的是 panel_event_notification_trigger，按 notif_type 1=blank / 2=unblank
++ * 解读。实测在这台机器上那个函数只送 notif_type=4（FPS 变化，负载 144/120，
++ * 正是这块 144Hz 屏的刷新率），从不送 blank/unblank —— 于是 display_off 从初值 0
++ * 起永远不变，待机时该停的主动回收从未停过，而 swapd_pause 又被下面那段
++ * "桥已激活" 的逻辑无条件清零，两路屏幕信号同时失效。
++ *
++ * 改挂 msm_drm 的面板电源函数，实测每次屏幕转换各触发一次、无歧义：
++ *   熄屏 sde_encoder_virt_disable -> dsi_panel_disable ->
++ *        dsi_display_unprepare -> dsi_panel_power_off
++ *   亮屏 dsi_display_prepare -> dsi_panel_power_on ->
++ *        dsi_panel_enable -> sde_encoder_virt_enable
++ * 取熄屏序列的末端与亮屏序列的最前端。
+  */
+-static int hybridswap_panel_event_pre_handler(struct kprobe *p,
+-		struct pt_regs *regs)
++static int hybridswap_panel_off_handler(struct kprobe *p, struct pt_regs *regs)
+ {
+-	unsigned long tag = regs->regs[0];
+-	struct panel_event_prefix *event = (void *)regs->regs[1];
++	atomic_set(&display_off, 1);
++	WRITE_ONCE(panel_event_seen, true);
++	return 0;
++}
+ 
+-	if (tag == 1 && event && READ_ONCE(event->notif_type) == 1)
+-		atomic_set(&display_off, 1);
+-	else if (tag == 1 && event && READ_ONCE(event->notif_type) == 2)
+-		atomic_set(&display_off, 0);
++static int hybridswap_panel_on_handler(struct kprobe *p, struct pt_regs *regs)
++{
++	atomic_set(&display_off, 0);
++	WRITE_ONCE(panel_event_seen, true);
+ 	return 0;
+ }
+ #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
+@@ -2073,15 +2082,25 @@
+ #ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
+ 	int ret;
+ 
+-	panel_event_kp.symbol_name = "panel_event_notification_trigger";
+-	panel_event_kp.pre_handler = hybridswap_panel_event_pre_handler;
+-	ret = register_kprobe(&panel_event_kp);
++	panel_off_kp.symbol_name = "dsi_panel_power_off";
++	panel_off_kp.pre_handler = hybridswap_panel_off_handler;
++	ret = register_kprobe(&panel_off_kp);
+ 	if (ret) {
+-		log_err("panel event kprobe registration failed: %d\n", ret);
++		log_err("panel off kprobe registration failed: %d\n", ret);
+ 		return;
+ 	}
++
++	panel_on_kp.symbol_name = "dsi_panel_power_on";
++	panel_on_kp.pre_handler = hybridswap_panel_on_handler;
++	ret = register_kprobe(&panel_on_kp);
++	if (ret) {
++		log_err("panel on kprobe registration failed: %d\n", ret);
++		unregister_kprobe(&panel_off_kp);
++		return;
++	}
++
+ 	panel_event_kp_registered = true;
+-	log_warn("panel event kprobe registered\n");
++	log_warn("panel power kprobes registered\n");
+ #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
+ 	struct drm_panel *active_panel;
+ 	void *cookie = NULL;
+@@ -2109,15 +2128,19 @@
+ }
+ 
+ /*
+- * The kprobe fallback receives the panel provider's actual blank/unblank
+- * transition.  On the Lenovo port, the vendor performance HAL's manual
+- * pause writes are delayed across that transition, so display_off is the
+- * authoritative gate whenever this bridge has registered successfully.
++ * 桥接管屏幕状态之后，厂商 performance HAL 那条跨越显示事件的延迟手工暂停就
++ * 不该再覆盖 display_off。但"注册成功"不等于"工作正常"——上一版正是只看
++ * 注册标志，而 kprobe 挂上了却永远收不到对的事件类型，于是 HAL 唯一还能用的
++ * 那路控制也被一并掐死，两路信号同时失效且毫无迹象。
++ *
++ * 因此这里要求真的观测到过一次熄屏或亮屏。钩子哪天再失效，最坏结果是退回
++ * 让 HAL 管，而不是谁都管不了。
+  */
+ bool hybridswapd_panel_bridge_active(void)
+ {
+ #ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
+-	return READ_ONCE(panel_event_kp_registered);
++	return READ_ONCE(panel_event_kp_registered) &&
++	       READ_ONCE(panel_event_seen);
+ #else
+ 	return false;
+ #endif
+@@ -2127,8 +2150,10 @@
+ {
+ #ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
+ 	if (panel_event_kp_registered) {
+-		unregister_kprobe(&panel_event_kp);
++		unregister_kprobe(&panel_off_kp);
++		unregister_kprobe(&panel_on_kp);
+ 		panel_event_kp_registered = false;
++		WRITE_ONCE(panel_event_seen, false);
+ 	}
+ #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
+ 	if (g_panel_cookie) {
