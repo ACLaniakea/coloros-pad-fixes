@@ -579,6 +579,20 @@ if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
     fi
 fi
 
+KGSL_BRIDGE_KO="$MODDIR/bin/oplus_kgsl_state_bridge.ko"
+if ! grep -q '^oplus_kgsl_state_bridge ' /proc/modules 2>/dev/null; then
+    # v4.1.1: shrinker-driven reclaim-state bridge. Marks adj>=100 processes
+    # as background when kernel has memory pressure, letting KGSL's own
+    # shrinker reclaim their GPU memory. Zero polling, no screen-state
+    # dependency. Replaces v4.1.0's screen-off sweep (which caused 101~121ms
+    # unlock frame times vs 24ms baseline).
+    if [ -f "$KGSL_BRIDGE_KO" ] && insmod "$KGSL_BRIDGE_KO" 2>>"$LOGFILE"; then
+        log_msg "KGSL reclaim-state bridge loaded (shrinker-driven v4.1.1)"
+    else
+        log_msg "WARN: KGSL reclaim-state bridge load failed"
+    fi
+fi
+
 # oplus_mm_compat 壳已移除：它伪造 /proc/oplus_mem 并对外宣称"标准 zram 后端、
 # 不支持 HybridSwap"，而现在真正的 hybridswap 已经在跑，这套说法本身就是错的。
 # 一加原厂的 swappiness 调参走 /proc/oplus_healthinfo/swappiness_para，属于

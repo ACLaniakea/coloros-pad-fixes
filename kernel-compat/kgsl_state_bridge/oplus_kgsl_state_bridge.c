@@ -404,7 +404,7 @@ static int __init kgsl_state_bridge_init(void)
 		return ret;
 	}
 
-	ret = register_shrinker(&kgsl_state_shrinker);
+	ret = register_shrinker(&kgsl_state_shrinker, "oplus_kgsl_state_bridge");
 	if (ret) {
 		pr_warn("注册 shrinker 失败 (%d)，内存压力触发不可用\n", ret);
 		/* 不致命，继续运行，tracepoint 仍可用 */
