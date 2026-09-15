@@ -1015,6 +1015,59 @@ apply_feature_override() {
 apply_feature_override
 
 # ============================================================================
+# THP 交还 ColorOS 的策略：联想 vendor 脚本开 THP，OPlus vendor 脚本关 THP
+#
+# /vendor/bin/init.kernel.post_boot-memory.sh 由 init 服务 memory-post-boot 执行
+# （/vendor/etc/init/hw/init.qti.kernel.rc）。本机这份是**联想**的，只有一个
+# enable_thp()：`echo always > .../transparent_hugepage/enabled`。
+# 对照机 PKX110 同名脚本里是 configure_thp()，注释写着 "disable THP by default"，
+# 明确写 never。也就是说：ColorOS 的内存栈是按 THP 关闭调的，而我们跑在
+# 联想 vendor 上，继承了给 ZUI 调的相反策略。
+#
+# 实测代价（平板开机 1 小时，defrag 已是 never）：
+#   thp_fault_alloc     8,334      —— 分配成功的 2MB 大页
+#   thp_fault_fallback  406,637    —— 失败回退，约 112 次/秒
+#   AnonHugePages       2,048 kB   —— 8334 个大页最后只剩 1 个，其余全被拆掉
+# 对照机同三项**全为 0**。即这些尝试与拆分是纯开销，没有留下任何收益。
+#
+# 做法：运行时从原厂脚本派生一份、只把这一条 always 改成 never，再 bind。
+# 派生失败或没改到就完全不 bind，保持原样。
+# ============================================================================
+THP_SRC=/vendor/bin/init.kernel.post_boot-memory.sh
+THP_RUNTIME_DIR=$MODDIR/runtime
+THP_RUNTIME=$THP_RUNTIME_DIR/init.kernel.post_boot-memory.sh
+
+align_thp_to_coloros() {
+    [ -f "$THP_SRC" ] || return 0
+    # 已经是 never（比如换了 vendor 或原厂改了）就什么都不做
+    if ! grep -qE '^[ 	]*echo[ 	]+always[ 	]*>[ 	]*/sys/kernel/mm/transparent_hugepage/enabled' "$THP_SRC"; then
+        log_msg "THP: 原厂脚本未写 always，跳过"
+        return 0
+    fi
+    mkdir -p "$THP_RUNTIME_DIR" 2>/dev/null
+    # toybox 的 sed 是 BRE 且不支持 \+（与 grep 不认 \b、BRE 不认 \| 是同一类坑），
+    # 所以这里用字面的「空格或制表符」字符组重复，不用 \+。已在本机实测命中。
+    sed 's#^\([ 	]*\)echo[ 	][ 	]*always[ 	]*>[ 	]*/sys/kernel/mm/transparent_hugepage/enabled#\1echo never > /sys/kernel/mm/transparent_hugepage/enabled#' \
+        "$THP_SRC" > "$THP_RUNTIME" 2>/dev/null || {
+        rm -f "$THP_RUNTIME"; log_msg "WARN: THP 脚本派生失败，保持原样"; return 0
+    }
+    # 闸门：必须真的改到，且行数不变（只替换不增删）
+    if ! grep -q 'echo never > /sys/kernel/mm/transparent_hugepage/enabled' "$THP_RUNTIME" ||
+       [ "$(wc -l < "$THP_RUNTIME")" != "$(wc -l < "$THP_SRC")" ]; then
+        rm -f "$THP_RUNTIME"; log_msg "WARN: THP 脚本派生结果不合预期，保持原样"; return 0
+    fi
+    chmod 755 "$THP_RUNTIME" 2>/dev/null
+    chcon u:object_r:vendor_file:s0 "$THP_RUNTIME" 2>/dev/null
+    if mount --bind "$THP_RUNTIME" "$THP_SRC" 2>/dev/null; then
+        log_msg "THP: 已改为 never（对齐 ColorOS vendor 策略）"
+    else
+        log_msg "WARN: THP 脚本 bind 失败，保持原样"
+    fi
+}
+
+align_thp_to_coloros
+
+# ============================================================================
 # /vendor/bin/init.qcom.post_boot.sh 与 init.kernel.post_boot.sh 的 bind 补丁
 # 已撤销。当初补丁把开机脚本里硬编码的 swappiness=100 改成 50、
 # watermark_scale_factor 改成 10，为的是压住「本机没有一加内存栈」时的
