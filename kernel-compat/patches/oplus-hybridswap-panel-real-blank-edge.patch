@@ -7,19 +7,17 @@ panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读
 
   * display_off 从初值 0 起永远不变 —— 熄屏时该停的主动回收从未停过
     (wakeup_swapd 与 swapd_shrink_node 都靠它提前返回)；
-  * hybridswapd_panel_bridge_active() 只看 kprobe 注册标志，而注册是成功的，
-    于是 hybridswap_swapd_pause_store() 无条件清零并丢弃厂商 performance HAL
-    写进来的值 —— 对照机 PKX110 的 swapd_manual_pause 是 2.27 亿次，平板恒为 0。
+  * 旧版移植还额外让"桥已注册"去清零 hybridswap_swapd_pause，把厂商
+    performance HAL 的暂停一并丢弃。那条已在本补丁中移除：实测对照机 PKX110 的
+    原厂行为是**屏幕亮起约 1.2 秒后**置 1、压住约 6 秒再放开（三轮采样一致），
+    那个延迟是原厂设计本身，不是移植时序错位。swapd_pause 交还原厂 setter 后，
+    平板的 swapd_manual_pause 从恒 0 变为 70 秒内 +189,331。
 
 改挂 msm_drm 的面板电源函数，实测每次屏幕转换各触发一次、无歧义：
   熄屏 sde_encoder_virt_disable -> dsi_panel_disable ->
        dsi_display_unprepare -> dsi_panel_power_off
   亮屏 dsi_display_prepare -> dsi_panel_power_on ->
        dsi_panel_enable -> sde_encoder_virt_enable
-
-同时给 bridge_active 加上"真的观测到过一次转换"的条件。"注册成功"不等于
-"工作正常"正是上一版的根本错误；钩子哪天再失效，最坏结果是退回让 HAL 管，
-而不是谁都管不了。
 
 修复后实测：熄屏 30 秒 swapd 的 over_min_skip 增量为 0（完全停转），
 亮屏两个 30 秒窗口分别 +68852 与 +115593（正常恢复）。
@@ -36,8 +34,6 @@ panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读
 -struct panel_event_prefix {
 -	unsigned int notif_type;
 -};
-+/* 只有真的观测到一次熄屏或亮屏才置位。见 hybridswapd_panel_bridge_active()。 */
-+static bool panel_event_seen;
  #elif IS_ENABLED(CONFIG_DRM_MSM) || IS_ENABLED(CONFIG_DRM_OPLUS_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY)
  static struct notifier_block fb_notif;
  #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
@@ -51,8 +47,7 @@ panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读
 +/* 原先挂的是 panel_event_notification_trigger，按 notif_type 1=blank / 2=unblank
 + * 解读。实测在这台机器上那个函数只送 notif_type=4（FPS 变化，负载 144/120，
 + * 正是这块 144Hz 屏的刷新率），从不送 blank/unblank —— 于是 display_off 从初值 0
-+ * 起永远不变，待机时该停的主动回收从未停过，而 swapd_pause 又被下面那段
-+ * "桥已激活" 的逻辑无条件清零，两路屏幕信号同时失效。
++ * 起永远不变，待机时该停的主动回收从未停过。
 + *
 + * 改挂 msm_drm 的面板电源函数，实测每次屏幕转换各触发一次、无歧义：
 + *   熄屏 sde_encoder_virt_disable -> dsi_panel_disable ->
@@ -68,7 +63,6 @@ panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读
 -	unsigned long tag = regs->regs[0];
 -	struct panel_event_prefix *event = (void *)regs->regs[1];
 +	atomic_set(&display_off, 1);
-+	WRITE_ONCE(panel_event_seen, true);
 +	return 0;
 +}
  
@@ -79,7 +73,6 @@ panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读
 +static int hybridswap_panel_on_handler(struct kprobe *p, struct pt_regs *regs)
 +{
 +	atomic_set(&display_off, 0);
-+	WRITE_ONCE(panel_event_seen, true);
  	return 0;
  }
  #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
@@ -114,31 +107,6 @@ panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读
  #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
  	struct drm_panel *active_panel;
  	void *cookie = NULL;
-@@ -2109,15 +2128,19 @@
- }
- 
- /*
-- * The kprobe fallback receives the panel provider's actual blank/unblank
-- * transition.  On the Lenovo port, the vendor performance HAL's manual
-- * pause writes are delayed across that transition, so display_off is the
-- * authoritative gate whenever this bridge has registered successfully.
-+ * 桥接管屏幕状态之后，厂商 performance HAL 那条跨越显示事件的延迟手工暂停就
-+ * 不该再覆盖 display_off。但"注册成功"不等于"工作正常"——上一版正是只看
-+ * 注册标志，而 kprobe 挂上了却永远收不到对的事件类型，于是 HAL 唯一还能用的
-+ * 那路控制也被一并掐死，两路信号同时失效且毫无迹象。
-+ *
-+ * 因此这里要求真的观测到过一次熄屏或亮屏。钩子哪天再失效，最坏结果是退回
-+ * 让 HAL 管，而不是谁都管不了。
-  */
- bool hybridswapd_panel_bridge_active(void)
- {
- #ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
--	return READ_ONCE(panel_event_kp_registered);
-+	return READ_ONCE(panel_event_kp_registered) &&
-+	       READ_ONCE(panel_event_seen);
- #else
- 	return false;
- #endif
 @@ -2127,8 +2150,10 @@
  {
  #ifdef CONFIG_OPLUS_HYBRIDSWAP_PANEL_KPROBE_FALLBACK
@@ -147,7 +115,6 @@ panel_event_notification_trigger 上，按 notif_type 1=blank / 2=unblank 解读
 +		unregister_kprobe(&panel_off_kp);
 +		unregister_kprobe(&panel_on_kp);
  		panel_event_kp_registered = false;
-+		WRITE_ONCE(panel_event_seen, false);
  	}
  #elif IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
  	if (g_panel_cookie) {

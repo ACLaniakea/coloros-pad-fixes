@@ -19,12 +19,17 @@
 |---|---|---|
 | `oplus-hybridswap-zram-opt-callback.patch` | `free_swap_is_low_fp` 改 extern,接回 zram_opt | `oplus_bsp_zram_opt` 依赖列里出现 hybridswap |
 | `oplus-hybridswap-panel-kprobe-fallback.patch` | kprobe 版面板事件桥,替代编不出来的原生 notifier | 模块内有 `hybridswap_panel_event_pre_handler` |
-| `oplus-hybridswap-panel-hal-semantics.patch` | 配套的 ops 语义调整 | 同上 |
-| `oplus-hybridswap-panel-real-blank-edge.patch` | **修正上面两条面板补丁的事件源**：改挂 `dsi_panel_power_off`/`dsi_panel_power_on`，并要求桥真的观测到过转换才接管 | 熄屏 30 秒 swapd 完全停转，亮屏恢复 |
+| `oplus-hybridswap-panel-real-blank-edge.patch` | **修正面板补丁的事件源**：改挂 `dsi_panel_power_off`/`dsi_panel_power_on`；同时把 `swapd_pause` 交还原厂 setter | 熄屏 30 秒 swapd 完全停转；`swapd_manual_pause` 70 秒内 +189,331 |
 | `oplus-hybridswap-slowpath-wake-throttle.patch` | 给 `vh_alloc_pages_slowpath` 的 `wake_all_swapd()` 加 200ms 节流 | 模块内有 `last_slowpath_wake` |
 | `oplus-hybridswap-fault-counter-scope.patch` | 4K ZRAM 下只统计真正的 `ZRAM_WB` fault-out，避免把普通 `pswpin` 当成 refault | `hybridswap_stat_snap` 的首个 `fault_cnt` 不再跟随纯 ZRAM 换入增长 |
 
-**已删除**:`oplus-hybridswap-refault-snapshot-fallback.patch` 与 `oplus-hybridswap-wmark-wakeup.patch`。
+**已删除**:`oplus-hybridswap-panel-hal-semantics.patch`(2026-09-15)、
+`oplus-hybridswap-refault-snapshot-fallback.patch` 与 `oplus-hybridswap-wmark-wakeup.patch`。
+第一条让面板桥接管后永久把 `hybridswap_swapd_pause` 钉死为 0，丢弃厂商 performance HAL
+的写入。对照机 PKX110 实测三轮：原厂是**屏幕亮起约 1.2 秒后**置 1、压住约 6 秒再放开
+——那个延迟是原厂设计本身（保护亮屏/解锁后的第一个交互窗口），不是移植时序错位。
+两机跑的是同一个 HAL 二进制 `/odm/bin/hw/vendor-oplus-hardware-performance-V1-service`。
+已恢复原厂 setter，平板 `swapd_manual_pause` 从恒 0 变为 70 秒内 +189,331。
 前者把原厂事件驱动的 `snapshotd` 错改为 5Hz 轮询，实测 `swapd_hit_refaults` 仍近乎全票命中；
 后者把 hook 从 `android_vh_alloc_pages_slowpath`
 换成 `android_vh_get_page_wmark`,而后者挂在 `zone_watermark_fast()`——每次页分配都走的最热路径,
@@ -42,10 +47,9 @@
 
 ## 关于那两条面板补丁
 
-`oplus-hybridswap-panel-kprobe-fallback.patch` 与
-`oplus-hybridswap-panel-hal-semantics.patch` **保留原样**，它们是从原始源码到
-当前状态的必经一步；但它们选的事件源在本机是错的，必须叠加
-`oplus-hybridswap-panel-real-blank-edge.patch` 才能得到可用的结果。三条按顺序应用。
+`oplus-hybridswap-panel-kprobe-fallback.patch` **保留原样**，它是从原始源码到
+当前状态的必经一步；但它选的事件源在本机是错的，必须叠加
+`oplus-hybridswap-panel-real-blank-edge.patch` 才能得到可用的结果。两条按顺序应用。
 
 错在哪：`panel_event_notification_trigger` 在这台机器上只送 `notif_type=4`
 （FPS 变化，负载 144/120），从不送 blank/unblank。而 `bridge_active()` 只看
