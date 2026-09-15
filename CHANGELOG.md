@@ -4,6 +4,18 @@
 
 本项目的版本号在所有模块与 APK 间保持统一，一个 Release 内的产物必须配套使用。
 
+## [4.1.1](docs/release-notes/4.1.1.md)
+
+修好待机后动画卡顿与前摄指示灯失效。KGSL 显存回收链重新接回：对照机显存根本不钉
+（Unevictable 恒 69MB），平板被 1:1 钉住 1.0~1.6GB；出货的 v4.1.2 桥只在内存压力下
+回收缓存进程与遮挡已久的大户，熄屏立即还原 UI 进程，壁纸/模糊/输入法永远不碰——
+开发中的版本曾在熄屏 20 秒内回收整个桌面，解锁时再读回，正是卡顿来源。
+前摄灯失效是两份同 id 的 FixModule 抢着给 LSPosed 钉路径，钉回了 09-02 的旧 Hook；
+versionCode 改由 manifest 生成，路径同步拒绝被旧副本覆盖。
+swapd_pause、swappiness 125/125、THP never 三项交还原厂语义（保真修复，无可测性能收益）。
+清零模块加载期 11 条 proc 目录撞名告警与 sched_info 的 slab 告警。
+配套内核改为 r3，BSP 模块依赖其 filp_open 导出，r2 上会加载失败。
+
 ## [4.1.0](docs/release-notes/4.1.0.md)
 
 修好 HybridSwap 那条从未闭合过的熄屏闸门：面板 kprobe 挂错了事件源，本机只收到

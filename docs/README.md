@@ -9,6 +9,7 @@
 
 | 版本 | 主题 |
 | --- | --- |
+| [4.1.1](release-notes/4.1.1.md) | 待机后卡顿与前摄灯、KGSL 回收链 v4.1.2、内核告警清零、r3 配套内核 |
 | [4.1.0](release-notes/4.1.0.md) | HybridSwap 熄屏闸门、mqueue 挂载、r2 配套内核 |
 | [4.0.4](release-notes/4.0.4.md) | AOT、内存链路与 HybridSwap 内核桥接 |
 | [4.0.3](release-notes/4.0.3.md) | 调度链三项与模块清单清理 |
@@ -25,7 +26,8 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [r3 内核与 KGSL 桥验证](investigations/r3-内核与KGSL桥验证.md) | KGSL reclaim 链条逐环 kprobe 定位；桥已做出又撤回，结论是原厂不驱动这套机制 |
+| [r3 内核与 KGSL 桥验证](investigations/r3-内核与KGSL桥验证.md) | KGSL reclaim 链条逐环 kprobe 定位；4.1.0 撤回的结论已被 4.1.1 推翻，见下一行 |
+| [4.1.1 卡顿与内存回收排查](investigations/4.1.1-卡顿与内存回收排查.md) | HybridSwap/THP/swappiness 对齐、KGSL 钉住根因与 v4.1.2 桥、旧 Hook 被钉回、内核告警清零 |
 | [4.0.4 内存与 AOT 排查](investigations/4.0.4-内存与AOT排查.md) | AOT、osvelte、面板状态、HAL 暂停语义、slowpath 唤醒；以及已否决的跨内核 hook |
 | [4.0.3 调度链与 SELinux 排查](investigations/4.0.3-调度链与SELinux排查.md) | sched_assist 负载均衡未触发、UX→WALT 翻译、帧组提频、per-CPU 预留 |
 | [AON 相机 DSP 修复过程](investigations/AON-相机-DSP修复过程.md) | 常亮感知相机与 DSP 链路 |
