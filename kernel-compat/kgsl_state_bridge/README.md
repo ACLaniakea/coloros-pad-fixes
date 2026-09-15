@@ -1,19 +1,14 @@
-> [!IMPORTANT]
-> **本模块已不随发布包出货，仅作为已排除路径的记录保留。**
->
-> 移除理由：逐个扫过 ROM 里所有引用 `kgsl/kgsl/proc` 的组件
-> （`libAlgoProcess.so`、`memtrack-service`、`autochmod.sh`、若干 sepolicy），
-> **全是只读统计，没有任何一个写 `state`**；参照机 PKX110 命中同一批组件、
-> 同样只读，且其 `proc/<pid>/` 下连 `state` 节点都没有。原厂不驱动这套机制。
->
-> 另有实测：桥带来的待机回收要在下一次解锁时偿还——桌面 95 分位帧时从 24ms
-> 涨到 101~121ms；而平板内核击杀记录为 0、PSI `some avg10=0.30`，并不缺内存。
->
-> 下面的技术内容仍然有效，作为这条链路的分析记录。
+# oplus_kgsl_state_bridge (v4.1.2)
 
-# oplus_kgsl_state_bridge
+补回移植包里缺失的 KGSL 显存回收触发者。由 `oplus-bsp-module` 随启动链加载，
+配套 r3 内核。
 
-补回移植包里缺失的 KGSL 显存回收触发者。
+> [!NOTE]
+> 历史：4.1.0 做过熄屏全量回收版并移除（解锁时桌面 p95 帧时 24ms -> 101~121ms）；
+> 4.1.1 改成 shrinker 版重新接回，但 tracepoint 仍会在 adj>=100 时无条件标记，
+> 熄屏十几秒就把桌面 114MB 全部回收，待机后动画卡顿复现。4.1.2 按对照机
+> PKX110 的行为重做了策略，见下。排查记录见
+> `docs/investigations/4.1.1-卡顿与内存回收排查.md` 第 17 节。
 
 ## 它解决什么
 
@@ -30,36 +25,46 @@
 次次返回 0，`scan_objects` 命中 0 次。手工写一次 `background` 后 count 立刻
 返回 `0xc800`，scan 开始执行。**机制本身完好。**
 
-## 两个触发点
+## 策略（对照机经验）
 
-| 触发点 | 覆盖对象 | 说明 |
+对照机的 GPU 显存根本不钉（`Unevictable` 恒 69MB），压力下由内核按页回收冷页；
+前台 UI 栈不回收，解锁时桌面一帧都不重画；原厂 HAL 在亮屏后暂停 swapd 约 6 秒，
+专门保护亮屏后的第一个交互窗口。平板只能整进程标记，所以规则是：
+
+| 对象 | 何时标 background | 何时还原 foreground |
 | --- | --- | --- |
-| `dsi_panel_power_off` / `dsi_panel_power_on`（kprobe） | 全部进程 | 主路径。熄屏全部标 background，亮屏按各自 adj 还原 |
-| `oom_score_adj_update`（tracepoint） | `adj >= adj_threshold` | 辅助路径，默认阈值 800 |
+| adj < 0（SF / system_server / SystemUI） | 永不 | — |
+| 缓存进程 adj >= `cached_adj`(900) | 内存压力扫描 | adj 变化并落到 900 以下 |
+| UI 带 `ui_adj`(100) <= adj < 900 | 内存压力扫描，且：亮屏、不在亮屏保护窗口、连续处于该带 >= 60s、`gpumem_mapped` >= 192MB | 熄屏立即还原；adj 真正变化时还原 |
 
-**为什么主路径不是 adj**：桌面的 `oom_score_adj` 恒为 100，开应用、回桌面都
-不变，该 tracepoint 上涉及桌面的事件为 0 条（事件全部来自 lmkd，写的是
-930/940 这类缓存进程）。而能回收的量几乎全在桌面身上——adj>=700 的进程加
-起来只有 21MB，桌面单进程 129~1187MB。熄屏是唯一既覆盖桌面、风险又为零的边。
-
-**为什么不用 `panel_event_notification_trigger`**：在这台机器上它只送 FPS
-变化（`notif_type=4`，负载 144/120，正是这块 144Hz 屏的刷新率），从不送
-blank/unblank。
+- 压力信号来自注册的 shrinker：`count_objects` 只节流并排队，**回调里不做任何文件 I/O**。
+- 192MB 门槛只会命中堆起来的桌面这类大户；壁纸（~53MB）、`com.oplus.blur`、
+  侧边栏、输入法永远不碰。
+- 屏幕状态挂 msm_drm 的 `dsi_panel_power_off` / `dsi_panel_power_on`
+  （`panel_event_notification_trigger` 在本机只送 FPS 变化）。kprobe 注册失败时 UI 带自动停用。
+- 同值 adj 重写不算变化，避免"回收 -> 钉回"来回。
 
 ## 实现上的两条红线
 
-1. **不调用 `msm_kgsl` 的私有函数。** 早期版本用 kprobe 取
-   `kgsl_proc_state_store` 地址再间接调用，并猜 kobject 在
-   `kgsl_process_private` 里的偏移（+0x68）。kCFI 拒绝这种间接调用，实测
-   直接 panic。
-2. **只走公开接口**：`filp_open` + `kernel_write`，等价于 shell 里
-   `echo background > .../state`。所有文件 I/O 都在工作队列里，
-   tracepoint 与 kprobe 回调只置标志并排队。
+1. **不调用 `msm_kgsl` 的私有函数。** kprobe 取 `kgsl_proc_state_store` 地址再
+   间接调用会被 kCFI 拒绝，实测直接 panic。
+2. **只走公开接口**：`filp_open` + `kernel_write` 写 `state`；读 `gpumem_mapped`
+   时 `kernel_read` 不在 r3 白名单里，改走该 sysfs 文件自己的 `read_iter`
+   （类型匹配的函数指针调用，kCFI 放行）。
 
 ## 必须配套的 SELinux 规则
 
-见 `oplus-bsp-module/sepolicy.rule`。写入主体域是 `kernel`，缺规则时
-`filp_open` 返回 `-EACCES`，实测 59 次写入全军覆没。
+见 `fix-module/module/sepolicy.rule`：
+
+```
+allow kernel vendor_sysfs_kgsl_proc file { open read write getattr }
+allow kernel vendor_sysfs_kgsl_proc dir search
+allow kernel vendor_sysfs_kgsl dir search
+allow kernel sysfs dir search
+```
+
+缺 `write` 时 `stat_failed` 增长（-13）；缺 `read` 时 `stat_read_failed` 增长，
+UI 带按"不回收"处理。
 
 ## 运行时参数
 
@@ -67,17 +72,27 @@ blank/unblank。
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `adj_threshold` | 800 | 达到该 adj 才标 background |
-| `screen_off_sweep` | Y | 熄屏全量回收；关掉后亮屏仍会还原 |
-| `bridge_enabled` | Y | 总开关 |
-| `stat_events` / `stat_writes` / `stat_missing` / `stat_failed` / `stat_slots_full` | — | 只读计数。`stat_failed` 非零通常就是缺 SELinux 规则 |
+| `bridge_enabled` | Y | 总开关，关掉后不再有新的 background 标记 |
+| `cached_adj` | 900 | 缓存进程下限 |
+| `ui_band_enabled` | Y | 是否考虑 UI 带 |
+| `ui_adj` | 100 | UI 带下限 |
+| `ui_min_mapped_mb` | 192 | UI 带显存门槛 |
+| `ui_min_age_sec` | 60 | UI 带连续遮挡时长 |
+| `wake_grace_sec` | 30 | 亮屏保护窗口 |
+| `shrinker_throttle_sec` | 30 | 两次压力扫描的最小间隔 |
+| `display_on` | — | 只读，当前面板状态 |
+| `stat_*` | — | 只读计数：`events` `writes_bg` `writes_fg` `missing` `failed` `read_failed` `slots_full` `shrinker_calls` `shrinker_sweeps` `marked_cached` `marked_ui` `screen_off_restores` |
 
 `stat_missing` 计的是没有 KGSL 上下文的进程，属正常——大多数进程不碰 GPU。
+
+卸载（`rmmod`）会把**所有**进程还原 foreground。
 
 ## 构建
 
 ```sh
-make -C <kernel-src> O=<out-r3> M=$PWD ARCH=arm64 LLVM=1 LLVM_IAS=1 modules
+S=/home/ACLaniakea/oplus-src-recovered-20260830/oplus-src
+make -C $S/aosp/src O=$S/out-r3 M=$PWD ARCH=arm64 LLVM=1 LLVM_IAS=1 modules
+cp oplus_kgsl_state_bridge.ko ../../oplus-bsp-module/ko/
 ```
 
 r3 内核保持 GKI 符号裁剪开启，白名单里只额外加了 `filp_open` 与
