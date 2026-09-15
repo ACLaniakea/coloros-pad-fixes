@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Android oom_score_adj -> Qualcomm KGSL reclaim-state bridge.
+ * Android oom_score_adj -> Qualcomm KGSL reclaim-state bridge (v4.1.1).
  *
  * 为什么需要它
  * ------------
@@ -33,14 +33,20 @@
  *   allow kernel vendor_sysfs_kgsl_proc dir  { search };
  * 少了它 filp_open 会返回 -EACCES —— 这是上一版真正卡住的地方。
  *
- * 关于 adj 阈值的默认值
- * ---------------------
- * 默认 100（VISIBLE_APP）。能回收的量几乎全在桌面身上：实测 adj>=700 的进程
- * 加起来只有 21MB，而桌面一个进程在用过一阵后是 129~893MB，且它被应用遮挡
- * 时 adj 正好是 100。
+ * v4.1.1 改版：shrinker 驱动而非熄屏回收
+ * ---------------------------------------
+ * v4.1.0 使用熄屏全量回收（30 分钟延迟），副作用明确：解锁时桌面 95 分位帧时
+ * 从 24ms 飙到 101~121ms（4~5 倍），原因是桌面几百 MB GPU 内存被收掉后需要
+ * 重新钉住。
  *
- * 敢取 100 是因为 KGSL 自己带了迟滞：写入 background 后要约 12 秒
- * background_work 才真正回收，12 秒内切回来的进程一页都不会被动。
+ * v4.1.1 改为注册 shrinker：内核在真有内存压力时调用 count_objects，那一刻
+ * 触发一次全量标记（adj>=100 -> background），返回 0。零主动轮询、不依赖屏幕
+ * 状态，更接近对照机手机的行为（那边 GPU 内存本就不钉，压力来时内核自己回收）。
+ *
+ * adj 阈值默认 100（VISIBLE_APP）。能回收的量几乎全在桌面身上：adj>=700 的进程
+ * 加起来只有 21MB，而桌面单进程用过一阵后是 129~893MB，被应用遮挡时 adj 正好
+ * 100。KGSL 自己带迟滞（写 background 后约 12 秒 background_work 才真正回收），
+ * 12 秒内切回来的进程一页都不会被动。
  */
 
 #define pr_fmt(fmt) "oplus_kgsl_state_bridge: " fmt
@@ -48,6 +54,7 @@
 #include <linux/err.h>
 #include <linux/fcntl.h>
 #include <linux/fs.h>
+#include <linux/jiffies.h>
 #include <linux/kprobes.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -55,6 +62,7 @@
 #include <linux/oom.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
+#include <linux/shrinker.h>
 #include <linux/spinlock.h>
 #include <linux/tracepoint.h>
 #include <linux/workqueue.h>
@@ -62,38 +70,13 @@
 #define KGSL_STATE_PATH_LEN 64
 #define STATE_SLOT_COUNT 256
 
-static int adj_threshold = 800;
+static int adj_threshold = 100;
 module_param(adj_threshold, int, 0644);
 MODULE_PARM_DESC(adj_threshold, "oom_score_adj at or above which a process is marked background");
 
-static bool screen_off_sweep = true;
-module_param(screen_off_sweep, bool, 0644);
-MODULE_PARM_DESC(screen_off_sweep, "on screen blank mark every process background, restore on unblank");
-
-/*
- * 熄屏后要等多久才真正回收。
- *
- * 为什么必须有这个延迟：桌面是唯一的大户（175~1187MB），但它也是解锁时第一个
- * 重画的东西。实测同一台机器上，熄屏收了它的那两轮解锁后桌面 95 分位帧时是
- * 101ms 和 121ms，没收的那轮只有 24ms —— 回收把最坏帧时放大了 4~5 倍。
- * 对照机手机在解锁时桌面一帧都不重画，Unevictable 也只有 69MB，根本没有这
- * 笔交易。
- *
- * 所以按时间分档：短暂锁屏（随手熄屏、看一眼消息）完全不回收，解锁保持顺滑；
- * 只有真的长待机才值得用一次较慢的解锁换回几百 MB。
- *
- * 默认取 1800 秒，不是拍的：原厂 OSense 的内存决策器里本来就有同一性质的规则
- *
- *   <scene id="1000" name="SCENE_SCREEN_STATUS">
- *     <rule index="1" tag="delay" skip="delay" offset="1800000">
- *       <policy name="compress" type="screenoff" />
- *
- * offset 是毫秒，正好 30 分钟。原厂对"熄屏多久才值得动内存"已有定论，这里对齐
- * 它，而不是另立一个数。
- */
-static unsigned int screen_off_delay_sec = 1800;
-module_param(screen_off_delay_sec, uint, 0644);
-MODULE_PARM_DESC(screen_off_delay_sec, "seconds the screen must stay off before reclaiming");
+static unsigned int shrinker_throttle_sec = 30;
+module_param(shrinker_throttle_sec, uint, 0644);
+MODULE_PARM_DESC(shrinker_throttle_sec, "minimum seconds between shrinker-triggered sweeps");
 
 static bool bridge_enabled = true;
 module_param(bridge_enabled, bool, 0644);
@@ -106,9 +89,6 @@ struct kgsl_state_slot {
 };
 
 static struct tracepoint *oom_adj_tracepoint;
-/* 屏幕是否处于熄灭态。熄屏扫描与 adj tracepoint 两条路径共用，
- * 否则 tracepoint 会推翻扫描刚做的决定。 */
-static bool pending_screen_off;
 static struct kgsl_state_slot state_slots[STATE_SLOT_COUNT];
 static DEFINE_SPINLOCK(state_lock);
 
@@ -117,9 +97,10 @@ static atomic64_t writes_ok = ATOMIC64_INIT(0);
 static atomic64_t nodes_missing = ATOMIC64_INIT(0);
 static atomic64_t writes_failed = ATOMIC64_INIT(0);
 static atomic64_t slots_full = ATOMIC64_INIT(0);
+static atomic64_t shrinker_calls = ATOMIC64_INIT(0);
+static atomic64_t shrinker_sweeps = ATOMIC64_INIT(0);
 
-/* 只读，用 lsmod 之外的方式看桥有没有在干活：
- * cat /sys/module/oplus_kgsl_state_bridge/parameters/stat_* */
+/* 只读统计 */
 static int stat_events_get(char *buf, const struct kernel_param *kp)
 {
 	return sysfs_emit(buf, "%lld\n", atomic64_read(&events_seen));
@@ -140,18 +121,30 @@ static int stat_full_get(char *buf, const struct kernel_param *kp)
 {
 	return sysfs_emit(buf, "%lld\n", atomic64_read(&slots_full));
 }
+static int stat_shrinker_calls_get(char *buf, const struct kernel_param *kp)
+{
+	return sysfs_emit(buf, "%lld\n", atomic64_read(&shrinker_calls));
+}
+static int stat_shrinker_sweeps_get(char *buf, const struct kernel_param *kp)
+{
+	return sysfs_emit(buf, "%lld\n", atomic64_read(&shrinker_sweeps));
+}
 
 static const struct kernel_param_ops stat_events_ops = { .get = stat_events_get };
 static const struct kernel_param_ops stat_writes_ops = { .get = stat_writes_get };
 static const struct kernel_param_ops stat_missing_ops = { .get = stat_missing_get };
 static const struct kernel_param_ops stat_failed_ops = { .get = stat_failed_get };
 static const struct kernel_param_ops stat_full_ops = { .get = stat_full_get };
+static const struct kernel_param_ops stat_shrinker_calls_ops = { .get = stat_shrinker_calls_get };
+static const struct kernel_param_ops stat_shrinker_sweeps_ops = { .get = stat_shrinker_sweeps_get };
 
 module_param_cb(stat_events, &stat_events_ops, NULL, 0444);
 module_param_cb(stat_writes, &stat_writes_ops, NULL, 0444);
 module_param_cb(stat_missing, &stat_missing_ops, NULL, 0444);
 module_param_cb(stat_failed, &stat_failed_ops, NULL, 0444);
 module_param_cb(stat_slots_full, &stat_full_ops, NULL, 0444);
+module_param_cb(stat_shrinker_calls, &stat_shrinker_calls_ops, NULL, 0444);
+module_param_cb(stat_shrinker_sweeps, &stat_shrinker_sweeps_ops, NULL, 0444);
 
 /*
  * 和 shell 里 `echo background > /sys/class/kgsl/kgsl/proc/<tgid>/state`
@@ -239,23 +232,13 @@ static void oom_score_adj_update_probe(void *unused, struct task_struct *task)
 	tgid = task_tgid_nr(task);
 	if (tgid <= 0)
 		return;
-	/* 熄屏期间也要按熄屏规则判定。否则扫描刚把桌面标成 background，
-	 * 它的 adj 一变（回桌面时 0 -> 100 就会变）就触发本回调，而这里只看
-	 * adj>=threshold，算出 false 又把它写回 foreground —— 实测熄屏 18 秒
-	 * 后桌面仍是 foreground、185MB 一点没收，就是这么丢的。 */
+
 	adj = READ_ONCE(task->signal->oom_score_adj);
-	background = (READ_ONCE(pending_screen_off) && adj >= 0) ||
-		     adj >= READ_ONCE(adj_threshold);
+	background = adj >= READ_ONCE(adj_threshold);
 	atomic64_inc(&events_seen);
 
-	/* tracepoint 上下文里不做任何分配。
-	 *
-	 * 三级查找，顺序不能变：先认本进程已有的槽，再用从未使用过的空槽，
-	 * 最后才回收别人用完的槽。早先的写法把"第一个 pending=false 的槽"
-	 * 当空槽用——而 work 处理完只清 pending、保留 tgid，于是那个槽几乎
-	 * 永远是 0 号，所有新进程挤在同一个槽里互相覆盖。实测桌面从
-	 * adj=0 变到 100 的事件就是这么丢掉的，state 一直停在 foreground。
-	 */
+	/* tracepoint 上下文里不做任何分配。三级查找：先认本进程已有的槽，
+	 * 再用从未使用过的空槽，最后才回收别人用完的槽。 */
 	spin_lock_irqsave(&state_lock, flags);
 	for (i = 0; i < STATE_SLOT_COUNT; i++) {
 		if (state_slots[i].tgid == tgid) {
@@ -279,9 +262,6 @@ static void oom_score_adj_update_probe(void *unused, struct task_struct *task)
 			}
 		}
 	}
-	/* 槽位一旦分配就一直留着 tgid，进程退出后 pid 被复用时槽里是旧状态，
-	 * 可能压掉新进程的第一次更新。影响有限：熄屏/亮屏各有一次全量对齐会
-	 * 把所有进程重新按当前 adj 写一遍。 */
 	if (slot && (slot->tgid != tgid || slot->background != background ||
 		     slot->pending)) {
 		slot->tgid = tgid;
@@ -305,10 +285,11 @@ static void find_oom_adj_tracepoint(struct tracepoint *tp, void *unused)
  * 全量对齐。两种场合用它：
  *   1. 模块加载时——tracepoint 只在 adj "变化"时触发，加载前就稳定下来的
  *      进程永远等不到事件。
- *   2. 熄屏/亮屏——见下面 panel 那段的说明。
+ *   2. shrinker 触发时——内核有内存压力才调用 count_objects，那一刻全量
+ *      标记一遍，adj>=100 的统统 background。
  *
- * 早先这里把结果存在 256 个元素的栈数组里并在满了之后 break，实测开机后
- * 进程数远超 256，桌面根本没被扫到。改成按 nr_threads 动态分配。
+ * 保留 adj<0 的系统进程（SurfaceFlinger -1000 / system_server -900 /
+ * SystemUI -800），它们占用很少但对解锁动画必需，不回收。
  */
 static void kgsl_state_sweep(bool force_background)
 {
@@ -338,14 +319,7 @@ static void kgsl_state_sweep(bool force_background)
 			break;
 		adj = READ_ONCE(p->signal->oom_score_adj);
 
-		/* 熄屏全量回收时也要放过 adj<0 的常驻系统进程：
-		 * SurfaceFlinger(-1000)、system_server(-900)、SystemUI(-800)
-		 * 正是画锁屏与解锁动画的那几个。把它们的显存在熄屏时收掉，
-		 * 解锁瞬间就得批量重新钉住，实测解锁窗口的掉帧原因高度集中在
-		 * "Number Slow issue draw commands"（15~20 次，占掉帧主因），
-		 * 正是下发绘制命令时卡在 GPU 侧的形态。
-		 * 大头本来也不在它们身上——桌面单进程就有 470~1187MB，adj 是
-		 * 0 或 100，仍然照收。 */
+		/* 始终保留 adj<0 的常驻系统进程 */
 		tgids[n] = task_tgid_nr(p);
 		bgs[n] = (force_background && adj >= 0) ||
 			 adj >= READ_ONCE(adj_threshold);
@@ -370,86 +344,48 @@ out:
 	kvfree(bgs);
 }
 
-/*
- * 熄屏钩子——这条链真正可用的触发点
- * --------------------------------
- * 本来想用 oom_score_adj 驱动桌面，实测走不通：桌面的 adj 恒为 100，开应用、
- * 回桌面都不变（用 events/oom/oom_score_adj_update 抓了整个来回，涉及桌面的
- * 事件 0 条；该 tracepoint 上的事件全部来自 lmkd，写的是 930/940/950 这类
- * 缓存进程）。也就是说桌面根本没有可挂的 adj 跳变。
- *
- * 而能拿的量几乎全在桌面身上：adj>=700 的进程加起来只有 21MB，桌面一个进程
- * 用过一阵之后是 129~893MB。
- *
- * 熄屏是唯一既能覆盖桌面、风险又为零的边：屏幕关着的时候没有任何东西可见，
- * 回收不可能造成可感知的卡顿；亮屏再整体还原。这也正对"长待机"这个原始症状。
- *
- * 触发点的选择走过一次弯路：本来想复用 hybridswap 那个
- * panel_event_notification_trigger 钩子，实测在这台机器上它只送 FPS 变化
- * (notif_type=4，负载 144/120，正是这块 144Hz 屏的刷新率)，从不送
- * blank/unblank——这也解释了 oplus_hybridswap_panel_bridge 当初为什么被排除。
- *
- * 改为直接挂 msm_drm 的面板电源函数，实测每次转换各触发一次、无歧义：
- *   熄屏 sde_encoder_virt_disable -> dsi_panel_disable ->
- *        dsi_display_unprepare -> dsi_panel_power_off
- *   亮屏 dsi_display_prepare -> dsi_panel_power_on ->
- *        dsi_panel_enable -> sde_encoder_virt_enable
- * 取熄屏序列的末端（面板已彻底关掉才回收）和亮屏序列的最前端（给重新钉住
- * 留最多时间，实测还原只要约 1 秒）。
- */
-static struct kprobe panel_off_kp, panel_on_kp;
-static bool panel_kp_registered;
-static void kgsl_sweep_workfn(struct work_struct *work);
-static DECLARE_DELAYED_WORK(kgsl_sweep_work, kgsl_sweep_workfn);
+/* shrinker 节流：同一个回调可能连续打进来很多次，不能每次都全量扫 */
+static unsigned long last_shrinker_sweep_jiffies;
 
-static void kgsl_sweep_workfn(struct work_struct *work)
+static unsigned long kgsl_shrinker_count_objects(struct shrinker *s,
+						 struct shrink_control *sc)
 {
-	kgsl_state_sweep(READ_ONCE(pending_screen_off));
-}
+	unsigned long now;
+	unsigned int throttle;
 
-static int panel_off_handler(struct kprobe *kp, struct pt_regs *regs)
-{
-	if (!READ_ONCE(screen_off_sweep) || !READ_ONCE(bridge_enabled))
-		return 0;
-	WRITE_ONCE(pending_screen_off, true);
-	/* 延迟回收；这段时间内亮屏会把它取消，等于从没发生过 */
-	schedule_delayed_work(&kgsl_sweep_work,
-			      msecs_to_jiffies(READ_ONCE(screen_off_delay_sec) * 1000U));
-	return 0;
-}
+	atomic64_inc(&shrinker_calls);
 
-static int panel_on_handler(struct kprobe *kp, struct pt_regs *regs)
-{
 	if (!READ_ONCE(bridge_enabled))
 		return 0;
-	/* 亮屏一律还原，即使中途把 screen_off_sweep 关掉了也不能留下半回收状态。
-	 * 先撤销还没到期的那次回收——短暂锁屏就落在这一支，代价为零。 */
-	WRITE_ONCE(pending_screen_off, false);
-	cancel_delayed_work(&kgsl_sweep_work);
-	schedule_delayed_work(&kgsl_sweep_work, 0);
+
+	now = jiffies;
+	throttle = READ_ONCE(shrinker_throttle_sec);
+	if (time_before(now, last_shrinker_sweep_jiffies +
+			     msecs_to_jiffies(throttle * 1000U)))
+		return 0;
+
+	last_shrinker_sweep_jiffies = now;
+	atomic64_inc(&shrinker_sweeps);
+
+	/* 触发全量标记。不阻塞在这里，把写操作丢给 work queue 处理。
+	 * 返回 0：告诉内核"我已触发标记，但实际能回收多少由 KGSL 自己的
+	 * shrinker 去报"。 */
+	kgsl_state_sweep(false);
 	return 0;
 }
 
-static int register_panel_kprobes(void)
+static unsigned long kgsl_shrinker_scan_objects(struct shrinker *s,
+						struct shrink_control *sc)
 {
-	int ret;
-
-	panel_off_kp.symbol_name = "dsi_panel_power_off";
-	panel_off_kp.pre_handler = panel_off_handler;
-	ret = register_kprobe(&panel_off_kp);
-	if (ret)
-		return ret;
-
-	panel_on_kp.symbol_name = "dsi_panel_power_on";
-	panel_on_kp.pre_handler = panel_on_handler;
-	ret = register_kprobe(&panel_on_kp);
-	if (ret) {
-		unregister_kprobe(&panel_off_kp);
-		return ret;
-	}
-	panel_kp_registered = true;
-	return 0;
+	/* 不做实际回收，回 SHRINK_STOP */
+	return SHRINK_STOP;
 }
+
+static struct shrinker kgsl_state_shrinker = {
+	.count_objects = kgsl_shrinker_count_objects,
+	.scan_objects = kgsl_shrinker_scan_objects,
+	.seeks = DEFAULT_SEEKS,
+};
 
 static int __init kgsl_state_bridge_init(void)
 {
@@ -468,38 +404,38 @@ static int __init kgsl_state_bridge_init(void)
 		return ret;
 	}
 
-	ret = register_panel_kprobes();
-	if (ret)
-		pr_warn("面板 kprobe 注册失败 (%d)，熄屏回收不可用\n", ret);
+	ret = register_shrinker(&kgsl_state_shrinker);
+	if (ret) {
+		pr_warn("注册 shrinker 失败 (%d)，内存压力触发不可用\n", ret);
+		/* 不致命，继续运行，tracepoint 仍可用 */
+	}
 
+	/* 初始全量对齐 */
 	kgsl_state_sweep(false);
 
-	pr_info("已加载，adj 阈值=%d，熄屏回收=%d\n",
-		adj_threshold, screen_off_sweep && panel_kp_registered);
+	pr_info("已加载，adj 阈值=%d，shrinker 节流=%u 秒\n",
+		adj_threshold, shrinker_throttle_sec);
 	return 0;
 }
 
 static void __exit kgsl_state_bridge_exit(void)
 {
+	unregister_shrinker(&kgsl_state_shrinker);
 	tracepoint_probe_unregister(oom_adj_tracepoint,
 				    (void *)oom_score_adj_update_probe, NULL);
 	tracepoint_synchronize_unregister();
-	if (panel_kp_registered) {
-		unregister_kprobe(&panel_off_kp);
-		unregister_kprobe(&panel_on_kp);
-	}
 	cancel_work_sync(&kgsl_state_work);
-	cancel_delayed_work_sync(&kgsl_sweep_work);
 	/* 卸载时把所有进程还原成 foreground，不给系统留下半回收状态 */
 	kgsl_state_sweep(false);
-	pr_info("已卸载; events=%lld writes=%lld missing=%lld failed=%lld full=%lld\n",
+	pr_info("已卸载; events=%lld writes=%lld missing=%lld failed=%lld full=%lld shrinker_calls=%lld sweeps=%lld\n",
 		atomic64_read(&events_seen), atomic64_read(&writes_ok),
 		atomic64_read(&nodes_missing), atomic64_read(&writes_failed),
-		atomic64_read(&slots_full));
+		atomic64_read(&slots_full), atomic64_read(&shrinker_calls),
+		atomic64_read(&shrinker_sweeps));
 }
 
 module_init(kgsl_state_bridge_init);
 module_exit(kgsl_state_bridge_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Event-driven Android oom_adj to Qualcomm KGSL reclaim-state bridge");
+MODULE_DESCRIPTION("Shrinker-driven Android oom_adj to Qualcomm KGSL reclaim-state bridge (v4.1.1)");
