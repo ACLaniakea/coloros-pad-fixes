@@ -1016,6 +1016,46 @@ apply_feature_override
 
 
 # ============================================================================
+# HWUI 的 GPU 资源缓存预算：本机屏幕大、内存小，按原公式算出来过大
+#
+# HWUI 的 Skia 资源缓存上限 = 屏幕像素数 x 144 字节（两机同一公式，见
+# dumpsys gfxinfo 的 "Memory policy" 段）：
+#     对照机 PKX110  3,210,240 px -> 462.27 MB   占 11.38 GB 的 4.1%
+#     本机 TB710FU   6,400,000 px -> 921.60 MB   占 7.76 GB 的 **11.9%**
+# 公式只按屏幕面积缩放、不看物理内存，而本机正好落在"大屏 + 小内存"的角上。
+#
+# 后果实测（依次拉起 10 个应用、三轮）：桌面进程把预算吃满，其中绝大部分是
+# 高斯模糊的暂存渲染目标（category[Scratch]、完全可回收），但联想这版 msm_kgsl
+# 把它们钉成 unevictable，内核施加不了压力、只能等 HWUI 自己 trim：
+#     Unevictable  1231 -> 1567 -> 1031 MB，模糊中间面峰值 646 个
+#
+# HWUI 自带 debug.hwui.app_memory_policy（接受 default / lowram），lowram 会把
+# Max surface area 钳到 2,560,000，预算降到 368.64 MB（占本机内存 4.7%，与对照机
+# 的 4.1% 同量级）。实测同一套压力：
+#     Unevictable   565 -> 803 -> 867 -> 897 MB（峰值降约 670 MB）
+#     模糊中间面    0 -> 3 -> 2 -> 6（原为 426 -> 646）
+#     桌面翻页帧时  p50 8ms / p90 11ms / p95 12ms / p99 16ms，掉帧 2.52%（无回退）
+#
+# 注意这不是"对齐对照机"——对照机用的是 default，只是它屏幕小、预算本来就低且
+# 从没吃满过。这是针对本机硬件组合的调参，用的是 AOSP/ColorOS 自带的开关。
+# 放 $MODDIR/disable-hwui-lowram 可跳过。
+#
+# 判据用物理内存：post-fs-data 阶段 SurfaceFlinger 还没起来，读不到屏幕分辨率。
+# 10 GB 以下才降档；将来换到大内存机型会自动不触发。
+# ============================================================================
+if [ -f "$MODDIR/disable-hwui-lowram" ]; then
+    log_msg "HWUI: disable-hwui-lowram 存在，保持 default 预算"
+else
+    _memtotal=$(grep -m1 MemTotal /proc/meminfo | tr -dc 0-9)
+    if [ -n "$_memtotal" ] && [ "$_memtotal" -lt 10485760 ]; then
+        resetprop debug.hwui.app_memory_policy lowram
+        log_msg "HWUI: 资源缓存预算降档 lowram（MemTotal=${_memtotal} kB < 10 GB）"
+    else
+        log_msg "HWUI: MemTotal=${_memtotal} kB >= 10 GB，保持 default 预算"
+    fi
+fi
+
+# ============================================================================
 # THP 交还 ColorOS 的策略：联想 vendor 开 THP，OPlus vendor 关 THP
 #
 # 本机 soc_id=696、六核四簇，init.kernel.post_boot.sh 按 CPU 拓扑分派到
