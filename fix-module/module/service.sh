@@ -491,6 +491,24 @@ wait_for_stock_post_boot() {
 wait_for_stock_post_boot
 apply_sched_baseline
 
+# ----------------------------------------------------------------------------
+# MGLRU 能力位对齐对照机（2026-09-16）
+#
+# 对照机 PKX110 的高通 /vendor/etc/init/hw/init.target.rc 显式写
+# `write /sys/kernel/mm/lru_gen/enabled 1`，运行态为 0x0001：只开 MGLRU 本体，
+# 关掉 0x0002（回收时遍历进程页表清 accessed 位）。平板的联想 vendor 没有这一行，
+# 停在内核默认 0x0003，kswapd/直接回收每轮都多一遍页表遍历——亮屏瞬间正是
+# 相机与应用集中申请内存、直接回收最密集的时候。只写一次，不常驻。
+# ----------------------------------------------------------------------------
+if [ -w /sys/kernel/mm/lru_gen/enabled ]; then
+    _lru_before=$(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null)
+    if echo 1 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null; then
+        log_msg "lru_gen enabled ${_lru_before} -> $(cat /sys/kernel/mm/lru_gen/enabled 2>/dev/null) (aligned with reference init.target.rc)"
+    else
+        log_msg "WARN: lru_gen alignment write failed (still ${_lru_before})"
+    fi
+fi
+
 # 读回 CPU 策略放在基线之后，否则显示的是原厂/温控的建仓状态，
 # 反映不出模块自己写进去的 min_freq，属于误导性日志。
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
