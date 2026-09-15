@@ -184,7 +184,7 @@ if [ -f "$MODDIR/bin/lsposed-path-sync.jar" ] && \
             com.aclaniakea.tools.LsposedPathSync \
             /data/adb/lspd/config/modules_config.db \
             "$MODDIR/hook/BaseFix-Hook.apk" >>"$LOGFILE" 2>&1; then
-        log_msg "LSPosed hook path persisted for next boot"
+        log_msg "LSPosed hook path reconciled for next boot (see line above)"
     else
         log_msg "ERROR: late LSPosed hook path pin failed"
     fi

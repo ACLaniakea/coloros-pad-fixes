@@ -35,9 +35,25 @@ def _basefix_version() -> str:
     return m.group(1)
 
 
+def _basefix_version_code() -> str:
+    """The Hook's integer versionCode, which service.sh compares at boot.
+
+    hook/versionCode used to be a hand-maintained file.  It stayed at 301115
+    from 3.0 through 4.1.0 while the embedded APK was 410000, so the upgrade
+    check never fired and the path pin could not tell two copies apart.
+    """
+    import re
+    manifest = ROOT.parents[1] / "base-fix" / "hook" / "resources" / "AndroidManifest.xml"
+    m = re.search(r'android:versionCode="([0-9]+)"', manifest.read_text(encoding="utf-8"))
+    if not m:
+        raise SystemExit("base-fix AndroidManifest has no android:versionCode")
+    return m.group(1)
+
+
 HOOK_APK = ROOT.parents[1] / "releases" / f"BaseFix-Hook-v{_basefix_version()}.apk"
 EXCLUDE = {"fix-module.log", "fix-module.log.1", "tuning.log", "daemon.pid",
-           "magic.pid", "ram-expand.boot-toggle", ".aclswap.err"}
+           "magic.pid", "ram-expand.boot-toggle", ".aclswap.err",
+           "hook/versionCode"}
 
 # 只在仓库里留作参考、不该跟着装到机器上的目录。
 #
@@ -92,6 +108,25 @@ def verify_hook_payload(apk: Path) -> None:
                          + ", ".join(missing))
 
 
+def sync_dev_tree_hook() -> None:
+    """Keep module/hook in step with the released Hook APK.
+
+    The zip never packs module/hook/BaseFix-Hook.apk (every .apk in the tree
+    is skipped), but pushing module/ straight to a device during development
+    does.  That copy is gitignored and had sat at the 2026-09-02 build: a dev
+    push pinned LSPosed to it and system_server silently ran 3.2-era hooks
+    (no front-camera LED, the reverted cached-process cap back in force).
+    """
+    hook_dir = ROOT / "hook"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    tree_apk = hook_dir / "BaseFix-Hook.apk"
+    data = HOOK_APK.read_bytes()
+    if not tree_apk.is_file() or tree_apk.read_bytes() != data:
+        tree_apk.write_bytes(data)
+        print(f"synced {tree_apk} from {HOOK_APK.name}")
+    (hook_dir / "versionCode").write_text(_basefix_version_code() + "\n", encoding="utf-8")
+
+
 def main() -> None:
     keyboard_builder = ROOT.parents[0] / "tools" / "build_keyboard_bridge.py"
     keyboard_binary = ROOT / "bin" / "lenovo-keyboard-bridge"
@@ -116,6 +151,7 @@ def main() -> None:
     if not HOOK_APK.is_file():
         raise SystemExit(f"missing Hook APK: {HOOK_APK}")
     verify_hook_payload(HOOK_APK)
+    sync_dev_tree_hook()
     missing_cryptoeng = [source for source in CRYPTOENG_PAYLOAD.values()
                          if not (REPO / source).is_file()]
     if missing_cryptoeng:
@@ -151,6 +187,11 @@ def main() -> None:
         hook_info.external_attr = 0o644 << 16
         hook_info.compress_type = zipfile.ZIP_STORED
         dst.writestr(hook_info, HOOK_APK.read_bytes())
+        code_info = zipfile.ZipInfo("hook/versionCode", date_time=(2026, 8, 18, 0, 0, 0))
+        code_info.create_system = 3
+        code_info.external_attr = 0o644 << 16
+        code_info.compress_type = zipfile.ZIP_DEFLATED
+        dst.writestr(code_info, _basefix_version_code() + "\n")
         for rel, source in CRYPTOENG_PAYLOAD.items():
             path = REPO / source
             info = zipfile.ZipInfo(rel, date_time=(2026, 9, 3, 0, 0, 0))

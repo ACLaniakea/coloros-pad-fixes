@@ -587,7 +587,7 @@ if [ -f "$LSP_DB" ] && [ -f "$LSP_APK" ] && [ -f "$LSP_SYNC" ]; then
     if CLASSPATH="$LSP_SYNC" app_process /system/bin \
             com.aclaniakea.tools.LsposedPathSync "$LSP_DB" "$LSP_APK" \
             >>"$LOGFILE" 2>&1; then
-        log_msg "LSPosed hook path pinned before zygote"
+        log_msg "LSPosed hook path reconciled before zygote (see line above)"
     else
         log_msg "ERROR: failed to pin LSPosed hook path"
     fi

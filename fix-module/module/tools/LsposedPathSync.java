@@ -70,6 +70,14 @@ public final class LsposedPathSync {
         SQLiteDatabase db = SQLiteDatabase.openDatabase(new File(database), params);
         db.beginTransaction();
         try {
+            String current = currentApkPath(db, module);
+            String rival = rivalModuleCopy(current, apk);
+            if (rival != null) {
+                // Leave the transaction unsuccessful: nothing is written.
+                System.out.println(module + " left pinned to " + current + " (" + rival
+                        + "); not overriding with " + apk);
+                return;
+            }
             // Do not use REPLACE here: SQLite implements it as DELETE + INSERT,
             // which can cascade into LSPosed's scope rows on some schemas.
             db.execSQL("UPDATE modules SET apk_path=? WHERE module_pkg_name=?",
@@ -113,6 +121,63 @@ public final class LsposedPathSync {
         }
         System.out.println(module + " LSPosed path/scopes pinned to " + apk
                 + " (" + scopeCount + " scopes)");
+    }
+
+    private static String currentApkPath(SQLiteDatabase db, String module) {
+        try (android.database.Cursor cursor = db.rawQuery(
+                "SELECT apk_path FROM modules WHERE module_pkg_name=?", new String[] {module})) {
+            return cursor.moveToFirst() ? cursor.getString(0) : null;
+        }
+    }
+
+    /**
+     * Refuses to flip LSPosed between two KernelSU copies of the same module.
+     *
+     * <p>Every copy under /data/adb/modules pins its own embedded APK before
+     * zygote.  With a stale duplicate directory installed (a development push
+     * next to the released module), whichever post-fs-data finished last won,
+     * and on 2026-09-15 that was a 2026-09-02 Hook: system_server ran without
+     * the front-camera LED bridge while every log line looked healthy.
+     *
+     * <p>A PackageManager path (/data/app) is always replaced; that is what
+     * this tool exists for.  Another module copy that is still active keeps
+     * the pin when its hook/versionCode is newer or equal.  Equal keeps the
+     * incumbent so two identical copies cannot alternate between boots.
+     *
+     * @return a description of the copy that wins, or null to proceed
+     */
+    private static String rivalModuleCopy(String current, String apk) {
+        if (current == null || current.equals(apk)
+                || !current.startsWith("/data/adb/modules/")) {
+            return null;
+        }
+        File currentApk = new File(current);
+        File currentHook = currentApk.getParentFile();
+        File currentModule = currentHook == null ? null : currentHook.getParentFile();
+        if (!currentApk.isFile() || currentModule == null
+                || new File(currentModule, "disable").exists()
+                || new File(currentModule, "remove").exists()) {
+            return null;
+        }
+        long currentCode = hookVersionCode(currentHook);
+        long ownCode = hookVersionCode(new File(apk).getParentFile());
+        if (currentCode < ownCode) {
+            return null;
+        }
+        return "versionCode " + currentCode + " >= own " + ownCode
+                + "; remove the duplicate module directory";
+    }
+
+    private static long hookVersionCode(File hookDir) {
+        if (hookDir == null) return 0;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new java.io.FileInputStream(new File(hookDir, "versionCode")),
+                StandardCharsets.UTF_8))) {
+            String line = reader.readLine();
+            return line == null ? 0 : Long.parseLong(line.trim());
+        } catch (IOException | NumberFormatException e) {
+            return 0;
+        }
     }
 
     /**
