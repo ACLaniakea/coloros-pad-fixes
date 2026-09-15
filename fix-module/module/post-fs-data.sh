@@ -563,35 +563,9 @@ patch_stock_nandswap
 # 一起删除，原因见 service.sh 里的说明：那是加法不是还原，而真正的病根
 # （预建 memcg 目录导致 system_server EACCES）已经修掉了。
 # ----------------------------------------------------------------------------
-
-
-SHELL_TEMP_KO="$MODDIR/bin/oplus_shell_temp_compat.ko"
-if ! grep -q '^oplus_shell_temp_compat ' /proc/modules 2>/dev/null; then
-    # Also publishes the skin-msm-therm-usr thermal zone that this board's
-    # device tree omits, carrying Horae's real shell temperature. Both
-    # thermal-engine and the thermal HAL look their skin sensor up by that
-    # name; without it they fall back to the board sensor next to the SoC,
-    # which measured up to 19 C hotter than the shell.
-    if [ -f "$SHELL_TEMP_KO" ] && insmod "$SHELL_TEMP_KO" 2>>"$LOGFILE"; then
-        log_msg "OPlus Horae shell-temp compatibility loaded"
-    else
-        log_msg "WARN: OPlus Horae shell-temp compatibility load failed"
-    fi
-fi
-
-KGSL_BRIDGE_KO="$MODDIR/bin/oplus_kgsl_state_bridge.ko"
-if ! grep -q '^oplus_kgsl_state_bridge ' /proc/modules 2>/dev/null; then
-    # v4.1.1: shrinker-driven reclaim-state bridge. Marks adj>=100 processes
-    # as background when kernel has memory pressure, letting KGSL's own
-    # shrinker reclaim their GPU memory. Zero polling, no screen-state
-    # dependency. Replaces v4.1.0's screen-off sweep (which caused 101~121ms
-    # unlock frame times vs 24ms baseline).
-    if [ -f "$KGSL_BRIDGE_KO" ] && insmod "$KGSL_BRIDGE_KO" 2>>"$LOGFILE"; then
-        log_msg "KGSL reclaim-state bridge loaded (shrinker-driven v4.1.1)"
-    else
-        log_msg "WARN: KGSL reclaim-state bridge load failed"
-    fi
-fi
+# oplus_shell_temp_compat 与 oplus_kgsl_state_bridge 已移至 oplus-bsp-module
+# (2026-09-15 v4.1.1)，在那边统一管理和加载。
+# ----------------------------------------------------------------------------
 
 # oplus_mm_compat 壳已移除：它伪造 /proc/oplus_mem 并对外宣称"标准 zram 后端、
 # 不支持 HybridSwap"，而现在真正的 hybridswap 已经在跑，这套说法本身就是错的。
