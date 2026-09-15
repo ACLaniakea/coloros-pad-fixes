@@ -802,12 +802,7 @@ final class SystemStylusHooks {
         }
         PenBridgeReceiver.publishPhysicalEdge(context, z2);
         updateRefreshFromState(context);
-        main.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$$ExternalSyntheticLambda21
-            @Override // java.lang.Runnable
-            public final void run() {
-                SystemStylusHooks.syncColorOsPenState(context);
-            }
-        }, 80L);
+        scheduleColorOsPenStateSync(context, 80L);
         HookUtils.log("Lenovo pen hall state=" + i + " (" + (z2 ? "docked" : "undocked") + ")");
     }
 
@@ -1113,11 +1108,21 @@ final class SystemStylusHooks {
                 boolean unused = SystemStylusHooks.screenOn = false;
                 SystemStylusHooks.releaseLong(this.val$c);
                 SystemStylusHooks.setRefreshActive(this.val$c, false);
+                // A screen transition never changes pen hardware state, so it
+                // must not schedule the ColorOS state sync below either.
+                return;
             } else if ("android.intent.action.SCREEN_ON".equals(action)) {
                 boolean unused2 = SystemStylusHooks.screenOn = true;
                 // Hall/GATT/root broadcasts are the state owners. Replaying
                 // the same Hall edge here duplicated Settings, Bluetooth and
                 // refresh-rate work during the lock-screen animation.
+                //
+                // The unconditional sync at the end of onReceive still did it:
+                // 600ms after wake it ran on system_server's main looper for
+                // 211ms (Settings writes + broadcast), right inside the
+                // keyguard animation, and delayed the next main-thread message
+                // by 202ms.  Return before scheduling it.
+                return;
             } else if ("com.aclaniakea.lenovopenbridge.action.RECONNECT_PEN".equals(action)) {
                     try {
                         Settings.Global.putInt(this.val$c.getContentResolver(), "lenovo_pen_disconnect_requested", 0);
@@ -1185,15 +1190,32 @@ final class SystemStylusHooks {
                     }
                 }
             }
-            Handler handler6 = SystemStylusHooks.main;
-            final Context context6 = this.val$c;
-            handler6.postDelayed(new Runnable() { // from class: com.aclaniakea.colorosporttuning.SystemStylusHooks$6$$ExternalSyntheticLambda4
-                @Override // java.lang.Runnable
-                public final void run() {
-                    SystemStylusHooks.syncColorOsPenState(context6);
-                }
-            }, 600L);
+            SystemStylusHooks.scheduleColorOsPenStateSync(this.val$c, 600L);
         }
+    }
+
+    private static volatile Context stateSyncContext;
+    private static final Runnable STATE_SYNC = new Runnable() {
+        @Override // java.lang.Runnable
+        public void run() {
+            Context context = stateSyncContext;
+            if (context != null) {
+                SystemStylusHooks.syncColorOsPenState(context);
+            }
+        }
+    };
+
+    /**
+     * Pen state sync reads/writes Settings and sends a broadcast; none of it
+     * needs system_server's main looper.  Run it on the pen poll thread and
+     * coalesce bursts (a Bluetooth reconnect delivers several broadcasts in a
+     * row) into one sync.
+     */
+    static void scheduleColorOsPenStateSync(Context context, long delayMs) {
+        stateSyncContext = context;
+        Handler handler = pollHandler != null ? pollHandler : main;
+        handler.removeCallbacks(STATE_SYNC);
+        handler.postDelayed(STATE_SYNC, delayMs);
     }
 
     private static void registerStateSync(Context context) {
