@@ -1,5 +1,18 @@
 # hybridswap 补丁现状(2026-09-14 核实)
 
+> **2026-09-15 重编门禁（实机 panic 后确认）**：平板运行内核启用了
+> `CONFIG_SYSVIPC`，但通过 `gki-6.1.128-sysvipc-kabi-slots.patch` 把其状态放入
+> Android KABI reserve 槽，因而 `task_struct` 不能内联 `sysvsem/sysvshm`。恢复源码
+> 的未打补丁状态会多出 24 字节，使 `force_shrink_batch()` 采用错误的
+> `pending/signal=0x8e1/0x8a8`（正确值为 `0x8c9/0x890`），已实机触发对 `0x51` 的
+> NULL dereference 和 kernel panic。
+>
+> 每次重编必须先应用该 KABI 补丁，并在复制到设备前运行：
+> `python3 kernel-compat/tools/verify_hybridswap_task_abi.py <hybridmain.o-or-ko>`。
+> vermagic、modversion CRC 和外部符号一致仍不足以证明安全。已用恢复备份离线构建
+> 验证：应用该补丁后，候选 `hybridmain.o` 的完整 `task_struct` 布局和三处关键指令
+> 与当前稳定模块一致；未通过此门禁的产物一律不得装机。
+
 以下补丁**已编进在用的 `oplus_mm_hybridswap_zram.ko`**,在设备上核实过符号:
 
 | 补丁 | 作用 | 核实方式 |

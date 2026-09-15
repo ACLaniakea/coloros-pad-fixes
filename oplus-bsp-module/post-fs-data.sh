@@ -397,7 +397,19 @@ drop_stock_zram() {
 # ---------------------------------------------------------------------------
 loaded=0
 failed=0
+# 实验开关：$MODDIR/skip-modules 每行一个模块名（# 开头为注释），本次开机不加载。
+# 用于 A/B 对照，不改清单本身；删掉该文件即恢复。
+SKIPLIST=""
+if [ -f "$MODDIR/skip-modules" ]; then
+    SKIPLIST=$(grep -vE '^[[:space:]]*(#|$)' "$MODDIR/skip-modules" | tr -d '\r')
+    log_msg "skip-modules 存在，本次跳过: $(echo $SKIPLIST | tr '\n' ' ')"
+fi
+
 for m in $MODULES; do
+    if [ -n "$SKIPLIST" ] && echo "$SKIPLIST" | grep -qx "$m"; then
+        log_msg "skipped by skip-modules: $m"
+        continue
+    fi
     ko="$KODIR/$m.ko"
     if [ ! -f "$ko" ]; then
         log_msg "MISSING: $m.ko"
