@@ -1,0 +1,53 @@
+ACLaniakea: zram_opt as deployed since 2026-09-15 (mport/mm/zram_opt).
+
+1. g_swappiness / g_hybridswapd_swappiness 160/200 -> 125/125, the PKX110
+   stock compile-time defaults (see 4.1.1 investigation, section 12).  That
+   edit shipped in the 15:11 out-r2 build but its source was never saved;
+   this patch restores it (.data verified 0x7d/0x3c/0x7d, identical to the
+   deployed module).
+2. Shared /proc/oplus_mem probe (oplus_proc_compat.h), same as
+   oplus-proc-shared-dirs.patch.
+3. Makefile: -I$(src)/../.. for the shared header.
+
+Build with KBUILD_EXTRA_SYMBOLS=<kernel-compat/oplus_mm_osvelte/Module.symvers>
+or the oplus_read_mm_config import loses its CRC.
+
+--- a/mm/zram_opt/zram_opt.c
++++ b/mm/zram_opt/zram_opt.c
+@@ -18,12 +18,13 @@
+ #include <linux/mm.h>
+ #if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
+ #include "mm_osvelte/mm-config.h"
++#include "oplus_proc_compat.h"
+ 
+ static struct config_oplus_bsp_zram_opt *config;
+ #endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
+ 
+ static int g_direct_swappiness = 60;
+-static int g_swappiness = 160;
++static int g_swappiness = 125;	/* ACLaniakea: PKX110 stock default */
+ 
+ #ifdef CONFIG_DYNAMIC_TUNING_SWAPPINESS
+ static int threshold1_vm_swappiness;
+@@ -41,7 +42,7 @@
+ #endif
+ 
+ #define PARA_BUF_LEN 128
+-static int g_hybridswapd_swappiness = 200;
++static int g_hybridswapd_swappiness = 125;	/* ACLaniakea: PKX110 stock default */
+ static struct proc_dir_entry *para_entry;
+ 
+ #ifdef CONFIG_HYBRIDSWAP_SWAPD
+@@ -346,7 +347,7 @@
+ 
+ static int __init create_swappiness_para_proc(void)
+ {
+-	struct proc_dir_entry *root_dir_entry = proc_mkdir("oplus_mem", NULL);
++	struct proc_dir_entry *root_dir_entry = oplus_proc_mkdir_shared("oplus_mem");
+ 
+ 	para_entry = proc_create((root_dir_entry ?
+ 				"swappiness_para" : "oplus_mem/swappiness_para"),
+--- a/mm/zram_opt/Makefile
++++ b/mm/zram_opt/Makefile
+@@ -8,0 +9 @@
++ccflags-y += -I$(src)/../..

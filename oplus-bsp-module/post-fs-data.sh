@@ -498,6 +498,14 @@ fi
     echo "--- hook 注册结果快照 ---"
     dmesg 2>/dev/null | grep -aiE 'sched_assist|frame_boost|eas_opt|qos_sched|uxmem|failed to register|ret=-16' | tail -60
     echo "--- 快照结束 ---"
+    # 加载期内核告警（2026-09-15）：上面的关键字只会顺带命中告警里的
+    # "Modules linked in" 那一行（模块清单里有 sched_assist），告警头与调用栈
+    # 全被滤掉，事后 dmesg 早已滚掉无从追查。这里按块原样保存。
+    echo "--- 加载期内核告警 ---"
+    # 去掉寄存器与模块清单续行，只留告警头与调用栈，才不会被 tail 截掉前面的告警
+    dmesg 2>/dev/null | grep -a -A28 -E 'WARNING: CPU|BUG: |Oops|------------\[ cut here \]' | \
+        grep -av -E '^(\[[^]]*\])+ +(x[0-9]+ ?:|sp :|pc :|lr :|pstate:|Hardware name:|[a-z0-9_]+\(O?E?\+?\))' | tail -300
+    echo "--- 告警结束 ---"
 } >>"$LOGFILE" 2>/dev/null
 
 if [ -f /sys/block/zram0/hybridswap_core_enable ]; then

@@ -20,6 +20,7 @@
 
 #include "va_feature_hash.h"
 #include "reserve_area.h"
+#include "oplus_proc_compat.h"
 
 static int pid_s;
 
@@ -199,7 +200,7 @@ static struct proc_dir_entry *gloom_va_feature_debug;
 
 int __init oplus_gloom_proc_init(void)
 {
-	root_dir_entry = proc_mkdir("oplus_mem", NULL);
+	root_dir_entry = oplus_proc_mkdir_shared("oplus_mem");
 	if (!root_dir_entry) {
 		/* dir /proc/oplus_mem already exist Or mkdir fail */
 		gloom_va_feature = proc_create("oplus_mem/gloom_va_feature",

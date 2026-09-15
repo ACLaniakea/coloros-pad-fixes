@@ -1,0 +1,32 @@
+--- a/cpu/sched/sched_info/osi_hotthread.c
++++ b/cpu/sched/sched_info/osi_hotthread.c
+@@ -272,11 +272,6 @@
+ 	}
+ }
+ 
+-static void init_hot_thread_struct(void *ptr)
+-{
+-	struct hot_thread_node *hot_thread_node = ptr;
+-	memset(hot_thread_node, 0, sizeof(struct hot_thread_node));
+-}
+ 
+ void hotthread_show(struct seq_file *m, u32 win_idx, u64 now)
+ {
+@@ -348,9 +343,16 @@
+ 		osi_err("create top_hotthread fail\n");
+ 		return -1;
+ 	}
++	/*
++	 * No constructor: insert_hot_thread() allocates with kmem_cache_zalloc(),
++	 * and SLUB rejects a ctor combined with __GFP_ZERO
++	 * (WARN_ON_ONCE in new_slab(), mm/slub.c).  A ctor also only runs when a
++	 * slab page is created, not on reuse, so the per-allocation zeroing is
++	 * what actually initialises every node.
++	 */
+ 	hot_thread_struct_cachep = kmem_cache_create("hot_thread_node",
+ 			sizeof(struct hot_thread_node), 0,
+-			SLAB_PANIC|SLAB_ACCOUNT, init_hot_thread_struct);
++			SLAB_PANIC|SLAB_ACCOUNT, NULL);
+ 	if (!hot_thread_struct_cachep)
+ 		return -ENOMEM;
+ 

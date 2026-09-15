@@ -869,9 +869,6 @@ static int __init logger_init(void)
 	int ret;
 	struct proc_dir_entry *root;
 	struct kobject *osvelte_kobj;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE_DBG)
-	struct proc_dir_entry *subdir_root;
-#endif
 	/* create osvelte procfs */
 	root = proc_mkdir(DEV_NAME, NULL);
 	if (!root) {
@@ -905,16 +902,14 @@ static int __init logger_init(void)
 	if (unlikely(ret))
 		goto remove_procfs;
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE_DBG)
-	subdir_root = proc_mkdir(mtrack_text[MTRACK_DMABUF], root);
-	if (subdir_root)
-		create_dmabuf_procfs(subdir_root);
-#ifdef CONFIG_ASHMEM
-	subdir_root = proc_mkdir(mtrack_text[MTRACK_ASHMEM], root);
-	if (subdir_root)
-		create_ashmem_procfs(subdir_root);
-#endif /* CONFIG_ASHMEM */
-#endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE_DBG */
+	/*
+	 * ACLaniakea: the MM_OSVELTE_DBG block that used to sit here created the
+	 * dmabuf/ashmem subdirectories and their nodes, and sys_memstat_init()
+	 * below then proc_mkdir()'d the same names again: two proc_register
+	 * WARNs per boot, and mtrack_procs[] left NULL so later mtrack
+	 * registrations were silently dropped.  sys_memstat_init() creates both
+	 * directories and populates them, which is what non-DBG builds do.
+	 */
 	ret = sys_memstat_init(root);
 	if (unlikely(ret))
 		goto remove_procfs;

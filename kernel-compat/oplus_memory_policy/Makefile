@@ -11,3 +11,4 @@ ccflags-y += -DCONFIG_HYBRIDSWAP_SWAPD
 # is scoped to zram_opt and selects anon/file balance only above its native
 # free-page watermark; it does not alter the global VM policy.
 ccflags-y += -DCONFIG_OPLUS_BALANCE_ANON_FILE_RECLAIM
+ccflags-y += -I$(src)/../include

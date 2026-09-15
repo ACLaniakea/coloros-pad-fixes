@@ -31,6 +31,7 @@
 #ifdef CONFIG_KSWAPS_LOAD_STAT
 #include <trace/hooks/vmscan.h>
 #include <trace/events/vmscan.h>
+#include "oplus_proc_compat.h"
 #endif
 
 #if defined(CONFIG_ALLOC_ADJUST_FLAGS) || defined(CONFIG_ALLOC_ORDER_STAT) || defined(CONFIG_KSWAPS_LOAD_STAT)
@@ -112,7 +113,7 @@ static const struct proc_ops proc_alloc_adjust_ctrl_ops = {
 
 static void create_alloc_adjust_ctrl_proc(void)
 {
-	struct proc_dir_entry *root_dir_entry = proc_mkdir("oplus_mem", NULL);
+	struct proc_dir_entry *root_dir_entry = oplus_proc_mkdir_shared("oplus_mem");
 
 	alloc_adjust_ctrl_entry = proc_create(root_dir_entry ?
 			"alloc_adjust_ctrl" : "oplus_mem/alloc_adjust_ctrl",

@@ -1,0 +1,138 @@
+ACLaniakea: stop duplicate proc_mkdir() WARNs from the ported OPlus modules.
+
+Applies to the mport tree (the sweep_oplus_modules.sh mirror).  Needs
+kernel-compat/include/oplus_proc_compat.h copied to the mport root.
+Modules built from kernel-compat/ (gloom, osvelte, proactive_compact,
+memory_policy) carry the same change directly in the repo.
+
+Every module below proc_mkdir()'d /proc/oplus_mem or /proc/task_info on its
+own; each duplicate hit WARN() in proc_register and tainted the kernel.
+The existing "dir/<node>" fallback already handles a NULL return, so the
+fix only probes for the directory first.  oplus_ipc reuses d_oplus_binder.
+
+--- a/mm/dump_tasks_mem/tasks_memory.c
++++ b/mm/dump_tasks_mem/tasks_memory.c
+@@ -15,6 +15,7 @@
+ #include <linux/uaccess.h>
+ #include <linux/mm.h>
+ #include <linux/version.h>
++#include "oplus_proc_compat.h"
+ 
+ #if IS_ENABLED(CONFIG_QCOM_KGSL)
+ extern u64 kgsl_get_stats(pid_t pid);
+@@ -214,7 +215,7 @@
+ {
+ 	struct proc_dir_entry *root_dir_entry, *pentry;
+ 
+-	root_dir_entry = proc_mkdir("oplus_mem", NULL);
++	root_dir_entry = oplus_proc_mkdir_shared("oplus_mem");
+ 	pentry = proc_create((root_dir_entry ?
+ 				"memory_monitor" : "oplus_mem/memory_monitor"),
+ 			S_IRUGO|S_IWUGO, root_dir_entry, &memory_monitor_fops);
+--- a/mm/sigkill_diagnosis/sigkill_diagnosis.c
++++ b/mm/sigkill_diagnosis/sigkill_diagnosis.c
+@@ -19,6 +19,7 @@
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
+ #include <trace/hooks/signal.h>
++#include "oplus_proc_compat.h"
+ 
+ #define SIGKILL_RECORD_SIZE 20
+ #define SYSTEM_UID 1000
+@@ -150,7 +151,7 @@
+ 	}
+ 	spin_lock_init(&g_sigkill_records->lock);
+ 
+-	root_dir_entry = proc_mkdir("oplus_mem", NULL);
++	root_dir_entry = oplus_proc_mkdir_shared("oplus_mem");
+ 	g_sigkill_reason_entry = proc_create((root_dir_entry ?
+ 		"sigkill_reason" : "oplus_mem/sigkill_reason"),
+ 		0444, root_dir_entry, &proc_sigkill_reason_ops);
+--- a/mm/process_reclaim/process_reclaim.c
++++ b/mm/process_reclaim/process_reclaim.c
+@@ -30,6 +30,7 @@
+ #include <linux/healthinfo/fg.h>
+ #endif
+ #include "process_reclaim.h"
++#include "oplus_proc_compat.h"
+ 
+ /*
+  * check current need cancel reclaim or not, please check task not NULL first.
+@@ -407,7 +408,7 @@
+ 
+ static int __init process_reclaim_init_procfs(void)
+ {
+-	struct proc_dir_entry *root_dir_entry = proc_mkdir("oplus_mem", NULL);
++	struct proc_dir_entry *root_dir_entry = oplus_proc_mkdir_shared("oplus_mem");
+ 
+ 	process_reclaim = proc_create((root_dir_entry ?
+ 				"process_reclaim" : "oplus_mem/process_reclaim"),
+--- a/mm/uxmem_opt/uxmem_opt.c
++++ b/mm/uxmem_opt/uxmem_opt.c
+@@ -46,6 +46,7 @@
+ #include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+ #include <../kernel/oplus_cpu/sched/sched_info/osi_healthinfo.h>
+ #include "uxmem_opt.h"
++#include "oplus_proc_compat.h"
+ 
+ #define UX_PAGE_POOL_NAME "ux_page_pool_fillthread"
+ #define MAX_UXMEM_POOL_ALLOC_RETRIES (5)
+@@ -494,7 +495,7 @@
+ {
+ 	int ret = 0;
+ 	int i;
+-	struct proc_dir_entry *root_dir_entry = proc_mkdir("oplus_mem", NULL);
++	struct proc_dir_entry *root_dir_entry = oplus_proc_mkdir_shared("oplus_mem");
+ 	struct zone *zone;
+ 	struct kprobe prep_new_page_kp = {
+ 		.symbol_name = "prep_new_page"
+--- a/cpu/sched/task_cpustats/task_cpustats.c
++++ b/cpu/sched/task_cpustats/task_cpustats.c
+@@ -21,6 +21,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/init.h>
+ #include <linux/version.h>
++#include "oplus_proc_compat.h"
+ 
+ /* FIXME get max_pid on the runtime.*/
+ #define MAX_PID (32768)
+@@ -278,7 +279,7 @@
+ 	task_info = NULL;
+ 	task_cpustats = NULL;
+ 
+-	task_info = proc_mkdir(TASK_CPUSTATS_FILE, NULL);
++	task_info = oplus_proc_mkdir_shared(TASK_CPUSTATS_FILE);
+ 
+ 	if (!task_info)
+ 		task_cpustats = proc_mkdir(TASK_CPUSTATS_PROC_EXIST_NODE, NULL);
+--- a/cpu/sched/task_sched/task_sched_info.c
++++ b/cpu/sched/task_sched/task_sched_info.c
+@@ -37,6 +37,7 @@
+ 
+ #if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+ #include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
++#include "oplus_proc_compat.h"
+ #endif
+ 
+ #define MAX_CPU_CLUSTER 4
+@@ -1359,7 +1360,7 @@
+ 
+ 	sched_action_init();
+ 
+-	task_info = proc_mkdir(SCHED_INFO_DIR, NULL);
++	task_info = oplus_proc_mkdir_shared(SCHED_INFO_DIR);
+ 
+ 	if (!task_info)
+ 		sched_info = proc_mkdir(SCHED_INFO_PROC_EXIST_NODE, NULL);
+--- a/ipc/trans_ctrl.c
++++ b/ipc/trans_ctrl.c
+@@ -846,7 +846,8 @@
+ 	/* ACLaniakea: binder_sysfs.c 已经建过同名目录，撞名时复用而不是失败。
+ 	 * 原逻辑在这里返回 -ENOENT，会让 module_init 在 vendor hook 已注册的
+ 	 * 情况下失败，模块被释放后钩子悬空，binder 一活动就 panic。 */
+-	oplus_binder_dir = proc_mkdir(OPLUS_BINDER_PROC_DIR, NULL);
++	/* 同一模块内先复用指针，避免重复 proc_mkdir 触发 proc_register 的 WARN */
++	oplus_binder_dir = d_oplus_binder ? NULL : proc_mkdir(OPLUS_BINDER_PROC_DIR, NULL);
+ 	if (!oplus_binder_dir) {
+ 		oplus_binder_dir = d_oplus_binder;
+ 		if (!oplus_binder_dir) {

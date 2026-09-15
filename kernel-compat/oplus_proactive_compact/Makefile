@@ -3,3 +3,4 @@
 # 读到 is_fragmented=1 之后经 /proc/sys/vm/compact_memory 触发。
 obj-m += oplus_mm_proactive_compact.o
 oplus_mm_proactive_compact-y := proactive_compact.o
+ccflags-y += -I$(src)/../include

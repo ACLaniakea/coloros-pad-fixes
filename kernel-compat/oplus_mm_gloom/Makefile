@@ -5,3 +5,4 @@
 obj-m += oplus_mm_gloom.o
 oplus_mm_gloom-y := gloom_common.o mmap_util.o reserve_area.o va_feature_hash.o va_feature_node.o
 ccflags-y += -I$(src) -Wno-error -DCONFIG_VIRTUAL_RESERVE_MEMORY -DCONFIG_OPLUS_FEATURE_HEALTHINFO=1
+ccflags-y += -I$(src)/../include
