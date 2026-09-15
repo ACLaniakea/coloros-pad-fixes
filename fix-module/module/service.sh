@@ -1247,7 +1247,10 @@ fi
 if module_enabled oplus_app_suggestion_protocol_fix; then
     log_msg "app suggestions: dedicated module enabled, skipped"
 else
-    "$MODDIR/bin/app-suggestion-service.sh" "$MODDIR" &
+    (
+        "$MODDIR/bin/app-suggestion-service.sh" "$MODDIR"
+        rm -f "$MODDIR/app-suggestion.pid"
+    ) &
     echo $! >"$MODDIR/app-suggestion.pid"
 fi
 
