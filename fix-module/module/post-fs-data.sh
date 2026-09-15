@@ -1014,55 +1014,60 @@ apply_feature_override() {
 
 apply_feature_override
 
+
 # ============================================================================
-# THP 交还 ColorOS 的策略：联想 vendor 脚本开 THP，OPlus vendor 脚本关 THP
+# THP 交还 ColorOS 的策略：联想 vendor 开 THP，OPlus vendor 关 THP
 #
-# /vendor/bin/init.kernel.post_boot-memory.sh 由 init 服务 memory-post-boot 执行
-# （/vendor/etc/init/hw/init.qti.kernel.rc）。本机这份是**联想**的，只有一个
-# enable_thp()：`echo always > .../transparent_hugepage/enabled`。
-# 对照机 PKX110 同名脚本里是 configure_thp()，注释写着 "disable THP by default"，
-# 明确写 never。也就是说：ColorOS 的内存栈是按 THP 关闭调的，而我们跑在
-# 联想 vendor 上，继承了给 ZUI 调的相反策略。
+# 本机 soc_id=696、六核四簇，init.kernel.post_boot.sh 按 CPU 拓扑分派到
+# init.kernel.post_boot-pineapple_1_2_2_1.sh，其 enable_thp() 写 always；
+# memory-post-boot 服务另跑 -memory.sh，也写 always。对照机 PKX110 的同名
+# OPlus 脚本是 configure_thp()，注释写着 "disable THP by default"，写 never。
+# ColorOS 的内存栈是按 THP 关闭调的，我们跑在联想 vendor 上继承了相反策略。
 #
-# 实测代价（平板开机 1 小时，defrag 已是 never）：
+# 实测代价（开机 1 小时，defrag 本就是 never）：
 #   thp_fault_alloc     8,334      —— 分配成功的 2MB 大页
 #   thp_fault_fallback  406,637    —— 失败回退，约 112 次/秒
 #   AnonHugePages       2,048 kB   —— 8334 个大页最后只剩 1 个，其余全被拆掉
-# 对照机同三项**全为 0**。即这些尝试与拆分是纯开销，没有留下任何收益。
+# 对照机同三项全为 0。修复后本机同样归零。
 #
-# 做法：运行时从原厂脚本派生一份、只把这一条 always 改成 never，再 bind。
-# 派生失败或没改到就完全不 bind，保持原样。
+# 做法：遍历全部 init.kernel.post_boot*.sh，凡写 always 的，运行时派生一份
+# 只改那一条、校验后 bind。任一闸门不过就完全不动那个文件。
+#
+# 验证时注意：**不要在 sys.boot_completed=1 的瞬间就查**。vendor post-boot
+# 链是由该属性触发的，此刻它还没跑完，会读到 governor=performance、
+# min_free_kbytes=73728、vendor.post_boot.parsed 为空的过渡态——那不是故障。
+# 等 1 分钟后再查：应为 governor=walt、min_free=11584、parsed=1、THP=never。
 # ============================================================================
-THP_SRC=/vendor/bin/init.kernel.post_boot-memory.sh
-THP_RUNTIME_DIR=$MODDIR/runtime
-THP_RUNTIME=$THP_RUNTIME_DIR/init.kernel.post_boot-memory.sh
+THP_RUNTIME_DIR=$MODDIR/runtime/vendor-bin
+THP_NODE=/sys/kernel/mm/transparent_hugepage/enabled
 
 align_thp_to_coloros() {
-    [ -f "$THP_SRC" ] || return 0
-    # 已经是 never（比如换了 vendor 或原厂改了）就什么都不做
-    if ! grep -qE '^[ 	]*echo[ 	]+always[ 	]*>[ 	]*/sys/kernel/mm/transparent_hugepage/enabled' "$THP_SRC"; then
-        log_msg "THP: 原厂脚本未写 always，跳过"
-        return 0
-    fi
     mkdir -p "$THP_RUNTIME_DIR" 2>/dev/null
-    # toybox 的 sed 是 BRE 且不支持 \+（与 grep 不认 \b、BRE 不认 \| 是同一类坑），
-    # 所以这里用字面的「空格或制表符」字符组重复，不用 \+。已在本机实测命中。
-    sed 's#^\([ 	]*\)echo[ 	][ 	]*always[ 	]*>[ 	]*/sys/kernel/mm/transparent_hugepage/enabled#\1echo never > /sys/kernel/mm/transparent_hugepage/enabled#' \
-        "$THP_SRC" > "$THP_RUNTIME" 2>/dev/null || {
-        rm -f "$THP_RUNTIME"; log_msg "WARN: THP 脚本派生失败，保持原样"; return 0
-    }
-    # 闸门：必须真的改到，且行数不变（只替换不增删）
-    if ! grep -q 'echo never > /sys/kernel/mm/transparent_hugepage/enabled' "$THP_RUNTIME" ||
-       [ "$(wc -l < "$THP_RUNTIME")" != "$(wc -l < "$THP_SRC")" ]; then
-        rm -f "$THP_RUNTIME"; log_msg "WARN: THP 脚本派生结果不合预期，保持原样"; return 0
-    fi
-    chmod 755 "$THP_RUNTIME" 2>/dev/null
-    chcon u:object_r:vendor_file:s0 "$THP_RUNTIME" 2>/dev/null
-    if mount --bind "$THP_RUNTIME" "$THP_SRC" 2>/dev/null; then
-        log_msg "THP: 已改为 never（对齐 ColorOS vendor 策略）"
-    else
-        log_msg "WARN: THP 脚本 bind 失败，保持原样"
-    fi
+    _thp_done=0 _thp_skip=0
+    for _src in /vendor/bin/init.kernel.post_boot*.sh; do
+        [ -f "$_src" ] || continue
+        grep -qE "^[ 	]*echo[ 	]+always[ 	]*>[ 	]*$THP_NODE" "$_src" || continue
+        _out="$THP_RUNTIME_DIR/$(basename "$_src")"
+        # toybox 的 sed 是 BRE 且不支持 \+（与 grep 不认 \b、BRE 不认 \| 同一类坑），
+        # 所以用字面的「空格或制表符」字符组重复。已实测命中。
+        sed "s#^\([ 	]*\)echo[ 	][ 	]*always[ 	]*>[ 	]*$THP_NODE#\1echo never > $THP_NODE#" \
+            "$_src" > "$_out" 2>/dev/null || {
+            rm -f "$_out"; _thp_skip=$((_thp_skip + 1)); continue
+        }
+        # 闸门：派生结果不能再有 always 写入，且行数必须不变（只替换、不增删）
+        if grep -qE "^[ 	]*echo[ 	]+always[ 	]*>[ 	]*$THP_NODE" "$_out" ||
+           [ "$(wc -l < "$_out")" != "$(wc -l < "$_src")" ]; then
+            rm -f "$_out"; _thp_skip=$((_thp_skip + 1)); continue
+        fi
+        chmod 755 "$_out" 2>/dev/null
+        chcon u:object_r:vendor_file:s0 "$_out" 2>/dev/null
+        if mount --bind "$_out" "$_src" 2>/dev/null; then
+            _thp_done=$((_thp_done + 1))
+        else
+            _thp_skip=$((_thp_skip + 1))
+        fi
+    done
+    log_msg "THP: 对齐 ColorOS 策略（never），改写并 bind $_thp_done 个 vendor 脚本，跳过 $_thp_skip 个"
 }
 
 align_thp_to_coloros

@@ -1710,3 +1710,4 @@ soter_key_repair() {
 for frontled in /sys/class/leds/blue/brightness /sys/class/leds/green/brightness /sys/class/leds/red/brightness; do
     echo 0 >"$frontled" 2>/dev/null
 done
+

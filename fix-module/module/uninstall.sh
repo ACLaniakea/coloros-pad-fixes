@@ -25,6 +25,11 @@ for conf in "$MODDIR"/payload/thermal/thermal-engine_*.conf; do
 done
 umount /vendor/etc/perf/targetconfig.xml 2>/dev/null
 
+# 清理 4.1.1 开发期短暂用过的 THP bind 方案（已撤销，见 service.sh 里的说明）
+for _thp in /vendor/bin/init.kernel.post_boot*.sh; do
+    umount "$_thp" 2>/dev/null
+done
+
 # 2) OSense 配置（现在只 bind 这两份；另四份已交还原厂）
 umount /my_stock/etc/extension/sys_memory_nirvana_config.xml 2>/dev/null
 umount /my_stock/etc/extension/sys_osense_memory_decisionmaker_config.xml 2>/dev/null
