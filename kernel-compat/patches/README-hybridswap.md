@@ -30,8 +30,8 @@
 ——那个延迟是原厂设计本身（保护亮屏/解锁后的第一个交互窗口），不是移植时序错位。
 两机跑的是同一个 HAL 二进制 `/odm/bin/hw/vendor-oplus-hardware-performance-V1-service`。
 已恢复原厂 setter，平板 `swapd_manual_pause` 从恒 0 变为 70 秒内 +189,331。
-前者把原厂事件驱动的 `snapshotd` 错改为 5Hz 轮询，实测 `swapd_hit_refaults` 仍近乎全票命中；
-后者把 hook 从 `android_vh_alloc_pages_slowpath`
+`refault-snapshot-fallback` 把原厂事件驱动的 `snapshotd` 错改为 5Hz 轮询，实测
+`swapd_hit_refaults` 仍近乎全票命中；`wmark-wakeup` 把 hook 从 `android_vh_alloc_pages_slowpath`
 换成 `android_vh_get_page_wmark`,而后者挂在 `zone_watermark_fast()`——每次页分配都走的最热路径,
 回调体又是 `if (alloc_flags) wake_all_swapd();`,等于每分配一页唤醒一次。当时已回滚,
 在用的模块里查无 `android_vh_get_page_wmark`。**不要重新引入。**
@@ -52,10 +52,9 @@
 `oplus-hybridswap-panel-real-blank-edge.patch` 才能得到可用的结果。两条按顺序应用。
 
 错在哪：`panel_event_notification_trigger` 在这台机器上只送 `notif_type=4`
-（FPS 变化，负载 144/120），从不送 blank/unblank。而 `bridge_active()` 只看
-kprobe 注册标志——注册确实成功了——于是既没有正确的 `display_off`，又把 HAL
-那路 `swapd_pause` 一并丢弃。对照机 PKX110 的 `swapd_manual_pause` 是 2.27 亿次，
-平板修复前恒为 0。
+（FPS 变化，负载 144/120），从不送 blank/unblank，于是 `display_off` 永远为 0。
+当时还叠了一条"桥已注册就清零 `swapd_pause`"的逻辑，把 HAL 那路控制一并丢弃
+（已于 2026-09-15 移除，见上）。
 
 **教训：判定一个探针"可用"要看它有没有真的收到过事件，不能只看注册返回值。**
 
