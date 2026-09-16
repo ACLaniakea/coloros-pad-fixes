@@ -1247,28 +1247,16 @@ else
 fi
 
 # ============================================================================
-# 刷新率配置：面板能力声明必须包含 144。
+# 刷新率配置只补面板缺失的 144Hz mode 声明，不接管策略。
 #
-# 这份配置 2026-08-06 曾被挪进 pen-bridge，并在那里把 ratemagic 从
-# 8750R60_90_120_144 改成 8750R60_90_120（去掉 144），本意是消除
-# 120/144 之间的闪屏。实际后果相反：文件里的图例仍是 4(144Hz)，
-# 且 800 多个条目（launcher / systemui / uxdesign 在内）的 rateId 都在用 4，
-# OplusRefreshRatePolicyImpl 拿 4 去 ratemagic 声明的速率集合里解析不出来，
-# 整块落进降级路径——实测面板被长期钉在 60Hz，SF 侧一度出现
-# render=[0.00 Hz, 90.00 Hz] 这种 DisplayModeDirector 六条投票里
-# 根本没人投出来的怪值（90 恰好是残缺 ratemagic 里有的速率）。
+# 移植 ROM 的 ratemagic 若缺少 144，用户手动选最高档时的 rateId=4 无法解析，
+# 会落到错误降级路径。保留 8750R60_90_120_144 使该面板模式可用；自动档和
+# 应用条目的策略则交还框架：rateId 的第一位统一为 0（未指定），默认自动档为
+# 120Hz，只有用户手动选择最高档时第四位 rateId=4 才请求 144Hz。
 #
-# 改回 8750R60_90_120_144 后实测：activeMode 变成 id=1 / 144.00 Hz、
-# measured_fps 115，桌面与浏览器都真正跑到 144，切 App 时策略
-# primaryRanges 全程稳定在 [144,144] 不再抖动。
-#
-# rateId 取值：0=未指定 1=90Hz 2=60Hz 3=120Hz 4=144Hz。文件图例只列了
-# 0/1/2/4，但 3 是合法的——com.oplus.ipemanager 笔设置页的 3-1-2-3 是
-# 原厂让它跑 120Hz，不要当成非法值去"修"。
-#
-# 它是整机显示基线，与笔无关（笔在用时的 120Hz 由原厂
-# OplusRefreshRatePolicyImpl 依 settings_enable_oppo_pencil 自行投票），
-# 所以放回 fix 模块。
+# 笔在实际书写时的 120Hz 仍由 OplusRefreshRatePolicyImpl 根据
+# settings_enable_oppo_pencil 投票，本模块不写 min_refresh_rate 或
+# peak_refresh_rate。
 # ============================================================================
 REFRESH_TARGET=/my_product/etc/refresh_rate_config.xml
 REFRESH_PAYLOAD="$MODDIR/payload/refresh_rate_config.tb710fu.xml"

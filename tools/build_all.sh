@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ACLaniakea ColorOS Pad Port Fixes - 4.1.2 全量构建
+# ACLaniakea ColorOS Pad Port Fixes - 4.1.3 全量构建
 # 输出统一到 releases/。
 #
 # 工具链默认指向随盘保存的那一份（PAD_KIT），不再依赖 /tmp——/tmp 会被清空，
@@ -51,11 +51,11 @@ echo "== 3/8 PenHidCtl APK =="
 python3 pen-bridge/penhidctl/tools/build_penhid.py
 
 echo "== 4/8 refresh PenHidCtl inside pen-bridge module =="
-cp releases/PenHidCtl-v4.1.2.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
+cp releases/PenHidCtl-v4.1.3.apk pen-bridge/module/system/priv-app/aclpenhid/PenHidCtl.apk
 
 echo "== 5/8 root module zips =="
 python3 fix-module/tools/build_fix.py
-python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v4.1.2.zip
+python3 pen-bridge/module/tools/build_root.py pen-bridge/module releases/PenBridge-Module-v4.1.3.zip
 
 echo "== 6/8 OPlus BSP kernel modules =="
 python3 oplus-bsp-module/tools/build_oplus_bsp.py
@@ -68,18 +68,18 @@ python3 zui-camera-compat-hook/build.py
 python3 zui-camera-module/tools/build_module.py
 # 这两步写进各自模块的 releases/ 子目录，不会自动汇总到顶层。
 # 4.0.1 那次是手工拷的，结果 4.0.2 构建时差点漏掉相机模块——补上。
-cp zui-camera-compat-hook/releases/ZUI-Camera-Compat-v4.1.2.apk releases/
-cp zui-camera-module/releases/LenovoPadProGT-ZUI-Camera-Port-v4.1.2.zip releases/
+cp zui-camera-compat-hook/releases/ZUI-Camera-Compat-v4.1.3.apk releases/
+cp zui-camera-module/releases/LenovoPadProGT-ZUI-Camera-Port-v4.1.3.zip releases/
 
 echo "== SHA256SUMS =="
-# 校验文件自身会被 *-v4.1.2.* 匹配到，列进去就永远 sha256sum -c 失败；排除掉。
+# 校验文件自身会被 *-v4.1.3.* 匹配到，列进去就永远 sha256sum -c 失败；排除掉。
 # 同时带上配套内核件，它们没有版本后缀，glob 匹配不到。
 ( cd releases \
-  && sha256sum $(ls *-v4.1.2.* | grep -v '^SHA256SUMS-') > SHA256SUMS-v4.1.2.txt \
+  && sha256sum $(ls *-v4.1.3.* | grep -v '^SHA256SUMS-') > SHA256SUMS-v4.1.3.txt \
   && ( cd kernel && sha256sum boot-ACLaniakea-SM8650Q-droidspaces-r3.img \
                               vendor_boot-hyperSched-stub.img \
                               vendor_boot-ColorOS16-original-TB710FU.img ) \
-     >> SHA256SUMS-v4.1.2.txt )
+     >> SHA256SUMS-v4.1.3.txt )
 
 echo "== releases =="
 ls -la releases/

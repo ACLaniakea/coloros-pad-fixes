@@ -1,9 +1,9 @@
 <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <!-- format: mode_auto-mode_90-mode_60-mode_144
      value: 0(unspecified), 1(90Hz), 2(60Hz), 4(144Hz)
-     rateId="4-0-2-4" the preferred refresh rate id per setting mode
+     rateId="0-0-2-4" the preferred refresh rate id per setting mode
      setting mode: auto  ,90hz     ,60hz  ,144hz
-     refresh rate: 144hz ,default,  60hz  ,144hz
+     refresh rate: 120hz ,default,  60hz  ,144hz
 -->
 <refresh_rate_config version="2026082801" ratemagic="8750R60_90_120_144">
 
@@ -14,16 +14,16 @@
 	<item package="com.oplus.remotecontrol" rateId="2-1-2-4" disableViewOverride="true" />  
   <item package="com.coloros.securepay" rateId="1-1-2-4" />  
   <item package="com.oplus.securepay" rateId="1-1-2-4" />  
-  <item package="com.oplus.pantanal.ums" rateId="4-1-2-4" /> 
+  <item package="com.oplus.pantanal.ums" rateId="0-1-2-4" />
   <item package="com.oplus.aimemory" rateId="1-1-2-4" /> 
   <item package="com.oplus.ipemanager" activity="com.oplus.ipemanager.btadsorb.setting.activity.PencilSettingActivity" rateId="3-1-2-3" />
-  <item package="com.taobao.taobao" activity="com.taobao.taobao/com.taobao.android.detail.wrapper.activity.DetailActivity" rateId="4-1-2-4" disableViewOverride="true" />  
-  <item package="com.tencent.mm" activity="com.tencent.mm/.ui.chatting.gallery.ImageGalleryUI" rateId="4-0-0-0" disableViewOverride="true" />  
-  <item package="com.tencent.mm" activity="com.tencent.mm/.plugin.sns.ui.SnsOnlineVideoActivity" rateId="4-1-2-4" disableViewOverride="true" />  
+  <item package="com.taobao.taobao" activity="com.taobao.taobao/com.taobao.android.detail.wrapper.activity.DetailActivity" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.tencent.mm" activity="com.tencent.mm/.ui.chatting.gallery.ImageGalleryUI" rateId="0-0-0-0" disableViewOverride="true" />
+  <item package="com.tencent.mm" activity="com.tencent.mm/.plugin.sns.ui.SnsOnlineVideoActivity" rateId="0-1-2-4" disableViewOverride="true" />
   <item package="com.coloros.video" activity="com.coloros.video/com.oppo.video.mycenter.MoviePlayerActivity" rateId="1-1-2-4" disableViewOverride="true" />  
-  <item package="com.coloros.weather2" activity="com.coloros.weather2/com.coloros.weather.main.view.WeatherMainActivity" rateId="4-0-2-4" disableViewOverride="true" />  
-  <item package="com.coloros.weather2" activity="com.coloros.weather2/com.oplus.weather.main.view.WeatherMainActivity" rateId="4-0-2-4" disableViewOverride="true" />  
-  <item package="net.huanci.hsjpro" activity="net.huanci.hsjpro/net.huanci.hsjpro.activities.PaintActivity" rateId="4-2-2-4" disableViewOverride="true" />  
+  <item package="com.coloros.weather2" activity="com.coloros.weather2/com.coloros.weather.main.view.WeatherMainActivity" rateId="0-0-2-4" disableViewOverride="true" />
+  <item package="com.coloros.weather2" activity="com.coloros.weather2/com.oplus.weather.main.view.WeatherMainActivity" rateId="0-0-2-4" disableViewOverride="true" />
+  <item package="net.huanci.hsjpro" activity="net.huanci.hsjpro/net.huanci.hsjpro.activities.PaintActivity" rateId="0-2-2-4" disableViewOverride="true" />
   
 
 
@@ -32,10 +32,10 @@
   <item package="fm.qingting.qtradio" rateId="2-2-2-4" />  
   <item package="com.changba" rateId="2-2-2-4" />  
   <item package="cmccwm.mobilemusic" rateId="2-2-2-4" />  
-  <item package="com.tencent.qqmusic" rateId="4-2-2-4" />  
+  <item package="com.tencent.qqmusic" rateId="0-2-2-4" />
   <item package="com.ximalaya.ting.android" rateId="2-2-2-4" />  
-  <item package="com.netease.cloudmusic" rateId="4-2-2-4" />  
-  <item package="com.tencent.karaoke" rateId="4-2-2-4" />  
+  <item package="com.netease.cloudmusic" rateId="0-2-2-4" />
+  <item package="com.tencent.karaoke" rateId="0-2-2-4" />
   <item package="com.kugou.android" rateId="2-2-2-4" />  
   <item package="com.heytap.music" rateId="1-2-2-4" />  
   <item package="com.xs.fm" rateId="2-2-2-4" />  
@@ -302,11 +302,11 @@
   <item package="com.facetech.yourking" rateId="1-2-2-4" />  
 
   <item package="com.alibaba.android.rimet" rateId="1-2-2-4" />  
-  <item package="cn.wps.moffice_eng" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.jideos.jnotes" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.newskyer.draw" rateId="4-2-2-4" disableViewOverride="true"/>  
+  <item package="cn.wps.moffice_eng" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.jideos.jnotes" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.newskyer.draw" rateId="0-2-2-4" disableViewOverride="true"/>
   <item package="com.youdao.note" rateId="1-2-2-1" disableViewOverride="true"/>  
-  <item package="com.yinxiang" rateId="4-2-2-4" disableViewOverride="true"/>  
+  <item package="com.yinxiang" rateId="0-2-2-4" disableViewOverride="true"/>
   <item package="com.tencent.androidqqmail" rateId="1-2-2-4" />  
   <item package="com.tencent.wework" rateId="1-2-2-4" />  
   <item package="com.android.email" rateId="1-2-2-4" />  
@@ -332,16 +332,16 @@
   <item package="com.nearme.ocloud" rateId="1-2-2-4" />  
   <item package="com.alicloud.databox" rateId="1-2-2-4" disableViewOverride="true" />  
   <item package="com.sogou.translator" rateId="1-2-2-4" />  
-  <item package="com.orion.notein" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.freenotes.freenotes" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.onyx.galaxy.note" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.topstack.kilonotes.pad" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.r.learnnote" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.trainone.graffiti" rateId="4-2-2-4" disableViewOverride="true"/>  
+  <item package="com.orion.notein" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.freenotes.freenotes" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.onyx.galaxy.note" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.topstack.kilonotes.pad" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.r.learnnote" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.trainone.graffiti" rateId="0-2-2-4" disableViewOverride="true"/>
 
-  <item package="com.tencent.mobileqq" rateId="4-2-2-4" disableViewOverride="true" />  
-  <item package="com.tencent.mm" rateId="4-2-2-4" disableViewOverride="true" floatWinRateId="2" />  
-  <item package="com.teamtalk.im" rateId="4-2-2-4" />  
+  <item package="com.tencent.mobileqq" rateId="0-2-2-4" disableViewOverride="true" />
+  <item package="com.tencent.mm" rateId="0-2-2-4" disableViewOverride="true" floatWinRateId="2" />
+  <item package="com.teamtalk.im" rateId="0-2-2-4" />
   <item package="io.liuliu.music" rateId="1-2-2-4" />  
   <item package="com.zhenai.android" rateId="1-2-2-4" />  
   <item package="com.ifreetalk.ftalk" rateId="1-2-2-4" />  
@@ -414,7 +414,7 @@
   <item package="com.baidu.searchbox.lite" rateId="1-2-2-4" disableViewOverride="true" />  
   <item package="com.opera.browser" rateId="1-2-2-4" disableViewOverride="true" />  
   <item package="com.heytap.browser" rateId="1-2-2-4" disableViewOverride="true" />  
-  <item package="com.quark.browser" rateId="4-2-2-4" disableViewOverride="true" />  
+  <item package="com.quark.browser" rateId="0-2-2-4" disableViewOverride="true" />
   <item package="com.cat.readall" rateId="1-2-2-4" />  
   <item package="com.android.quicksearchbox" rateId="1-2-2-4" />  
   <item package="com.baidu.searchbox.tomas" rateId="1-2-2-4" />  
@@ -425,7 +425,7 @@
   <item package="pi.browser" rateId="1-2-2-4" />  
   <item package="com.sogou.activity.src" rateId="1-2-2-4" />  
 
-  <item package="com.coloros.note" rateId="4-2-2-4" disableViewOverride="true" />  
+  <item package="com.coloros.note" rateId="0-2-2-4" disableViewOverride="true" />
   <item package="com.heytap.speechassist" rateId="1-2-2-4" />  
   <item package="com.coloros.calendar" rateId="1-2-2-4" />  
   <item package="com.coloros.calculator" rateId="1-2-2-4" />  
@@ -436,7 +436,7 @@
   <item package="com.coloros.familyguard" rateId="1-2-2-4" />  
   <item package="com.coloros.soundrecorder" rateId="1-2-2-4" />  
 
-  <item package="com.android.contacts" rateId="4-2-2-4" />  
+  <item package="com.android.contacts" rateId="0-2-2-4" />
   <item package="com.cootek.smartdialer" rateId="2-2-2-1" />  
 
   <item package="com.taobao.taobao" rateId="1-2-2-4" />  
@@ -459,8 +459,8 @@
   <item package="com.taobao.litetao" rateId="1-2-2-4" />  
   <item package="com.sankuai.youxuan" rateId="1-2-2-4" />  
   <item package="com.jd.jdlite" rateId="1-2-2-4" />  
-  <item package="com.smzdm.client.android" rateId="4-2-2-4" />  
-  <item package="com.fxj.ark" rateId="4-2-2-4" />  
+  <item package="com.smzdm.client.android" rateId="0-2-2-4" />
+  <item package="com.fxj.ark" rateId="0-2-2-4" />
   <item package="com.hupu.shihuo" rateId="1-2-2-4" />  
   <item package="com.jd.pingou" rateId="1-2-2-4" />  
   <item package="com.xunmeng.merchant" rateId="1-2-2-4" />  
@@ -473,7 +473,7 @@
   <item package="com.jingdong.pdj" rateId="1-2-2-4" />  
   <item package="com.taobao.etao" rateId="1-2-2-4" />  
   <item package="com.yaya.zone" rateId="1-2-2-4" />  
-  <item package="com.wonderfull.mobileshop" rateId="4-2-2-4" />  
+  <item package="com.wonderfull.mobileshop" rateId="0-2-2-4" />
   <item package="cn.com.bailian.bailianmobile" rateId="1-2-2-4" />  
   <item package="com.taobao.qianniu" rateId="1-2-2-4" />  
   <item package="com.dangdang.buy2" rateId="1-2-2-4" />  
@@ -661,30 +661,30 @@
   <item package="com.zzw.october" rateId="2-2-2-1" />  
   <item package="com.baidu.carlife" rateId="2-2-2-1" />  
 
-  <item package="com.tencent.tmgp.codev" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.dfjz.moba" rateId="4-1-2-4" />  
-  <item package="com.dfjz.moba.nearme.gamecenter" rateId="4-1-2-4" />  
-  <item package="com.tencent.tmgp.yunbu.bounceballs" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
+  <item package="com.tencent.tmgp.codev" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.dfjz.moba" rateId="0-1-2-4" />
+  <item package="com.dfjz.moba.nearme.gamecenter" rateId="0-1-2-4" />
+  <item package="com.tencent.tmgp.yunbu.bounceballs" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
   <item package="com.popcap.pvz2cthdop" rateId="1-1-2-1" disableViewOverride="true"/>  
-  <item package="com.tencent.jkchess" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.kiloo.subwaysurf" rateId="4-2-2-4" />  
+  <item package="com.tencent.jkchess" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.kiloo.subwaysurf" rateId="0-2-2-4" />
   <item package="com.netease.aceracer.nearme.gamecenter" rateId="1-2-2-1" />  
   <item package="com.netease.aceracer.m4399" rateId="1-2-2-1" />  
-  <item package="com.outfit7.herodash.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false"/>  
-  <item package="com.supercell.clashofclans.nearme.gamecenter" rateId="4-0-0-4" />  
-  <item package="com.mgss.mihuan" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.imangi.templerun2" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.yingxiong.heroo.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.netease.hyxd.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
+  <item package="com.outfit7.herodash.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.supercell.clashofclans.nearme.gamecenter" rateId="0-0-0-4" />
+  <item package="com.mgss.mihuan" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.imangi.templerun2" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.yingxiong.heroo.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.netease.hyxd.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
   <item package="com.netease.moba.nearme.gamecenter" rateId="1-1-2-1" disableViewOverride="true" />  
-  <item package="com.supercell.clashroyale.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.zk.cfsc.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true"/>  
-  <item package="com.fingersoft.hrc2.cn.noncmcc.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" />  
-  <item package="com.sgshd.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
+  <item package="com.supercell.clashroyale.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.zk.cfsc.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true"/>
+  <item package="com.fingersoft.hrc2.cn.noncmcc.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.sgshd.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
   <item package="com.tencent.tmgp.djsy" rateId="1-2-2-1" />  
   <item package="com.miHoYo.bh3.nearme.gamecenter" disableViewOverride="true" rateId="1-2-2-1" />  
   <item package="com.hottagames.hotta.nearme.gamecenter" rateId="1-2-2-1" />  
-  <item package="com.zy.game.painter.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
+  <item package="com.zy.game.painter.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
 
   <item package="com.tmri.app.main" rateId="2-2-2-1" />  
   <item package="com.MobileTicket" rateId="2-2-2-1" />  
@@ -813,51 +813,51 @@
   <item package="com.lemon.lv" rateId="2-2-2-1" />  
   <item package="com.mt.mtxx.mtxx" rateId="2-2-2-1" />  
   <item package="com.meitu.meiyancamera" rateId="2-2-2-1" />  
-  <item package="net.huanci.hsjpro" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.aige.hipaint" rateId="4-2-2-4" disableViewOverride="true"/>  
-  <item package="com.tophatch.concepts.china" rateId="4-2-2-4" disableViewOverride="true"/>  
+  <item package="net.huanci.hsjpro" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.aige.hipaint" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.tophatch.concepts.china" rateId="0-2-2-4" disableViewOverride="true"/>
 
   <item package="com.oplus.aiwriter" rateId="1-1-2-4" /> 
-  <item package="com.coloros.accessibilityassistant" rateId="4-1-2-4" /> 
+  <item package="com.coloros.accessibilityassistant" rateId="0-1-2-4" />
   <item package="com.oplus.aiunit" rateId="1-1-2-4" /> 
-  <item package="com.oplus.wirelesssettings" rateId="4-2-2-4" />  
-  <item package="com.android.launcher" rateId="4-2-2-4" />  
-  <item package="com.android.settings" rateId="4-2-2-4" />  
-  <item package="com.android.permissioncontroller" rateId="4-1-2-4" />  
-  <item package="com.android.phone" rateId="4-2-2-4" />  
-  <item package="com.oplus.uxdesign" rateId="4-2-2-4" />  
-  <item package="com.coloros.assistantscreen" rateId="4-2-2-4" />  
-  <item package="com.coloros.smartsidebar" rateId="4-2-2-4" />  
-  <item package="com.oplus.ocar" rateId="4-2-2-4" />  
-  <item package="com.oplus.omoji" rateId="4-2-2-4" />  
-  <item package="com.coloros.oshare" rateId="4-2-2-4" />  
-  <item package="com.heytap.ocsp.client" rateId="4-2-2-4" />  
-  <item package="com.oplus.owork" rateId="4-2-2-4" />  
-  <item package="com.coloros.operationManual" rateId="4-2-2-4" />  
-  <item package="com.coloros.findmyphone" rateId="4-2-2-4" />  
-  <item package="com.coloros.childrenspace" rateId="4-2-2-4" />  
-  <item package="com.oplus.consumerIRApp" rateId="4-2-2-4" />  
-  <item package="com.heytap.health" rateId="4-2-2-4" />  
-  <item package="com.oplus.screenshot" rateId="4-2-2-4" />  
-  <item package="com.coloros.bootreg" rateId="4-2-2-4" />  
-  <item package="com.nearme.instant.platform" rateId="4-2-2-4" />  
-  <item package="com.heytap.pictorial" rateId="4-2-2-4" />  
-  <item package="com.coloros.video" rateId="4-2-2-4" />  
-  <item package="com.coloros.codebook" rateId="4-2-2-4" />  
-  <item package="com.coloros.sharescreen" rateId="4-2-2-4" />  
-  <item package="com.oplus.screenrecorder" rateId="4-2-2-4" />  
-  <item package="com.heytap.quicksearchbox" rateId="4-2-2-4" />  
-  <item package="com.oplus.linker" rateId="4-2-2-4" />  
-  <item package="com.oplus.gesture" rateId="4-2-2-4" />  
-  <item package="com.android.documentsui" rateId="4-2-2-4" />  
-  <item package="com.coloros.filemanager" rateId="4-2-2-4" />  
-  <item package="com.oplus.member" rateId="4-2-2-4" />  
-  <item package="com.oplus.melody" rateId="4-2-2-4" />  
-  <item package="com.heytap.tas" rateId="4-2-2-4" />  
-  <item package="com.coloros.ocrscanner" rateId="4-2-2-4" />  
-  <item package="com.coloros.colordirectservice" rateId="4-2-2-4" />  
-  <item package="com.coloros.shortcuts" rateId="4-2-2-4" />  
-  <item package="com.coloros.sceneservice" rateId="4-2-2-4" />  
+  <item package="com.oplus.wirelesssettings" rateId="0-2-2-4" />
+  <item package="com.android.launcher" rateId="0-2-2-4" />
+  <item package="com.android.settings" rateId="0-2-2-4" />
+  <item package="com.android.permissioncontroller" rateId="0-1-2-4" />
+  <item package="com.android.phone" rateId="0-2-2-4" />
+  <item package="com.oplus.uxdesign" rateId="0-2-2-4" />
+  <item package="com.coloros.assistantscreen" rateId="0-2-2-4" />
+  <item package="com.coloros.smartsidebar" rateId="0-2-2-4" />
+  <item package="com.oplus.ocar" rateId="0-2-2-4" />
+  <item package="com.oplus.omoji" rateId="0-2-2-4" />
+  <item package="com.coloros.oshare" rateId="0-2-2-4" />
+  <item package="com.heytap.ocsp.client" rateId="0-2-2-4" />
+  <item package="com.oplus.owork" rateId="0-2-2-4" />
+  <item package="com.coloros.operationManual" rateId="0-2-2-4" />
+  <item package="com.coloros.findmyphone" rateId="0-2-2-4" />
+  <item package="com.coloros.childrenspace" rateId="0-2-2-4" />
+  <item package="com.oplus.consumerIRApp" rateId="0-2-2-4" />
+  <item package="com.heytap.health" rateId="0-2-2-4" />
+  <item package="com.oplus.screenshot" rateId="0-2-2-4" />
+  <item package="com.coloros.bootreg" rateId="0-2-2-4" />
+  <item package="com.nearme.instant.platform" rateId="0-2-2-4" />
+  <item package="com.heytap.pictorial" rateId="0-2-2-4" />
+  <item package="com.coloros.video" rateId="0-2-2-4" />
+  <item package="com.coloros.codebook" rateId="0-2-2-4" />
+  <item package="com.coloros.sharescreen" rateId="0-2-2-4" />
+  <item package="com.oplus.screenrecorder" rateId="0-2-2-4" />
+  <item package="com.heytap.quicksearchbox" rateId="0-2-2-4" />
+  <item package="com.oplus.linker" rateId="0-2-2-4" />
+  <item package="com.oplus.gesture" rateId="0-2-2-4" />
+  <item package="com.android.documentsui" rateId="0-2-2-4" />
+  <item package="com.coloros.filemanager" rateId="0-2-2-4" />
+  <item package="com.oplus.member" rateId="0-2-2-4" />
+  <item package="com.oplus.melody" rateId="0-2-2-4" />
+  <item package="com.heytap.tas" rateId="0-2-2-4" />
+  <item package="com.coloros.ocrscanner" rateId="0-2-2-4" />
+  <item package="com.coloros.colordirectservice" rateId="0-2-2-4" />
+  <item package="com.coloros.shortcuts" rateId="0-2-2-4" />
+  <item package="com.coloros.sceneservice" rateId="0-2-2-4" />
   <!-- 不要把这一条改成 3(120Hz)：试过，无效。
        锁屏动态壁纸 com.heytap.colorfulengine 恒定 60fps，而 144/60=2.4 不整除，
        每帧只能落在第 2 或第 3 个 vsync 上，形成固定的 3-2-3-2-2 节拍，
@@ -872,30 +872,30 @@
        要消除打拍只能改 com.android.launcher，那会把主屏一起降到 120——
        代价大于收益，故维持 4。参考：手机 PKX110 面板本身就是 120Hz，
        120/60=2 天然整除，所以原厂从未遇到这个组合，没有可照搬的答案。 -->
-  <item package="com.android.systemui" rateId="4-2-2-4" />  
-  <item package="com.oplus.exserviceui" rateId="4-2-2-4" />  
-  <item package="com.coloros.scenemode" rateId="4-2-2-4" />  
-  <item package="com.android.printspooler" rateId="4-2-2-4" />  
-  <item package="com.oplus.notificationmanager" rateId="4-2-2-4" />  
-  <item package="com.oplus.securitypermission" rateId="4-2-2-4" />  
-  <item package="com.oplus.multiapp" rateId="4-2-2-4" />  
-  <item package="com.coloros.digitalwellbeing" rateId="4-2-2-4" />  
-  <item package="com.oplus.apprecover" rateId="4-2-2-4" />  
-  <item package="com.oplus.trafficmonitor" rateId="4-2-2-4" />  
-  <item package="com.oplus.sos" rateId="4-2-2-4" />  
-  <item package="com.oplus.blacklistapp" rateId="4-2-2-4" />  
-  <item package="com.android.server.telecom" rateId="4-2-2-4" />  
-  <item package="com.android.mms" rateId="4-2-2-4" />  
-  <item package="com.coloros.floatassistant" rateId="4-2-2-4" />  
-  <item package="com.oplus.appdetail" rateId="4-2-2-4" />  
-  <item package="com.oplus.games" rateId="4-2-2-4" />  
-  <item package="com.oplus.account" rateId="4-2-2-4" />  
-  <item package="com.oplus.safecenter" rateId="4-2-2-4" />  
-  <item package="com.oplus.battery" rateId="4-2-2-4" />  
-  <item package="com.android.incallui" rateId="4-2-2-4" />  
-  <item package="com.oplus.logkit" rateId="4-2-2-4" />  
-  <item package="com.oplus.eyeprotect" rateId="4-2-2-4" />  
-  <item package="com.oplus.ota" rateId="4-2-2-4" />  
+  <item package="com.android.systemui" rateId="0-2-2-4" />
+  <item package="com.oplus.exserviceui" rateId="0-2-2-4" />
+  <item package="com.coloros.scenemode" rateId="0-2-2-4" />
+  <item package="com.android.printspooler" rateId="0-2-2-4" />
+  <item package="com.oplus.notificationmanager" rateId="0-2-2-4" />
+  <item package="com.oplus.securitypermission" rateId="0-2-2-4" />
+  <item package="com.oplus.multiapp" rateId="0-2-2-4" />
+  <item package="com.coloros.digitalwellbeing" rateId="0-2-2-4" />
+  <item package="com.oplus.apprecover" rateId="0-2-2-4" />
+  <item package="com.oplus.trafficmonitor" rateId="0-2-2-4" />
+  <item package="com.oplus.sos" rateId="0-2-2-4" />
+  <item package="com.oplus.blacklistapp" rateId="0-2-2-4" />
+  <item package="com.android.server.telecom" rateId="0-2-2-4" />
+  <item package="com.android.mms" rateId="0-2-2-4" />
+  <item package="com.coloros.floatassistant" rateId="0-2-2-4" />
+  <item package="com.oplus.appdetail" rateId="0-2-2-4" />
+  <item package="com.oplus.games" rateId="0-2-2-4" />
+  <item package="com.oplus.account" rateId="0-2-2-4" />
+  <item package="com.oplus.safecenter" rateId="0-2-2-4" />
+  <item package="com.oplus.battery" rateId="0-2-2-4" />
+  <item package="com.android.incallui" rateId="0-2-2-4" />
+  <item package="com.oplus.logkit" rateId="0-2-2-4" />
+  <item package="com.oplus.eyeprotect" rateId="0-2-2-4" />
+  <item package="com.oplus.ota" rateId="0-2-2-4" />
   <item package="com.heytap.themestore" rateId="1-2-2-4" />  
   <item package="com.oppo.store" rateId="1-2-2-4" />  
   <item package="com.oneplus.brickmode" rateId="1-2-2-4" />  
@@ -905,7 +905,7 @@
   <item package="com.nearme.gamecenter" rateId="1-2-2-4" />  
   <item package="com.heytap.cloud" rateId="1-2-2-4" />  
   <item package="andes.oplus.documentsreader" rateId="1-2-2-4" />  
-  <item package="com.heytap.mydevices" rateId="4-2-2-4" />  
+  <item package="com.heytap.mydevices" rateId="0-2-2-4" />
   <item package="com.oplus.pscanvas" rateId="1-1-2-4" />  
 
 
@@ -976,20 +976,20 @@
   <item package="jp.naver.line.android:999" rateId="1-2-2-4" />  
   <item package="com.viber.voip" rateId="1-2-2-4" />  
   <item package="com.linecorp.lineoa" rateId="1-2-2-4" />  
-  <item package="com.google.android.dialer" rateId="4-2-2-4" />  
-  <item package="com.truecaller" rateId="4-2-2-4" />  
-  <item package="sg.omi" rateId="4-2-2-4" />  
-  <item package="ovo.id" rateId="4-2-2-4" />  
-  <item package="com.altanredes.altanvoip" rateId="4-2-2-4" />  
-  <item package="com.callapp.contacts" rateId="4-2-2-4" />  
-  <item package="gogolook.callgogolook2" rateId="4-2-2-4" />  
+  <item package="com.google.android.dialer" rateId="0-2-2-4" />
+  <item package="com.truecaller" rateId="0-2-2-4" />
+  <item package="sg.omi" rateId="0-2-2-4" />
+  <item package="ovo.id" rateId="0-2-2-4" />
+  <item package="com.altanredes.altanvoip" rateId="0-2-2-4" />
+  <item package="com.callapp.contacts" rateId="0-2-2-4" />
+  <item package="gogolook.callgogolook2" rateId="0-2-2-4" />
 
   <item package="com.ss.android.ugc.trill" rateId="2-2-2-4" />  
   <item package="com.zhiliaoapp.musically.go" rateId="2-2-2-4" />  
   <item package="video.like" rateId="2-2-2-4" />  
   <item package="com.zhiliaoapp.musically" rateId="2-2-2-4" />  
 
-  <item package="com.google.android.apps.youtube.music" rateId="4-2-2-4" />  
+  <item package="com.google.android.apps.youtube.music" rateId="0-2-2-4" />
   <item package="com.spotify.music" rateId="2-2-2-1" />  
   <item package="com.moonvideo.android.resso" rateId="2-2-2-1" />  
   <item package="com.starmakerinteractive.starmaker" rateId="2-2-2-1" />  
@@ -999,7 +999,7 @@
   <item package="com.tencent.ibg.joox" rateId="2-2-2-1" />  
   <item package="com.gulbers.alkitabkidung" rateId="2-2-2-1" />  
   <item package="com.android.fmradio" rateId="2-2-2-1" />  
-  <item package="com.google.android.tts" rateId="4-2-2-4" />  
+  <item package="com.google.android.tts" rateId="0-2-2-4" />
   <item package="com.coloros.musiclink" rateId="2-2-2-1" />  
   <item package="com.dywx.larkplayer" rateId="2-2-2-1" />  
   <item package="com.shaiban.audioplayer.mplayer" rateId="2-2-2-1" />  
@@ -1022,7 +1022,7 @@
   <item package="com.lemon.lvoverseas" rateId="2-2-2-1" />  
   <item package="premium.gotube.adblock.utube" rateId="2-2-2-1" />  
   <item package="com.bstar.intl" rateId="1-1-2-4" />  
-  <item package="com.google.android.apps.youtube.kids" rateId="4-2-2-4" />  
+  <item package="com.google.android.apps.youtube.kids" rateId="0-2-2-4" />
   <item package="com.vidio.android" rateId="1-1-2-4" />  
   <item package="com.video.fun.app" rateId="2-2-2-1" />  
   <item package="com.vanced.android.youtube" rateId="2-2-2-1" />  
@@ -1045,7 +1045,7 @@
   <item package="com.google.android.videos" rateId="1-1-2-4" />  
   <item package="com.univision.prendetv" rateId="1-1-2-4" />  
   <item package="com.kwai.video" rateId="1-1-2-4" />  
-  <item package="com.oppo.daydreamvideo" rateId="4-1-2-4" />  
+  <item package="com.oppo.daydreamvideo" rateId="0-1-2-4" />
   <item package="com.hbo.hbonow" rateId="1-1-2-4" />  
   <item package="com.disney.disneyplus" rateId="1-1-2-4" />  
   <item package="free.daily.tube.background" rateId="2-2-2-1" />  
@@ -1102,7 +1102,7 @@
   <item package="com.dvex.movp" rateId="2-2-2-1" />  
   <item package="com.mobile.telelatinomobile" rateId="1-1-2-4" />  
 
-  <item package="com.android.chrome" rateId="4-1-2-4" disableViewOverride="true" />  
+  <item package="com.android.chrome" rateId="0-1-2-4" disableViewOverride="true" />
   <item package="com.google.android.googlequicksearchbox" rateId="1-2-2-4" />  
   <item package="com.oppo.quicksearchbox" rateId="1-2-2-4" />  
   <item package="com.UCMobile.intl" rateId="1-2-2-4" disableViewOverride="true" />  
@@ -1116,7 +1116,7 @@
   <item package="com.aloha.browser" rateId="1-2-2-4" />  
   <item package="com.duckduckgo.mobile.android" rateId="1-2-2-4" />  
 
-  <item package="com.coloros.gallery3d" rateId="4-2-2-4" disableViewOverride="true" appreqfirst="true" />  
+  <item package="com.coloros.gallery3d" rateId="0-2-2-4" disableViewOverride="true" appreqfirst="true" />
   <item package="com.oneplus.gallery" rateId="1-2-2-4" />  
   <item package="com.google.android.apps.photos" rateId="1-2-2-4" />  
   <item package="com.bigwinepot.nwdn.international" rateId="1-2-2-4" />  
@@ -1158,19 +1158,19 @@
   <item package="com.dream11sportsguru" rateId="1-2-2-4" />  
   <item package="com.fsn.nykaa" rateId="1-2-2-4" />  
 
-  <item package="com.android.stk" rateId="4-2-2-4" />  
-  <item package="com.google.android.gms" rateId="4-2-2-4" />  
+  <item package="com.android.stk" rateId="0-2-2-4" />
+  <item package="com.google.android.gms" rateId="0-2-2-4" />
   <item package="yuku.alkitab" rateId="2-2-2-1" />  
   <item package="org.sabda.alkitab" rateId="2-2-2-1" />  
   <item package="com.fintech.uangmudah" rateId="2-2-2-1" />  
   <item package="com.google.android.apps.restore" rateId="2-2-2-1" />  
   <item package="com.xsquarestudio.forcelte" rateId="2-2-2-1" />  
   <item package="com.alpha.lte4g" rateId="2-2-2-1" />  
-  <item package="com.google.android.deskclock" rateId="4-2-2-4" />  
-  <item package="com.google.android.calculator" rateId="4-2-2-4" />  
-  <item package="com.google.android.apps.translate" rateId="4-2-2-4" />  
-  <item package="com.google.android.calendar" rateId="4-2-2-4" />  
-  <item package="com.android.vending" rateId="4-2-2-4" />  
+  <item package="com.google.android.deskclock" rateId="0-2-2-4" />
+  <item package="com.google.android.calculator" rateId="0-2-2-4" />
+  <item package="com.google.android.apps.translate" rateId="0-2-2-4" />
+  <item package="com.google.android.calendar" rateId="0-2-2-4" />
+  <item package="com.android.vending" rateId="0-2-2-4" />
   <item package="com.steren.home" rateId="2-2-2-1" />  
   <item package="com.handmark.expressweather" rateId="2-2-2-1" />  
   <item package="com.teamhub.playhub" rateId="2-2-2-1" />  
@@ -1186,15 +1186,15 @@
   <item package="com.meetyou.intl" rateId="2-2-2-1" />  
   <item package="com.daemon.shelper" rateId="2-2-2-1" />  
   <item package="com.cloudflare.onedotonedotonedotone" rateId="2-2-2-1" />  
-  <item package="com.google.android.apps.chromecast.app" rateId="4-2-2-4" />  
+  <item package="com.google.android.apps.chromecast.app" rateId="0-2-2-4" />
   <item package="com.google.android.apps.youtube.creator" rateId="2-2-2-1" />  
-  <item package="com.example.myapplication" rateId="0-0-0-0" appreqfirst="true" /> 
-  <item package="com.picsart.draw" rateId="4-2-2-4" disableViewOverride="true"/> 
-  <item package="com.medibang.android.paint.tablet" rateId="4-2-2-4" disableViewOverride="true"/> 
-  <item package="com.microsoft.office.onenote" rateId="4-2-2-4" disableViewOverride="true"/> 
+  <item package="com.example.myapplication" rateId="0-0-0-0" appreqfirst="true" />
+  <item package="com.picsart.draw" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.medibang.android.paint.tablet" rateId="0-2-2-4" disableViewOverride="true"/>
+  <item package="com.microsoft.office.onenote" rateId="0-2-2-4" disableViewOverride="true"/>
 
 
-  <item package="com.google.android.apps.messaging" rateId="4-2-2-4" />  
+  <item package="com.google.android.apps.messaging" rateId="0-2-2-4" />
 
 
   <item package="com.google.android.gm" rateId="1-2-2-4" />  
@@ -1329,7 +1329,7 @@
   <item package="com.ixigo.train.ixitrain" rateId="1-2-2-4" />  
   <item package="com.urbanclap.urbanclap" rateId="1-2-2-4" />  
 
-  <item package="com.oplus.encryption" rateId="4-1-2-4" />  
+  <item package="com.oplus.encryption" rateId="0-1-2-4" />
   <item package="mx.com.telcel.di.sds.gsac.dapmov.mdm_telcel" rateId="2-2-2-1" />  
   <item package="com.mm.android.direct.gdmssphone" rateId="2-2-2-1" />  
 
@@ -1345,36 +1345,36 @@
   <item package="com.marrow" rateId="1-2-2-4" />  
   <item package="com.ak.ta.divya.bhaskar.activity" rateId="1-2-2-4" />  
 
-  <item package="com.coloros.weather" rateId="4-2-2-4" />  
-  <item package="com.coloros.weather.service" rateId="4-2-2-4" />  
-  <item package="com.coloros.relax" rateId="4-2-2-4" />  
-  <item package="com.nearme.note" rateId="4-2-2-4" />  
-  <item package="com.coloros.directui/com.coloros.colordirectservice" rateId="4-2-2-4" />  
-  <item package="com.coloros.directui" rateId="4-2-2-4" />  
-  <item package="com.nearme.themestore" rateId="4-2-2-4" />  
-  <item package="com.oplus.themestore" rateId="4-2-2-4" />  
-  <item package="com.redteamobile.roaming" rateId="4-2-2-4" />  
-  <item package="com.oplus.aod" rateId="4-2-2-4" />  
-  <item package="com.google.android.permissioncontroller" rateId="4-2-2-4" />  
-  <item package="com.oplus.vip" rateId="4-2-2-4" />  
-  <item package="com.nearme.instant.platfor" rateId="4-2-2-4" />  
-  <item package="com.oneplus.bbs" rateId="4-2-2-4" />  
-  <item package="com.google.android.contacts" rateId="4-2-2-4" />  
-  <item package="com.google.android.apps.tachyon" rateId="4-2-2-4" />  
+  <item package="com.coloros.weather" rateId="0-2-2-4" />
+  <item package="com.coloros.weather.service" rateId="0-2-2-4" />
+  <item package="com.coloros.relax" rateId="0-2-2-4" />
+  <item package="com.nearme.note" rateId="0-2-2-4" />
+  <item package="com.coloros.directui/com.coloros.colordirectservice" rateId="0-2-2-4" />
+  <item package="com.coloros.directui" rateId="0-2-2-4" />
+  <item package="com.nearme.themestore" rateId="0-2-2-4" />
+  <item package="com.oplus.themestore" rateId="0-2-2-4" />
+  <item package="com.redteamobile.roaming" rateId="0-2-2-4" />
+  <item package="com.oplus.aod" rateId="0-2-2-4" />
+  <item package="com.google.android.permissioncontroller" rateId="0-2-2-4" />
+  <item package="com.oplus.vip" rateId="0-2-2-4" />
+  <item package="com.nearme.instant.platfor" rateId="0-2-2-4" />
+  <item package="com.oneplus.bbs" rateId="0-2-2-4" />
+  <item package="com.google.android.contacts" rateId="0-2-2-4" />
+  <item package="com.google.android.apps.tachyon" rateId="0-2-2-4" />
 
 
   <item package="com.coolapk.market" rateId="1-2-2-4" />  
-  <item package="com.ludashi.benchmark" rateId="4-2-2-4" />  
-  <item package="com.ludashi.benchmark2" rateId="4-2-2-4" disableViewOverride="true" />  
-  <item package="com.antutu.ABenchMark" rateId="4-0-2-4" />  
-  <item package="flar2.devcheck" rateId="4-0-2-4" />  
-  <item package="com.primatelabs.geekbench3" rateId="4-0-2-4" />  
-  <item package="softweg.hw.performance" rateId="4-0-2-4" />  
-  <item package="ru.andr7e.deviceinfohw" rateId="4-0-2-4" />  
-  <item package="com.finalwire.aida64" rateId="4-0-2-4" />  
-  <item package="com.futuremark.pcmark.android.benchmark" rateId="4-2-2-4" />  
+  <item package="com.ludashi.benchmark" rateId="0-2-2-4" />
+  <item package="com.ludashi.benchmark2" rateId="0-2-2-4" disableViewOverride="true" />
+  <item package="com.antutu.ABenchMark" rateId="0-0-2-4" />
+  <item package="flar2.devcheck" rateId="0-0-2-4" />
+  <item package="com.primatelabs.geekbench3" rateId="0-0-2-4" />
+  <item package="softweg.hw.performance" rateId="0-0-2-4" />
+  <item package="ru.andr7e.deviceinfohw" rateId="0-0-2-4" />
+  <item package="com.finalwire.aida64" rateId="0-0-2-4" />
+  <item package="com.futuremark.pcmark.android.benchmark" rateId="0-2-2-4" />
 
-  <item package="com.coloros.smartlock" rateId="4-1-2-4" />  
+  <item package="com.coloros.smartlock" rateId="0-1-2-4" />
 
 
   <item package="com.pubg.imobile" rateId="1-2-2-1" />  
@@ -1389,53 +1389,53 @@
   <item package="com.media.digital" rateId="1-1-2-4" />  
   <item package="com.player.zaltv" rateId="1-1-2-4" />  
   <item package="com.television.burma" rateId="1-1-2-4" />  
-  <item package="com.tencent.af" rateId="4-0-0-4" disableViewOverride="true"  />  
+  <item package="com.tencent.af" rateId="0-0-0-4" disableViewOverride="true"  />
   <item package="com.miHoYo.enterprise.NGHSoD" disableViewOverride="true" rateId="1-2-2-1" />  
   <item package="com.pwrd.smdl" rateId="1-2-2-1" disableViewOverride="true" />  
-  <item package="com.xsmdl.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" />  
-  <item package="com.yingxiong.dftk.nearme.gamecenter" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.denachina.g13002010.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" />  
-  <item package="com.volvapps.ef5.x.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.tencent.game.rhythmmaster" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.youzu.bs" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.tencent.tmgp.supercell.brawlstars" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.supercell.brawlstars" rateId="4-0-0-4" disableViewOverride="true" /> 
-  <item package="com.youzu.bs.nearme.gamecenter" rateId="4-0-0-4"  disableViewOverride="true"/>
-  <item package="com.netease.jddsaef" rateId="4-0-0-4" disableViewOverride="true" /> 
-  <item package="com.netease.jddsaef.nearme.gamecenter" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.tencent.tmgp.jddsaef" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.supercell.clashofclans" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/>  
-  <item package="com.tencent.tmgp.supercell.clashofclans" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/>  
-  <item package="com.riotgames.internal.wildrift.trunk" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
-  <item package="com.riotgames.internal.wildrift.test" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
-  <item package="com.riotgames.league.wildriftvn" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
-  <item package="com.activision.callofduty.shooter" rateId="0-0-0-0" />  
-  <item package="com.tencent.tmgp.kr.codm" rateId="0-0-0-0" />  
-  <item package="com.aqtw.zz" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/>  
-  <item package="cn.jj.log.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" /> 
-  <item package="cn.jj.log" rateId="4-1-2-4" disableViewOverride="true" /> 
-  <item package="com.feiyu.luobo4.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.carrot.carrotfantasy" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.carrot.iceworld" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.mfp.jelly.oppo" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.hortor.fejsf.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.turbochilli.rollingsky_cn.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.invictus.giveitup2.oppo" rateId="4-1-2-4" disableViewOverride="true" /> 
-  <item package="com.tiancity.dom.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.happyelements.AndroidClover.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.diyibo.nnz.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.bairimeng.snake.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" /> 
-  <item package="com.zf.myds.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.xmyaoyao.hcdxg.android.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.liuliuwan.dfw.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" /> 
-  <item package="com.tpfy.mihuan.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.tencent.tmgp.supercell.clashroyale" rateId="4-1-2-4" disableViewOverride="true" />  
+  <item package="com.xsmdl.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.yingxiong.dftk.nearme.gamecenter" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.denachina.g13002010.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.volvapps.ef5.x.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.tencent.game.rhythmmaster" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.youzu.bs" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.tencent.tmgp.supercell.brawlstars" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.supercell.brawlstars" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.youzu.bs.nearme.gamecenter" rateId="0-0-0-4"  disableViewOverride="true"/>
+  <item package="com.netease.jddsaef" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.netease.jddsaef.nearme.gamecenter" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.tencent.tmgp.jddsaef" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.supercell.clashofclans" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.tencent.tmgp.supercell.clashofclans" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.riotgames.internal.wildrift.trunk" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
+  <item package="com.riotgames.internal.wildrift.test" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
+  <item package="com.riotgames.league.wildriftvn" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
+  <item package="com.activision.callofduty.shooter" rateId="0-0-0-0" />
+  <item package="com.tencent.tmgp.kr.codm" rateId="0-0-0-0" />
+  <item package="com.aqtw.zz" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="cn.jj.log.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="cn.jj.log" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.feiyu.luobo4.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.carrot.carrotfantasy" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.carrot.iceworld" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.mfp.jelly.oppo" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.hortor.fejsf.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.turbochilli.rollingsky_cn.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.invictus.giveitup2.oppo" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.tiancity.dom.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.happyelements.AndroidClover.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.diyibo.nnz.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.bairimeng.snake.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.zf.myds.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.xmyaoyao.hcdxg.android.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.liuliuwan.dfw.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.tpfy.mihuan.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.tencent.tmgp.supercell.clashroyale" rateId="0-1-2-4" disableViewOverride="true" />
   
 
-  <item package="com.lilithgames.solarland.android.cn" rateId="4-1-2-4" disableViewOverride="true" />  
-  <item package="com.tencent.tmgp.sgame" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" adfr="true" />  
-  <item package="com.tencent.tmgp.sgamece" rateId="4-1-2-4" enableWinOverride="false" disableViewOverride="true" />  
-  <item package="com.tencent.tmgp.pubgmhd" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
+  <item package="com.lilithgames.solarland.android.cn" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.tencent.tmgp.sgame" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" adfr="true" />
+  <item package="com.tencent.tmgp.sgamece" rateId="0-1-2-4" enableWinOverride="false" disableViewOverride="true" />
+  <item package="com.tencent.tmgp.pubgmhd" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
   <item package="com.tencent.ig" rateId="1-1-2-1" disableViewOverride="true" adfr="true" />  
   <item package="com.pubg.krmobile" rateId="1-1-2-1" disableViewOverride="true" />  
   <item package="com.vng.pubgmobile" rateId="1-1-2-1" disableViewOverride="true" />  
@@ -1443,40 +1443,40 @@
   <item package="com.tencent.tmgp.projectg" rateId="1-1-2-1" disableViewOverride="true" />  
   <item package="com.tencent.igce" rateId="1-1-2-1" disableViewOverride="true" />  
   <item package="com.tencent.iglite" rateId="1-1-2-1" disableViewOverride="true" />  
-  <item package="com.tencent.lolm" rateId="4-0-0-4" disableViewOverride="true" adfr="true" enableWinOverride="false"/>  
-  <item package="com.tencent.tmgp.speedmobile" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
-  <item package="com.tencent.tmgp.cf" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/>  
-  <item package="com.tencent.tmgp.cod" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/> 
-  <item package="com.tencent.KiHan" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/>  
+  <item package="com.tencent.lolm" rateId="0-0-0-4" disableViewOverride="true" adfr="true" enableWinOverride="false"/>
+  <item package="com.tencent.tmgp.speedmobile" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
+  <item package="com.tencent.tmgp.cf" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.tencent.tmgp.cod" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.tencent.KiHan" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
   <item package="com.tencent.tmgp.gnyx" rateId="1-1-2-1" disableViewOverride="true"/> 
-  <item package="com.tencent.tmgp.WePop" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false" adfr="true" /> 
-  <item package="com.tencent.mf.uam" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/> 
-  <item package="com.wanmei.zhuxian.nearme.gamecenter" rateId="4-0-0-4" disableViewOverride="true"/>  
-  <item package="com.tencent.mf.uamty" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/> 
-  <item package="com.tencent.tmgp.dfm" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/> 
-  <item package="com.tencent.tmgp.dfmexper" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/> 
-  <item package="com.netease.x19" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.tencent.tmgp.wdsj666" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/>  
-  <item package="com.netease.mc.nearme.gamecenter" rateId="4-0-0-4" disableViewOverride="true" enableWinOverride="false"/>  
-  <item package="com.netease.pm02.nearme.gamecenter" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.zsyj.nearme.gamecenter" rateId="4-0-0-4" disableViewOverride="true" />  
-  <item package="com.ztgame.bob.op.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true"/> 
-  <item package="com.ztgame.bob" rateId="4-0-0-4" disableViewOverride="true" />  
+  <item package="com.tencent.tmgp.WePop" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false" adfr="true" />
+  <item package="com.tencent.mf.uam" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.wanmei.zhuxian.nearme.gamecenter" rateId="0-0-0-4" disableViewOverride="true"/>
+  <item package="com.tencent.mf.uamty" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.tencent.tmgp.dfm" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.tencent.tmgp.dfmexper" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.netease.x19" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.tencent.tmgp.wdsj666" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.netease.mc.nearme.gamecenter" rateId="0-0-0-4" disableViewOverride="true" enableWinOverride="false"/>
+  <item package="com.netease.pm02.nearme.gamecenter" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.zsyj.nearme.gamecenter" rateId="0-0-0-4" disableViewOverride="true" />
+  <item package="com.ztgame.bob.op.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true"/>
+  <item package="com.ztgame.bob" rateId="0-0-0-4" disableViewOverride="true" />
   <item package="com.bairimeng.dmmdzz" rateId="1-1-2-1" disableViewOverride="true" />  
   <item package="com.tencent.tmgp.bairimeng.dmmdzz" rateId="1-1-2-1" disableViewOverride="true" />  
   <item package="com.bairimeng.dmmdzz.nearme.gamecenter" rateId="1-1-2-1" disableViewOverride="true" />  
-  <item package="com.ChillyRoom.DungeonShooter" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
-  <item package="com.tencent.tmgp.yqqskp" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
-  <item package="com.ChillyRoom.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
-  <item package="com.netease.allstar.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true"/> 
-  <item package="com.netease.allstar" rateId="4-1-2-4" disableViewOverride="true"/> 
-  <item package="com.riotgames.league.wildrift" rateId="4-1-2-4" disableViewOverride="true" adfr="true" />  
+  <item package="com.ChillyRoom.DungeonShooter" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
+  <item package="com.tencent.tmgp.yqqskp" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
+  <item package="com.ChillyRoom.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
+  <item package="com.netease.allstar.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true"/>
+  <item package="com.netease.allstar" rateId="0-1-2-4" disableViewOverride="true"/>
+  <item package="com.riotgames.league.wildrift" rateId="0-1-2-4" disableViewOverride="true" adfr="true" />
   <item package="com.epicgames.fortnite" rateId="1-1-2-1" disableViewOverride="true" />  
   <item package="com.garena.game.codm" rateId="1-1-2-1" disableViewOverride="true"  />  
-  <item package="com.supercell.clashroyale" rateId="4-1-2-4" disableViewOverride="true" />  
-  <item package="com.tfgco.games.sports.free.tennis.clash" disableViewOverride="true" rateId="4-2-2-4" />  
-  <item package="com.netease.yhtj" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
-  <item package="com.netease.yhtj.nearme.gamecenter" rateId="4-1-2-4" disableViewOverride="true" enableWinOverride="false" />  
+  <item package="com.supercell.clashroyale" rateId="0-1-2-4" disableViewOverride="true" />
+  <item package="com.tfgco.games.sports.free.tennis.clash" disableViewOverride="true" rateId="0-2-2-4" />
+  <item package="com.netease.yhtj" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
+  <item package="com.netease.yhtj.nearme.gamecenter" rateId="0-1-2-4" disableViewOverride="true" enableWinOverride="false" />
 
 
   <cameraOverride package="com.tencent.mobileqq" />
@@ -1496,5 +1496,5 @@
       enableFodHighRate true表示可以支持指纹高刷新请求，默认false，部分项目指纹闪屏需要配置
       maxrefreshsettings 默认高刷状态,设置状态会被截断
       voiceSceneLowRate 为ture微信发语音降帧，默认为false；voiceSceneLowRateDelay 为微信发语音降帧延时，500表示500ms后进行降帧，默认为1.5s -->
-<config ipePencilRateId="3" maxrefreshsettings="4" inputMethodLowRate="false" enableFodHighRate="true" voiceSceneLowRate="true" voiceSceneLowRateDelay="500" enableAppSwitchBoost="true" appSwitchBoostType="0" appSwitchBoostMaxTemperature="52" defaultMaxRate="144" defaultRateId="4-1-2-4"/>
+<config ipePencilRateId="3" maxrefreshsettings="4" inputMethodLowRate="false" enableFodHighRate="true" voiceSceneLowRate="true" voiceSceneLowRateDelay="500" enableAppSwitchBoost="true" appSwitchBoostType="0" appSwitchBoostMaxTemperature="52" defaultMaxRate="120" defaultRateId="3-1-2-4"/>
 </refresh_rate_config>
