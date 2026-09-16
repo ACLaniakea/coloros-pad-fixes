@@ -9,6 +9,7 @@
 
 | 版本 | 主题 |
 | --- | --- |
+| [4.1.2](release-notes/4.1.2.md) | 长待机亮屏内存峰值：相机预填池、VFX 合成状态与一次性调度归属修复 |
 | [4.1.1](release-notes/4.1.1.md) | 待机后卡顿与前摄灯、KGSL 回收链 v4.1.2、内核告警清零、r3 配套内核 |
 | [4.1.0](release-notes/4.1.0.md) | HybridSwap 熄屏闸门、mqueue 挂载、r2 配套内核 |
 | [4.0.4](release-notes/4.0.4.md) | AOT、内存链路与 HybridSwap 内核桥接 |

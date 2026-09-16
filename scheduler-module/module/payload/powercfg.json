@@ -1,8 +1,8 @@
 {
   "name": "SM8650Q 专用调度",
   "author": "ACLaniakea",
-  "version": "4.1.1",
-  "versionCode": 410001,
+  "version": "4.1.2",
+  "versionCode": 410002,
   "features": {
     "strict": true,
     "pedestal": true

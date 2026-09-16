@@ -29,14 +29,6 @@ if ! is_supported_device; then
     exit 0
 fi
 
-# The source display property makes Oplus SurfaceFlinger force every layer
-# through client composition.  post-fs-data runs before SurfaceFlinger starts,
-# so select HWC here and let it choose the correct path on its first launch.
-# Do not restart SurfaceFlinger later: that tears down Android user-space and
-# can interrupt KernelSU manager state restoration.
-setprop vendor.display.gpu_rendering false
-log_msg "display composition baseline: gpu_rendering=false before SurfaceFlinger"
-
 # Lenovo's original vendor audio stack supplies the standard Dolby spatializer,
 # but has no OPlus Meta Audio parameter pack.  The port still advertises Meta
 # Audio 2.0, so every media pause tears down the effect chain and then attempts

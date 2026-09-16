@@ -158,6 +158,7 @@ done
 MODULES="
 oplus_shell_temp_compat
 oplus_kgsl_state_bridge
+oplus_boost_pool
 oplus_cpu_sched_sched_assist
 oplus_resctrl
 oplus_mm_gloom

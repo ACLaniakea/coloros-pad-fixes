@@ -715,22 +715,20 @@ else
     log_msg "hybridswap: 节点不存在，跳过 zram2ufs 调整"
 fi
 
-# Qualcomm/ColorOS 的原厂 post-boot 脚本对 SM8650 系列明确写入
-#   /proc/sys/vm/swappiness       = 100
-#   /dev/memcg/memory.swappiness  = 100
-# 但移植系统中这两个值在 nandswap 完成后仍会停留在 GKI 默认的 150；apps
-# 及其子分组则由 Athena/OSense 动态管理，不能在这里整树覆盖。这里仅做一次
-# 启动收尾同步，复现原厂 post-boot 的两个全局写入，不启动常驻服务，也不碰
-# 内存扩展开关、容量档位或 HybridSwap 节点。
+# PKX110 的 ColorOS HybridSwap 基线在 nandswap 完成后是 125。此前这里保留了
+# 另一份 SM8650 post-boot 脚本的 100，导致平板的全局回收比当前 ColorOS 基线更少
+# 换出匿名冷页；apps 及其子分组仍由 Athena/OSense 动态管理，不能在这里整树覆盖。
+# 这里只在启动收尾同步全局和根 memcg，不启动常驻服务，也不碰内存扩展开关、容量
+# 档位或 HybridSwap 节点。
 restore_stock_swappiness_once() {
     _stock_vm_swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null)
     _stock_root_swappiness=$(cat /dev/memcg/memory.swappiness 2>/dev/null)
 
-    if [ -w /proc/sys/vm/swappiness ] && [ "$_stock_vm_swappiness" != "100" ]; then
-        printf '100\n' >/proc/sys/vm/swappiness 2>/dev/null
+    if [ -w /proc/sys/vm/swappiness ] && [ "$_stock_vm_swappiness" != "125" ]; then
+        printf '125\n' >/proc/sys/vm/swappiness 2>/dev/null
     fi
-    if [ -w /dev/memcg/memory.swappiness ] && [ "$_stock_root_swappiness" != "100" ]; then
-        printf '100\n' >/dev/memcg/memory.swappiness 2>/dev/null
+    if [ -w /dev/memcg/memory.swappiness ] && [ "$_stock_root_swappiness" != "125" ]; then
+        printf '125\n' >/dev/memcg/memory.swappiness 2>/dev/null
     fi
 
     log_msg "stock swappiness reconciled: global=$(cat /proc/sys/vm/swappiness 2>/dev/null) root_memcg=$(cat /dev/memcg/memory.swappiness 2>/dev/null) apps=$(cat /dev/memcg/apps/memory.swappiness 2>/dev/null)"
@@ -1536,6 +1534,43 @@ tune_topapp_affinity() {
 tune_topapp_affinity
 
 # ============================================================================
+# SurfaceFlinger cpuset 归属修正（一次性，2026-09-16）
+#
+# 手机的 SurfaceFlinger 在 cpuset:/sf；移植系统却让它留在
+# cpuset:/foreground。两边的 cpu:/display 一致，差异只在可运行 CPU 集：本机
+# /sf 已由 apply_sched_baseline 配为 1-5，以避开唯一的弱 CPU0，但 foreground
+# 仍允许 0-5。写 cgroup.procs 会迁移整个线程组，不需要重启或停止 SF。
+# ============================================================================
+tune_surfaceflinger_cpuset() {
+    _pid=$(pidof surfaceflinger 2>/dev/null | awk '{print $1}')
+    _target=/dev/cpuset/sf/cgroup.procs
+    _cpus=/dev/cpuset/sf/cpus
+    case "$_pid" in ''|*[!0-9]*) log_msg "sf cpuset: SurfaceFlinger PID unavailable"; return 0 ;; esac
+    esac
+    [ -w "$_target" ] && [ -r "$_cpus" ] || {
+        log_msg "sf cpuset: target unavailable, skip"
+        return 0
+    }
+    _from=$(cat "/proc/$_pid/cpuset" 2>/dev/null)
+    _want=$(tr -d ' \n' <"$_cpus" 2>/dev/null)
+    [ "$_from" = /sf ] && return 0
+    [ "$_from" = /foreground ] || {
+        log_msg "sf cpuset: unexpected source [$_from], skip"
+        return 0
+    }
+    case "$_want" in ''|0|0-*|0,*)
+        log_msg "sf cpuset: sf=[$_want] includes CPU0, keep foreground"
+        return 0 ;;
+    esac
+    echo "$_pid" >"$_target" 2>/dev/null
+    _now=$(cat "/proc/$_pid/cpuset" 2>/dev/null)
+    [ "$_now" = /sf ] && log_msg "sf cpuset: pid=$_pid $_from -> $_now cpus=$_want" || \
+        log_msg "WARN: sf cpuset: migration rejected, still [$_now]"
+}
+
+tune_surfaceflinger_cpuset
+
+# ============================================================================
 # system_server AOT 产物自愈（2026-09-09）
 #
 # post-fs-data 里的 bind_system_server_oat 只负责**绑定**已有产物；产物本身
@@ -1731,4 +1766,3 @@ soter_key_repair() {
 for frontled in /sys/class/leds/blue/brightness /sys/class/leds/green/brightness /sys/class/leds/red/brightness; do
     echo 0 >"$frontled" 2>/dev/null
 done
-

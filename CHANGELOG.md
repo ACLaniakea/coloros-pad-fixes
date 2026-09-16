@@ -4,6 +4,12 @@
 
 本项目的版本号在所有模块与 APK 间保持统一，一个 Release 内的产物必须配套使用。
 
+## [4.1.2](docs/release-notes/4.1.2.md)
+
+全模块与 Hook 统一至 4.1.2。启动期关闭平板上错误保留的 OPlus VFX parallel-world，
+不再覆盖显示合成属性；SurfaceFlinger 一次性归入原厂 `/sf` cpuset。新增 qcom dma-heap
+相机预填池，以 192 MiB 的平板保守值降低长待机后人脸亮屏时的直接回收峰值。
+
 ## [4.1.1](docs/release-notes/4.1.1.md)
 
 修好待机后动画卡顿与前摄指示灯失效。KGSL 显存回收链重新接回：对照机显存根本不钉
