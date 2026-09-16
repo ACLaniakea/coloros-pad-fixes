@@ -29,6 +29,24 @@ if ! is_supported_device; then
     exit 0
 fi
 
+# The source display property makes Oplus SurfaceFlinger force every layer
+# through client composition.  post-fs-data runs before SurfaceFlinger starts,
+# so select HWC here and let it choose the correct path on its first launch.
+# Do not restart SurfaceFlinger later: that tears down Android user-space and
+# can interrupt KernelSU manager state restoration.
+setprop vendor.display.gpu_rendering false
+log_msg "display composition baseline: gpu_rendering=false before SurfaceFlinger"
+
+# Lenovo's original vendor audio stack supplies the standard Dolby spatializer,
+# but has no OPlus Meta Audio parameter pack.  The port still advertises Meta
+# Audio 2.0, so every media pause tears down the effect chain and then attempts
+# to load the absent /odm/etc/oplusmetaaudio/SPK_MOVIE_lvl1.bin.  Do not borrow
+# tuning data from another product: disable only this incomplete source feature
+# before audioserver starts, leaving the stock spatializer and Dolby chain on.
+resetprop ro.oplus.audio.support.meta_audio 0
+resetprop ro.oplus.audio.support.meta_audio_speaker 0
+log_msg "audio baseline: disabled unavailable OPlus Meta Audio; retained stock Dolby spatializer"
+
 # The detachable keyboard is exposed by Lenovo's platform driver on BUS_HOST,
 # so Android defaults it to an internal device and ColorOS disables the native
 # trackpad controls.  Correct only that device's classification through the

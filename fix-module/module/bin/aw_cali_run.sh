@@ -34,6 +34,17 @@ cleanup() { rm -rf "$TMP" "$WAV"; }
 echo "$TAG 校准前：$(tr -s ' ' ' ' < "$F")"
 echo "$TAG 合法区间：$("$CALI" all get_re_range 2>&1 | tail -1)"
 
+case "$1" in
+    --check)
+        exit 0
+        ;;
+    "")
+        ;;
+    *)
+        die "用法：$0 [--check]"
+        ;;
+esac
+
 # ---- 生成低幅方波 WAV ---------------------------------------------------
 # 48kHz / 立体声 / 16bit。用「反复自我拼接」的方式按 2 的幂增长，避免
 # 在 shell 里逐样本循环（几万次 printf 会非常慢）。
