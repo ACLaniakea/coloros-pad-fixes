@@ -4,6 +4,9 @@
 
 # ColorOS Pad Fixes
 
+> [!NOTE]
+> 本项目已停止维护，源码、文档与历史 Release 作为归档保留，不再处理问题反馈或合并贡献。
+
 联想小新 Pad Pro GT（**TB710FU** / SM8650Q / pineapple）运行 ColorOS 16 移植系统（OPD2513）的适配修复项目。
 
 [![Platform](https://img.shields.io/badge/platform-SM8650Q%20%2F%20pineapple-blue)](#兼容性)
@@ -190,9 +193,9 @@ bash tools/build_all.sh
 - [参考资料](docs/reference/) — 修复汇总、内核兼容性、主线内核可行性、LSPosed 收敛方案
 - [刷机事故与救援手册](kernel-compat/刷机事故与救援手册.md) — 变砖时怎么救
 
-## 贡献与反馈
+## 维护状态
 
-欢迎提交 Issue。请提供设备型号、ROM 与版本、已安装模块、复现步骤和必要日志；不要上传序列号、账号令牌、密钥或完整厂商固件。
+本项目已停止维护。历史源码、文档和 Release 继续保留供学习与参考。
 
 ## 免责声明
 
@@ -209,7 +212,3 @@ CryptoEng 的分流、HKDF、AIDL 调用和互操作代码属于本项目代码�
 ## 致谢
 
 感谢所有测试者、上游开发者和开源社区的支持。
-
-<p align="center">
-  <img src="docs/assets/donate-wechat.png" alt="微信赞助码" width="220">
-</p>
